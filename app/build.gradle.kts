@@ -37,6 +37,18 @@ android {
     }
 }
 
+// Compose compiler stability metrics & recomposition reports (opt-in):
+//   ./gradlew :app:assembleDebug -PenableComposeCompilerMetrics=true
+// Output lands in app/build/compose_compiler/ (look for:
+//   - *-composables.txt        -> skippability/restartability per composable
+//   - *-module.json / .csv     -> unstable classes & reasons)
+composeCompiler {
+    if (providers.gradleProperty("enableComposeCompilerMetrics").orNull == "true") {
+        metricsDestination = layout.buildDirectory.dir("compose_compiler")
+        reportsDestination = layout.buildDirectory.dir("compose_compiler")
+    }
+}
+
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)

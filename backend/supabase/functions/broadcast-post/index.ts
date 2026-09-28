@@ -49,7 +49,14 @@ serve(async (req) => {
         data: {
           title: `${authorName} just added a new post`,
           body: postText.substring(0, 40) + (postText.length > 40 ? "..." : ""),
-          author_id: post.user_id
+          author_id: post.user_id,
+          // Route the notification tap straight to this post (agora://post/{post_id})
+          post_id: post.id
+        },
+        android: {
+          // High priority so data-only messages are delivered promptly to
+          // backgrounded apps (otherwise they are deferred by Android).
+          priority: "high"
         }
       }
     };

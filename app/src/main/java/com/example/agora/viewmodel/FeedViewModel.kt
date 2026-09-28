@@ -19,6 +19,7 @@ import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -65,6 +66,7 @@ import java.util.UUID
 import kotlin.coroutines.resume
 import kotlin.time.Duration.Companion.milliseconds
 
+@Immutable
 data class EditMediaItem(
     val id: String = UUID.randomUUID().toString(),
     val remoteUrl: String? = null,
@@ -89,10 +91,18 @@ data class PostUpdateRequest(
     @SerialName("image_urls") val imageUrls: List<String> = emptyList()
 )
 
+@Immutable
 sealed class UploadState {
-    object Idle : UploadState()
+    @Immutable
+    data object Idle : UploadState()
+
+    @Immutable
     data class Uploading(val progress: Float, val message: String) : UploadState()
+
+    @Immutable
     data class Success(val message: String) : UploadState()
+
+    @Immutable
     data class Error(val message: String) : UploadState()
 }
 
@@ -274,8 +284,13 @@ class FeedViewModel : ViewModel() {
 
     fun fetchPostsFromCloud() {
         viewModelScope.launch {
+            // 🌟 Only show the full-screen loading state on the FIRST load; background
+            //    auto-refreshes must not flip global flags (recomposition churn every 30s).
+            val isFirstLoad = _posts.value.isEmpty()
             try {
-                _isLoading.value = true
+                if (isFirstLoad) {
+                    _isLoading.value = true
+                }
                 _feedError.value = null
 
                 val user = supabaseClient.auth.currentUserOrNull()
@@ -288,7 +303,7 @@ class FeedViewModel : ViewModel() {
                     }.decodeList<Post>()
                 }
 
-                if (user != null) {
+                val merged = if (user != null) {
                     val myLikes = try {
                         withContext(Dispatchers.IO) {
                             supabaseClient.from("post_likes")
@@ -298,7 +313,7 @@ class FeedViewModel : ViewModel() {
                         emptyList()
                     }
 
-                    _posts.value = fetchedPosts.map { post ->
+                    fetchedPosts.map { post ->
                         val myLike = myLikes.find { it.postId == post.id }
                         post.copy(
                             isLikedByMe = (myLike != null),
@@ -306,15 +321,34 @@ class FeedViewModel : ViewModel() {
                         )
                     }
                 } else {
-                    _posts.value = fetchedPosts
+                    fetchedPosts
+                }
+
+                // 🌟 Skip the emission when nothing changed — avoids recomposing the
+                //    whole feed on every periodic refresh.
+                if (merged != _posts.value) {
+                    _posts.value = merged
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 e.printStackTrace()
                 _feedError.value = "Failed to load posts. Pull to refresh."
             } finally {
-                _isLoading.value = false
+                if (isFirstLoad) {
+                    _isLoading.value = false
+                }
             }
+        }
+    }
+
+    /**
+     * Mirrors a post edited (e.g. liked) on the single-post screen back into the
+     * feed list without any network round-trip, so both screens stay consistent.
+     */
+    fun syncPostState(post: Post) {
+        _posts.update { list ->
+            if (list.none { it.id == post.id }) list
+            else list.map { if (it.id == post.id) post else it }
         }
     }
 
@@ -380,7 +414,10 @@ class FeedViewModel : ViewModel() {
                                     recipientId = post.userId,
                                     title = "New Reaction",
                                     body = "$senderName reacted $emoji to your post: \"$preview\"",
-                                    data = mapOf("sender_id" to currentUserId)
+                                    data = mapOf(
+                                        "sender_id" to currentUserId,
+                                        "post_id" to post.id
+                                    )
                                 )
                                 supabaseClient.from("notifications").insert(notification)
                             } catch (e: Exception) {
@@ -451,7 +488,10 @@ class FeedViewModel : ViewModel() {
                                     recipientId = post.userId,
                                     title = "New Like",
                                     body = "$senderName liked your post: \"$preview\"",
-                                    data = mapOf("sender_id" to currentUserId)
+                                    data = mapOf(
+                                        "sender_id" to currentUserId,
+                                        "post_id" to post.id
+                                    )
                                 )
                                 supabaseClient.from("notifications").insert(notification)
                             } catch (e: Exception) {
@@ -922,7 +962,10 @@ class FeedViewModel : ViewModel() {
                                 recipientId = post.userId,
                                 title = "New Comment",
                                 body = "$senderName commented on your post: \"$preview\"",
-                                data = mapOf("sender_id" to userId)
+                                data = mapOf(
+                                    "sender_id" to userId,
+                                    "post_id" to post.id
+                                )
                             )
                             supabaseClient.from("notifications").insert(notification)
                         } catch (e: Exception) {

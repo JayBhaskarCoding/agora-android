@@ -1,8 +1,10 @@
 package com.example.agora.model
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
+@Immutable
 @Serializable
 data class Comment(
     val id: String,
@@ -18,6 +20,7 @@ data class Comment(
     val handle: String = "user"
 )
 
+@Immutable
 @Serializable
 data class CommentInsertRequest(
     @SerialName("post_id") val postId: String,

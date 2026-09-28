@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.TaskStackBuilder
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.example.agora.MainActivity
@@ -120,15 +121,23 @@ class PushNotificationService : FirebaseMessagingService() {
             notificationManager.createNotificationChannel(channel)
         }
 
-        // Deep link intent if post_id is provided
-        val intent = if (!postId.isNullOrBlank()) {
-            val uriString = if (!commentId.isNullOrBlank()) {
-                "https://auth-agora.info/post/$postId?commentId=$commentId"
-            } else {
-                "https://auth-agora.info/post/$postId"
-            }
-            Intent(Intent.ACTION_VIEW, Uri.parse(uriString)).apply {
-                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        // 🌟 Deep link straight to the post: agora://post/{postId}[?commentId=…]
+        //    Explicit component + ACTION_VIEW so the URI is delivered via intent.data,
+        //    matching the NavHost's navDeepLink patterns. Extras are kept as a
+        //    redundant channel (parsed by MainActivity.injectDeepLink).
+        val deepLinkUri = when {
+            !postId.isNullOrBlank() && !commentId.isNullOrBlank() ->
+                "agora://post/$postId?commentId=$commentId"
+            !postId.isNullOrBlank() ->
+                "agora://post/$postId"
+            else -> null
+        }
+
+        val intent = if (deepLinkUri != null) {
+            Intent(Intent.ACTION_VIEW, Uri.parse(deepLinkUri), this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
                 putExtra("post_id", postId)
                 if (!commentId.isNullOrBlank()) {
                     putExtra("comment_id", commentId)
@@ -136,16 +145,21 @@ class PushNotificationService : FirebaseMessagingService() {
             }
         } else {
             Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
             }
         }
 
-        val pendingIntent = PendingIntent.getActivity(
-            this,
-            System.currentTimeMillis().toInt(),
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        // 🌟 TaskStackBuilder preserves the synthetic back stack:
+        //    MainActivity (feed) -> Post details. Back never dumps the user out of the app.
+        val pendingIntent = TaskStackBuilder.create(this).run {
+            addNextIntentWithParentStack(intent)
+            getPendingIntent(
+                postId?.hashCode() ?: 0,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
 
         val notification = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(R.mipmap.ic_launcher)
@@ -157,7 +171,7 @@ class PushNotificationService : FirebaseMessagingService() {
             .setDefaults(NotificationCompat.DEFAULT_ALL)
             .build()
 
-        notificationManager.notify(System.currentTimeMillis().toInt(), notification)
+        notificationManager.notify(postId?.hashCode() ?: System.currentTimeMillis().toInt(), notification)
     }
 
     companion object {

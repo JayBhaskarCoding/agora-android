@@ -54,6 +54,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.agora.R
+import com.example.agora.media.VideoPreloader
 import com.example.agora.model.Post
 import com.example.agora.viewmodel.FeedViewModel
 import com.example.agora.viewmodel.ThemeViewModel
@@ -89,6 +90,19 @@ fun GlobalFeedScreen(
     val context = LocalContext.current
     val reportOptions = remember { listOf("Spam", "Harassment", "Hate Speech", "Misinformation", "Other") }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+
+    // 🌟 Pre-cache the next 1-2 videos in the list so they start instantly when
+    //    scrolled into view (or opened fullscreen). Re-triggered per scroll position.
+    val firstVisibleIndex by remember { derivedStateOf { listState.firstVisibleItemIndex } }
+    LaunchedEffect(firstVisibleIndex, posts) {
+        val upcomingVideos = posts
+            .drop(firstVisibleIndex + 1)
+            .take(2)
+            .flatMap { post -> post.imageUrls.filter { isFeedVideoUrl(it) } }
+        if (upcomingVideos.isNotEmpty()) {
+            VideoPreloader.prefetch(context, upcomingVideos)
+        }
+    }
 
     // Automatically scroll to the top of the feed when a post is successfully created
     LaunchedEffect(uploadState) {
@@ -153,9 +167,15 @@ fun GlobalFeedScreen(
                     isRefreshing = false
                 }
             },
+            // 🌟 Perf: only attach the full-feed GPU blur while the comments sheet is
+            //    open/animating. A permanently-attached blur node re-rasterizes the
+            //    whole scrollable every frame (major stutter source).
             modifier = Modifier
                 .fillMaxSize()
-                .blur(radius = feedBlurRadius)
+                .then(
+                    if (feedBlurRadius > 0.dp) Modifier.blur(radius = feedBlurRadius)
+                    else Modifier
+                )
         ) {
             LazyColumn(
                 state = listState,
@@ -867,3 +887,7 @@ fun PostCardShimmer() {
         )
     }
 }
+
+// 🌟 Shared media-type sniffing for feed videos (matches PostMediaCarousel's check).
+internal fun isFeedVideoUrl(url: String): Boolean =
+    url.endsWith(".mp4", ignoreCase = true) || url.contains("video_", ignoreCase = true)
