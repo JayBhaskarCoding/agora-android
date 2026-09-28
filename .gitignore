@@ -13,3 +13,8 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Local service credentials and Supabase CLI linkage state
+backend/.env
+firebase-credentials.json
+backend/supabase/.temp/
