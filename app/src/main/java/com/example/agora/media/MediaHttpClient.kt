@@ -146,14 +146,16 @@ object MediaHttpClient {
             if (!BuildConfig.DEBUG) return chain.proceed(request)
 
             val startedAt = SystemClock.elapsedRealtime()
-            try {
-                val response = chain.proceed(request)
-                Log.d(
-                    TAG,
-                    "${request.method} ${request.url} → HTTP ${response.code} " +
-                        "(${response.protocol}) in ${SystemClock.elapsedRealtime() - startedAt}ms"
-                )
-                response
+            // Block-bodied function with a declared return type: every path must return
+            // explicitly, so the try/catch is the returned expression.
+            return try {
+                chain.proceed(request).also { response ->
+                    Log.d(
+                        TAG,
+                        "${request.method} ${request.url} → HTTP ${response.code} " +
+                            "(${response.protocol}) in ${SystemClock.elapsedRealtime() - startedAt}ms"
+                    )
+                }
             } catch (e: IOException) {
                 // IOException here means no usable response at all: DNS, TCP, TLS or a
                 // peer that closed the socket. Same signature as the reported crash.
@@ -262,9 +264,12 @@ object MediaHttpClient {
         primary: String,
         alternateHost: String?,
         alternate: String?
-    ): String = when {
-        alternate == null ->
-            if (primary.startsWith("HTTP")) {
+    ): String {
+        val primaryAnswered = primary.startsWith("HTTP")
+
+        // No comparison host to test against (host is not Catbox, or no rewrite configured).
+        if (alternate == null) {
+            return if (primaryAnswered) {
                 "DIAGNOSIS: $host answers now (${primary.take(40)}…) — the failed play was most " +
                     "likely a stale pooled connection or a momentary network drop; OkHttp retries " +
                     "these automatically. If it recurs, look at the error code, not the host."
@@ -273,21 +278,26 @@ object MediaHttpClient {
                     "Check mobile data vs Wi-Fi and any VPN/captive portal, then compare with a " +
                     "browser on the same device."
             }
+        }
 
-        primary.startsWith("HTTP") ->
-            "DIAGNOSIS: $host is reachable — the failure was transport-level, not host-level. " +
-                "The next player error should survive OkHttp's retry."
+        val alternateAnswered = alternate.startsWith("HTTP")
 
-        alternate.startsWith("HTTP") ->
-            "DIAGNOSIS: $host is blocked on this network but $alternateHost works — this is an " +
-                "ISP/DNS-level block of $host, not a User-Agent or app bug. Fixes, in order of " +
-                "preference: (1) relay media through your own backend/domain, (2) enable " +
-                "HOST_REWRITES in MediaHttpClient, (3) let the user use a VPN or DNS-over-HTTPS."
+        return when {
+            primaryAnswered ->
+                "DIAGNOSIS: $host is reachable — the failure was transport-level, not host-level. " +
+                    "The next player error should survive OkHttp's retry."
 
-        else ->
-            "DIAGNOSIS: neither $host nor $alternateHost responded — the network path itself is " +
-                "broken (airplane mode, captive portal, dead DNS, or an aggressive middlebox). " +
-                "Retry on a different network to confirm."
+            alternateAnswered ->
+                "DIAGNOSIS: $host is blocked on this network but $alternateHost works — this is an " +
+                    "ISP/DNS-level block of $host, not a User-Agent or app bug. Fixes, in order of " +
+                    "preference: (1) relay media through your own backend/domain, (2) enable " +
+                    "HOST_REWRITES in MediaHttpClient, (3) let the user use a VPN or DNS-over-HTTPS."
+
+            else ->
+                "DIAGNOSIS: neither $host nor $alternateHost responded — the network path itself is " +
+                    "broken (airplane mode, captive portal, dead DNS, or an aggressive middlebox). " +
+                    "Retry on a different network to confirm."
+        }
     }
 
     private val WHITESPACE = Regex("\\s+")

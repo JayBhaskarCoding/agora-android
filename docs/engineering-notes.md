@@ -307,6 +307,14 @@ default. Recommended order:
 3. Ship the UA fix + probe and let the diagnostics prove the block before doing
    either.
 
+### Known gap
+
+This work was authored in an environment with no JDK or Android SDK, so it was
+reviewed against the media3 1.11.1 sources but never compiled. The first
+`assembleDebug` is the first real type-check — the first Kotlin-level mistake it
+found (a missing `return` in `MediaHttpClient`'s request interceptor, where a
+block-bodied function relied on a trailing expression) is fixed.
+
 ### Verify manually
 
 1. Play a Catbox video (feed, post detail, fullscreen). It must render instead of
