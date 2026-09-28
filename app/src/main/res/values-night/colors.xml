@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 🌟 Dark Mode Brand & Foreground Colors -->
+    <color name="agora_brand">#6366F1</color>
+    <color name="agora_foreground">#F3F4F6</color>
+</resources>

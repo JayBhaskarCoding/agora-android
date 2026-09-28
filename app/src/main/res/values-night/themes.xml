@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 🌟 Native Splash Screen Theme (Dark Mode: #0F172A - Same as Dark Feed Background) -->
+    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#0F172A</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/agora_splash</item>
+        <item name="windowSplashScreenAnimationDuration">800</item>
+        <item name="postSplashScreenTheme">@style/Theme.Agora</item>
+    </style>
+</resources>
