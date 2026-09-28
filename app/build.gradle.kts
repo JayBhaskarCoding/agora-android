@@ -1,9 +1,32 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     id("org.jetbrains.kotlin.plugin.serialization") version "2.4.10"
     id("com.google.gms.google-services")
 }
+
+val localProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.isFile) {
+        localPropertiesFile.inputStream().use(::load)
+    }
+}
+
+/**
+ * Resolves a local-only credential. CI can supply the same property with -P<PropertyName>.
+ */
+fun requiredLocalProperty(name: String): String =
+    (localProperties.getProperty(name) ?: providers.gradleProperty(name).orNull)
+        ?.takeIf { it.isNotBlank() }
+        ?: throw GradleException(
+            "Missing $name. Add it to local.properties (see local.properties.example) " +
+                "or provide it as a Gradle project property."
+        )
+
+fun String.asBuildConfigString(): String =
+    "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
 android {
     namespace = "com.example.agora"
@@ -19,6 +42,19 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // The anon key is expected to be public in a mobile app, but keeping it out of
+        // source control makes endpoint rotation and environment separation deliberate.
+        buildConfigField(
+            "String",
+            "SUPABASE_URL",
+            requiredLocalProperty("SUPABASE_URL").asBuildConfigString()
+        )
+        buildConfigField(
+            "String",
+            "SUPABASE_ANON_KEY",
+            requiredLocalProperty("SUPABASE_ANON_KEY").asBuildConfigString()
+        )
     }
 
     buildTypes {
@@ -34,6 +70,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

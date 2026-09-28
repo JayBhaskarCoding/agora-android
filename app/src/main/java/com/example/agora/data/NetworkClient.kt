@@ -1,6 +1,7 @@
 package com.example.agora.data
 
 import android.content.Context
+import com.example.agora.BuildConfig
 import com.russhwolf.settings.SharedPreferencesSettings
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.createSupabaseClient
@@ -32,8 +33,8 @@ fun initializeSupabase(context: Context) {
     }
 
     supabaseClient = createSupabaseClient(
-        supabaseUrl = "https://gbvwcvsmgxtpjqrocnrq.supabase.co",
-        supabaseKey = "sb_publishable_A180oobjeJBbwDQoMeOyWw_eAYr2cub"
+        supabaseUrl = BuildConfig.SUPABASE_URL,
+        supabaseKey = BuildConfig.SUPABASE_ANON_KEY
     ) {
         httpEngine = OkHttp.create()
         defaultSerializer = KotlinXSerializer(customJson)
