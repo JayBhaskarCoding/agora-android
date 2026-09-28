@@ -57,26 +57,40 @@ object ExoPlayerHelper {
                         error
                     )
 
-                    // HTTP-level failures are the interesting ones here: a 403 from
-                    // Catbox means bot protection rejected the request (User-Agent),
-                    // not that the file is missing. The response body is usually a
-                    // block page, which tells you which tier rejected us.
-                    val httpError = error.cause as? HttpDataSource.InvalidResponseCodeException
-                    if (httpError != null) {
+                    // Every HTTP-level failure funnels through HttpDataSourceException, so one
+                    // cast gives us the failing URL (for the network probe below); the status
+                    // code exists only on InvalidResponseCodeException. The distinction matters:
+                    // a 4xx/5xx means the host answered (bot protection, missing file), while an
+                    // exception *without* a status means the request never got a reply at all.
+                    val httpError = error.cause as? HttpDataSource.HttpDataSourceException
+                    val statusError = httpError as? HttpDataSource.InvalidResponseCodeException
+                    if (statusError != null) {
                         val body = String(
-                            httpError.responseBody,
+                            statusError.responseBody,
                             0,
-                            minOf(512, httpError.responseBody.size),
+                            minOf(512, statusError.responseBody.size),
                             Charsets.UTF_8
                         )
                         Log.e(
                             TAG,
-                            "Upstream HTTP ${httpError.responseCode} " +
-                                "(${httpError.responseMessage}) for ${httpError.dataSpec.uri} — " +
-                                "headers=${httpError.headerFields} — body=$body",
+                            "Upstream answered HTTP ${statusError.responseCode} " +
+                                "(${statusError.responseMessage}) for ${statusError.dataSpec.uri} " +
+                                "— headers=${statusError.headerFields} — body=$body",
+                            error
+                        )
+                    } else if (httpError != null) {
+                        Log.e(
+                            TAG,
+                            "Upstream never answered for ${httpError.dataSpec.uri} — " +
+                                "transport-level failure, no HTTP status was received.",
                             error
                         )
                     }
+
+                    // The failing URL lives on the DataSpec of whichever data source threw, not
+                    // on the player, so read it from the exception instead of currentMediaItem
+                    // (which may already have moved on). Debounced internally.
+                    httpError?.dataSpec?.uri?.toString()?.let(MediaHttpClient::diagnoseOnFailure)
                 }
             })
         }

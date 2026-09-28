@@ -229,37 +229,90 @@ end $$;
 
 ## 5. Catbox playback: black screen + 0-byte `media3_video_cache`
 
-### What was broken
+### Attempt 1 — User-Agent (necessary, but not sufficient)
 
-Catbox (`files.catbox.moe`) filters on the `User-Agent` header. Media3's
-`DefaultHttpDataSource` sends its own signature (`ExoPlayerLib/<version>`) unless
-told otherwise, so the host answered **403 with an HTML block page** instead of
-the MP4. The failure never reached the cache layer, which is why the symptom was
-a permanently black `PlayerView` while `cacheDir/media3_video_cache` stayed at
-0 bytes — the parser had no bytes to parse, and no one logged why.
+Media3's `DefaultHttpDataSource` identifies itself as `ExoPlayerLib/<version>`, and
+Catbox rejects that (and Coil's `okhttp/x.y.z`) with a **403 + HTML block page**.
+That alone explains a black `PlayerView` with an empty cache: no bytes reach the
+parser, so `cacheDir/media3_video_cache` stays at 0.
 
-Coil had the identical problem for video thumbnails: its `okhttp/x.y.z` UA was
-rejected the same way.
+Fixed by sending a desktop Chrome UA from a single constant, shared by the player
+upstream and Coil.
 
-### Fix
+### Attempt 2 — the real failure was transport, not headers
+
+The 403 hypothesis was disproved by the next device log:
+
+```
+Playback error: ERROR_CODE_IO_NETWORK_CONNECTION_FAILED (code=2001)
+  Caused by: HttpDataSourceException: IOException: unexpected end of stream
+  Caused by: EOFException: \n not found: size=0 content=...
+      at com.android.okhttp.internal.http.Http1xStream.readResponse(Http1xStream.java:203)
+      at androidx.media3.datasource.DefaultHttpDataSource.makeConnection(DefaultHttpDataSource.java:553)
+```
+
+Read the depth of that trace: **zero response bytes**, no HTTP status line, no
+`InvalidResponseCodeException`. The User-Agent was never rejected — the connection
+was closed before any headers came back. Two things conspired:
+
+1. `DefaultHttpDataSource` rides on `HttpURLConnection`, i.e. Android's *platform*
+   repackaged OkHttp (`com.android.okhttp`, note the namespace — different code
+   from the app's `okhttp3`). That stack reuses pooled sockets with no staleness
+   detection and no retry, so a keep-alive connection the peer closed while idle
+   detonates the next request exactly like this.
+2. `files.catbox.moe` is itself widely blocked by ISPs/DNS resolvers (there is a
+   whole userscript ecosystem that rewrites `files.catbox.moe` →
+   `files.pixstash.moe` just to work around it). In that case the request dies
+   before/at TCP and *no* header change can help.
+
+### What the code does now
 
 | File | Change |
 |---|---|
-| `media/VideoCache.kt` | `DefaultHttpDataSource.Factory().setUserAgent(VideoCache.USER_AGENT).setAllowCrossProtocolRedirects(true)` is now the upstream of every `CacheDataSource` — playback **and** `VideoPreloader` share it, so pre-cached bytes land in `SimpleCache`. |
-| `media/ExoPlayerHelper.kt` | Every player (feed pool, inline post player, fullscreen player, trimmer) now gets a `Player.Listener` that logs `onPlayerError` via `Log.e` — error code name/number, message, cause class/message, and for `InvalidResponseCodeException` the status code, URI, headers and a 512-byte body snippet. |
-| `AgoraApplication.kt` | Coil's shared `OkHttpClient` sends the same browser UA so `VideoFrameDecoder` thumbnails load from Catbox too. |
+| `media/MediaHttpClient.kt` **(new)** | One `OkHttpClient` for all remote media. `retryOnConnectionFailure` (fresh connection when a pooled one is dead) is the transport fix for failure (1); it also walks every resolved IP instead of only the first. Browser UA, timeouts tastefully short of a `callTimeout` (which would kill long progressive reads), and a debug-only request logger. Exposes `dataSourceFactory()` → `OkHttpDataSource.Factory` via `media3-datasource-okhttp`. |
+| `media/VideoCache.kt` | The `CacheDataSource` upstream is now `MediaHttpClient.dataSourceFactory()`. Playback **and** `VideoPreloader` share it, so pre-cached bytes land in `SimpleCache`. |
+| `media/ExoPlayerHelper.kt` | `onPlayerError` logs error code/message/cause, and now explicitly distinguishes *"host answered with HTTP nnn"* (status + headers + 512-byte body snippet) from *"host never answered"* (transport). Every failing URL triggers `MediaHttpClient.diagnoseOnFailure`. |
+| `AgoraApplication.kt` | Coil uses the same client, so thumbnails share UA/timeouts/retry instead of carrying their own `okhttp/<v>` UA. |
 
-The UA lives in one place (`VideoCache.USER_AGENT`) so player and thumbnail
-paths can't drift apart.
+### The failure probe (`adb logcat -s MediaHttp`)
+
+A player error alone can't separate "blocked by the network" from "our bug" —
+both are 2001. On failure the app now runs one debounced (30 s/URL) probe:
+
+```
+── playback failed for https://files.catbox.moe/x.mp4 — probing the network path ──
+DNS files.catbox.moe → 108.181.20.35 (IPv4)
+probe[files.catbox.moe] → FAILED after 10001ms — SocketTimeoutException: timeout
+probe[files.pixstash.moe] → HTTP 206 (h2) in 240ms — content-type=video/mp4, …
+DIAGNOSIS: files.catbox.moe is blocked on this network but files.pixstash.moe works
+— this is an ISP/DNS-level block, not a User-Agent or app bug. Fixes, in order of
+preference: (1) relay media through your own backend/domain, (2) enable
+HOST_REWRITES in MediaHttpClient, (3) let the user use a VPN or DNS-over-HTTPS.
+```
+
+### Escaping a blocked host
+
+`MediaHttpClient.HOST_REWRITES` maps host → host for every upstream request (the
+cache key follows the rewritten URI). It ships **empty on purpose**: pushing user
+media through a third-party mirror is a product/privacy decision, not a library
+default. Recommended order:
+
+1. **Relay through your own backend** (best): a Supabase Edge Function on
+   `auth-agora.info` that streams the object and caches it — user media then never
+   touches a host their ISP may block, and you drop a dependency on Catbox for
+   playback entirely. Requires a new Edge Function plus rewriting URLs at upload
+   time.
+2. `HOST_REWRITES = mapOf("files.catbox.moe" to "files.pixstash.moe")` — one line,
+   works today, but delegates privacy to a community passthrough.
+3. Ship the UA fix + probe and let the diagnostics prove the block before doing
+   either.
 
 ### Verify manually
 
-1. Play a Catbox video (feed, post detail, fullscreen). It must render instead
-   of going black, and `adb shell run-as com.example.agora ls -l cache/media3_video_cache`
+1. Play a Catbox video (feed, post detail, fullscreen). It must render instead of
+   going black; `adb shell run-as com.example.agora ls -l cache/media3_video_cache`
    must show non-zero files.
-2. If it still fails, `adb logcat -s ExoPlayerHelper` now prints the exact error:
-   * `ERROR_CODE_IO_BAD_HTTP_STATUS` + `403` → still UA/bot-protection (check for a
-     Cloudflare challenge page in the logged body; that needs a different fix).
-   * `ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT` → connectivity, not Catbox.
-   * `ERROR_CODE_PARSING_CONTAINER_MALFORMED` → real bytes arrived, but the file
-     itself is not playable (e.g. truncated/failed upload).
+2. On failure: `adb logcat -s ExoPlayerHelper MediaHttp` prints (a) whether an HTTP
+   status existed, and (b) the DNS/probe verdict naming the guilty layer.
+3. Turn on Wi-Fi *and* mobile data (and a VPN) to see whether the verdict changes —
+   a block that disappears on one path is an ISP block, not an app bug.
