@@ -602,8 +602,6 @@ class AuthViewModel : ViewModel() {
                     val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
                     val token = googleIdTokenCredential.idToken
 
-                    Log.d("GoogleAuth", "Retrieved Google ID Token: $token")
-
                     // 🌟 CRITICAL: Authenticate with Supabase Auth using Google ID Token via IDToken provider
                     claimDeviceOnNextSession = true
                     withContext(Dispatchers.IO) {

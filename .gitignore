@@ -18,3 +18,7 @@ local.properties
 backend/.env
 firebase-credentials.json
 backend/supabase/.temp/
+/backend/.env
+/firebase-credentials.json
+/backend/supabase/.temp/
+/supabase/.temp/
