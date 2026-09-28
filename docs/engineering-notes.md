@@ -208,7 +208,7 @@ end $$;
 **New:** `navigation/DeepLinkRouter.kt`, `viewmodel/PostDetailViewModel.kt`,
 `media/FeedPlayerPool.kt`, `media/VideoPreloader.kt`, `data/DeviceIdProvider.kt`,
 `service/SessionConflictRelay.kt`,
-`backend/supabase/migrations/20260928000000_single_device_login.sql`
+`backend/supabase/migrations/20990101000000_single_device_login.sql`
 
 **Reworked:** `service/PushNotificationService.kt`, `MainActivity.kt`,
 `ui/MainScreen.kt`, `ui/SinglePostScreen.kt`, `ui/FeedScreen.kt`,

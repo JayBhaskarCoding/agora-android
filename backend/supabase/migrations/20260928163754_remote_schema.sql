@@ -94,11 +94,9 @@ CREATE OR REPLACE FUNCTION public.broadcast_new_post()
   AS $function$
 BEGIN
   PERFORM net.http_post(
-    url := 'https://gbvwcvsmgxtpjqrocnrq.supabase.co/functions/v1/broadcast-post',
+    url := 'https://sepvcatdqrnzjuvxabzh.supabase.co/functions/v1/broadcast-post',
     headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdidndjdnNtZ3h0cGpxcm9jbnJxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc2ODg4ODYsImV4cCI6MjEwMzI2NDg4Nn0.tfw0_B2lCgBiIJVmKcb9c2BYZ3bjhI59t40fIF89hTk' 
-    ),
+      'Content-Type', 'application/json'),
     body := jsonb_build_object(
       'type', 'INSERT',
       'table', TG_TABLE_NAME,
@@ -146,11 +144,9 @@ CREATE OR REPLACE FUNCTION public.send_push_notification()
   AS $function$
 BEGIN
   PERFORM net.http_post(
-    url := 'https://gbvwcvsmgxtpjqrocnrq.supabase.co/functions/v1/push-notification',
+    url := 'https://sepvcatdqrnzjuvxabzh.supabase.co/functions/v1/push-notification',
     headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'Authorization', 'Bearer sb_publishable_A180oobjeJBbwDQoMeOyWw_eAYr2cub'
-    ),
+      'Content-Type', 'application/json'),
     body := jsonb_build_object(
       'type', 'INSERT',
       'table', TG_TABLE_NAME,
