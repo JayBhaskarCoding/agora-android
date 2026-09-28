@@ -224,3 +224,42 @@ end $$;
    {"post_id": "…", "sender_id": "<other-user>"}`), background the app, tap it.
 3. Log in on a second device/emulator with the same account: within ~5 s the
    first device must show the non-dismissible dialog, then land on Login.
+
+---
+
+## 5. Catbox playback: black screen + 0-byte `media3_video_cache`
+
+### What was broken
+
+Catbox (`files.catbox.moe`) filters on the `User-Agent` header. Media3's
+`DefaultHttpDataSource` sends its own signature (`ExoPlayerLib/<version>`) unless
+told otherwise, so the host answered **403 with an HTML block page** instead of
+the MP4. The failure never reached the cache layer, which is why the symptom was
+a permanently black `PlayerView` while `cacheDir/media3_video_cache` stayed at
+0 bytes — the parser had no bytes to parse, and no one logged why.
+
+Coil had the identical problem for video thumbnails: its `okhttp/x.y.z` UA was
+rejected the same way.
+
+### Fix
+
+| File | Change |
+|---|---|
+| `media/VideoCache.kt` | `DefaultHttpDataSource.Factory().setUserAgent(VideoCache.USER_AGENT).setAllowCrossProtocolRedirects(true)` is now the upstream of every `CacheDataSource` — playback **and** `VideoPreloader` share it, so pre-cached bytes land in `SimpleCache`. |
+| `media/ExoPlayerHelper.kt` | Every player (feed pool, inline post player, fullscreen player, trimmer) now gets a `Player.Listener` that logs `onPlayerError` via `Log.e` — error code name/number, message, cause class/message, and for `InvalidResponseCodeException` the status code, URI, headers and a 512-byte body snippet. |
+| `AgoraApplication.kt` | Coil's shared `OkHttpClient` sends the same browser UA so `VideoFrameDecoder` thumbnails load from Catbox too. |
+
+The UA lives in one place (`VideoCache.USER_AGENT`) so player and thumbnail
+paths can't drift apart.
+
+### Verify manually
+
+1. Play a Catbox video (feed, post detail, fullscreen). It must render instead
+   of going black, and `adb shell run-as com.example.agora ls -l cache/media3_video_cache`
+   must show non-zero files.
+2. If it still fails, `adb logcat -s ExoPlayerHelper` now prints the exact error:
+   * `ERROR_CODE_IO_BAD_HTTP_STATUS` + `403` → still UA/bot-protection (check for a
+     Cloudflare challenge page in the logged body; that needs a different fix).
+   * `ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT` → connectivity, not Catbox.
+   * `ERROR_CODE_PARSING_CONTAINER_MALFORMED` → real bytes arrived, but the file
+     itself is not playable (e.g. truncated/failed upload).

@@ -6,6 +6,8 @@ import coil.ImageLoaderFactory
 import coil.decode.VideoFrameDecoder
 import com.example.agora.data.DeviceIdProvider
 import com.example.agora.data.initializeSupabase
+import com.example.agora.media.VideoCache
+import okhttp3.OkHttpClient
 
 class AgoraApplication : Application(), ImageLoaderFactory {
 
@@ -25,6 +27,20 @@ class AgoraApplication : Application(), ImageLoaderFactory {
     override fun newImageLoader(): ImageLoader {
         // Lazily created by Coil on first image request — never on the startup critical path.
         return ImageLoader.Builder(this)
+            // Video thumbnails are decoded from the same Catbox URLs ExoPlayer plays.
+            // Coil's default UA (`okhttp/x.y.z`) is rejected exactly like ExoPlayer's,
+            // so thumbnails share the browser UA from VideoCache.
+            .okHttpClient {
+                OkHttpClient.Builder()
+                    .addInterceptor { chain ->
+                        chain.proceed(
+                            chain.request().newBuilder()
+                                .header("User-Agent", VideoCache.USER_AGENT)
+                                .build()
+                        )
+                    }
+                    .build()
+            }
             .components {
                 add(VideoFrameDecoder.Factory())
             }
