@@ -62,21 +62,17 @@ object VideoPreloader {
             /* position = */ 0L,
             /* length = */ PRECACHE_BYTES
         )
-        val input = dataSource.open(dataSpec)
         try {
+            dataSource.open(dataSpec)
             val buffer = ByteArray(64 * 1024)
             var total = 0L
             while (total < PRECACHE_BYTES) {
                 val toRead = minOf(buffer.size.toLong(), PRECACHE_BYTES - total).toInt()
-                val read = input.read(buffer, 0, toRead)
-                if (read == -1) break
+                val read = dataSource.read(buffer, 0, toRead)
+                if (read < 0) break
                 total += read
             }
         } finally {
-            try {
-                input.close()
-            } catch (_: Exception) {
-            }
             try {
                 dataSource.close()
             } catch (_: Exception) {

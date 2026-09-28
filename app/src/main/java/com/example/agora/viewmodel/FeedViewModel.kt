@@ -60,6 +60,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.UUID
@@ -775,7 +776,6 @@ class FeedViewModel : ViewModel() {
 
                 _uploadState.value = UploadState.Uploading(0.8f, "Saving changes...")
                 val finalUrls = keptUrls + uploadedUrls
-                val userId = currentUserId ?: return@launch
 
                 withContext(Dispatchers.IO) {
                     val updateRequest = PostUpdateRequest(
