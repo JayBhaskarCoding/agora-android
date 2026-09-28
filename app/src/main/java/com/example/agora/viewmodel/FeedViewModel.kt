@@ -742,6 +742,7 @@ class FeedViewModel : ViewModel() {
                 _uploadState.value = UploadState.Uploading(0.1f, "Updating post...")
                 val uploadedUrls = mutableListOf<String>()
                 val appContext = context.applicationContext
+                val userId = currentUserId ?: return@launch
 
                 if (newImageUris.isNotEmpty()) {
                     val progressStep = 0.6f / newImageUris.size
@@ -753,7 +754,7 @@ class FeedViewModel : ViewModel() {
                         val publicUrl = withContext(Dispatchers.IO) {
                             val bytes = compressImage(appContext, uri)
                             if (bytes.isNotEmpty()) {
-                                val fileName = "${UUID.randomUUID()}.webp"
+                                val fileName = "${userId}/${UUID.randomUUID()}.webp"
                                 try {
                                     supabaseClient.storage.from("post-media").upload(fileName, bytes)
                                     supabaseClient.storage.from("post-media").publicUrl(fileName)

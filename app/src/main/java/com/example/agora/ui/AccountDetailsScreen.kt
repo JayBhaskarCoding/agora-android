@@ -138,7 +138,7 @@ fun AccountDetailsScreen(
                     }
 
                     if (bytes != null) {
-                        val fileName = "${currentUser.id}_${UUID.randomUUID()}.jpg"
+                        val fileName = "${currentUser.id}/${UUID.randomUUID()}.jpg"
                         supabaseClient.storage.from("avatars").upload(fileName, bytes)
                         val newAvatarUrl = supabaseClient.storage.from("avatars").publicUrl(fileName)
                         supabaseClient.from("profiles").update(mapOf("avatar_url" to newAvatarUrl)) { filter { eq("id", currentUser.id) } }

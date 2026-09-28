@@ -28,7 +28,6 @@ class PushNotificationService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
-        Log.d(TAG, "Refreshed FCM Token: $token")
 
         val currentUser = supabaseClient.auth.currentUserOrNull()
         if (currentUser != null) {

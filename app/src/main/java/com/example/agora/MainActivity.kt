@@ -67,7 +67,6 @@ fun syncFcmTokenAndSubscribeTopics() {
         val token = task.result ?: return@addOnCompleteListener
         val currentUser = supabaseClient.auth.currentUserOrNull() ?: return@addOnCompleteListener
 
-        Log.d("FCM", "Fetched FCM Registration Token: $token")
 
         CoroutineScope(Dispatchers.IO).launch {
             try {

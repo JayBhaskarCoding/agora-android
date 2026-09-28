@@ -1,0 +1,4 @@
+# Copy this file to local.properties. local.properties is intentionally ignored by Git.
+# CI may instead provide these values as Gradle project properties (-PSUPABASE_URL=...).
+SUPABASE_URL=https://sepvcatdqrnzjuvxabzh.supabase.co
+SUPABASE_ANON_KEY=replace-with-the-Agora-Backup-anon-key

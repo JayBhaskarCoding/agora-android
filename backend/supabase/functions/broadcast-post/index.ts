@@ -13,6 +13,16 @@ interface WebhookPayload {
 }
 
 serve(async (req) => {
+  const expectedWebhookSecret = Deno.env.get("WEBHOOK_SECRET");
+  const receivedWebhookSecret = req.headers.get("x-webhook-secret");
+
+  if (!expectedWebhookSecret || receivedWebhookSecret !== expectedWebhookSecret) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   try {
     const payload: WebhookPayload = await req.json();
     const post = payload.record;
