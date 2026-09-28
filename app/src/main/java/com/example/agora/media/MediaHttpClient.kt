@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
 import java.io.IOException
@@ -101,9 +102,18 @@ object MediaHttpClient {
     val okHttpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             // Retry idempotent requests on a fresh connection when a pooled one is dead.
-            // This is the fix for the EOF-before-headers failure above; it is also the
-            // default, but stated explicitly because the whole design leans on it.
+            // This is the fix for the EOF-before-headers failure we hit earlier; it is also
+            // the OkHttp default, but stated explicitly because the design leans on it.
             .retryOnConnectionFailure(true)
+            // Pinned to HTTP/1.1 on purpose. On carrier networks that hand out NAT64
+            // addresses (a `64:ff9b::/96` DNS answer) plus an inspecting middlebox, HTTP/2
+            // negotiation *succeeds* and then every request dies with
+            //   StreamResetException: stream was reset: PROTOCOL_ERROR
+            // — an RST_STREAM the client cannot retry its way out of (observed: 6 attempts,
+            // 17 s, no bytes). HTTP/1.1 has no multiplexed stream state for a middlebox to
+            // desynchronise. Media transfers are a single long stream, so multiplexing buys
+            // us nothing anyway; the cost is a separate connection per concurrent image.
+            .protocols(listOf(Protocol.HTTP_1_1))
             .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .addInterceptor(browserHeaderInterceptor())
@@ -114,6 +124,13 @@ object MediaHttpClient {
     private val probeClient: OkHttpClient by lazy {
         okHttpClient.newBuilder()
             .callTimeout(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .build()
+    }
+
+    /** HTTP/2-only twin of [probeClient], used purely to demonstrate the H2 contrast. */
+    private val http2ProbeClient: OkHttpClient by lazy {
+        probeClient.newBuilder()
+            .protocols(listOf(Protocol.HTTP_2))
             .build()
     }
 
@@ -200,17 +217,22 @@ object MediaHttpClient {
         Log.e(TAG, "── playback failed for $url — probing the network path ──")
         logDnsResolution(host)
 
-        val primary = probe(url)
-        Log.e(TAG, "probe[$host] → $primary")
+        val primary = probe(url, probeClient, "HTTP/1.1")
+        Log.e(TAG, "probe[$host] (HTTP/1.1) → $primary")
+
+        val http2 = probe(url, http2ProbeClient, "HTTP/2")
+        Log.e(TAG, "probe[$host] (HTTP/2) → $http2")
 
         val alternateHost =
             if (host == CATBOX_HOST) DIAGNOSTIC_ALTERNATE_HOST else HOST_REWRITES[host]
         val alternate = alternateHost?.let { alternateHost ->
             val alternateUrl = uri.buildUpon().authority(alternateHost).build().toString()
-            probe(alternateUrl).also { Log.e(TAG, "probe[$alternateHost] → $it") }
+            probe(alternateUrl, probeClient, "HTTP/1.1").also {
+                Log.e(TAG, "probe[$alternateHost] (HTTP/1.1) → $it")
+            }
         }
 
-        Log.e(TAG, conclusionFor(host, primary, alternateHost, alternate))
+        Log.e(TAG, conclusionFor(host, primary, http2, alternateHost, alternate))
     }
 
     private fun logDnsResolution(host: String) {
@@ -234,7 +256,7 @@ object MediaHttpClient {
     }
 
     /** Blocking single request; always called from [Dispatchers.IO]. */
-    private fun probe(url: String): String {
+    private fun probe(url: String, client: OkHttpClient, label: String): String {
         val startedAt = SystemClock.elapsedRealtime()
         return try {
             val request = Request.Builder()
@@ -242,7 +264,7 @@ object MediaHttpClient {
                 .header("User-Agent", USER_AGENT)
                 .header("Range", "bytes=0-0")
                 .build()
-            probeClient.newCall(request).execute().use { response ->
+            client.newCall(request).execute().use { response ->
                 val elapsed = SystemClock.elapsedRealtime() - startedAt
                 val snippet = runCatching {
                     response.peekBody(PROBE_BODY_BYTES).string().replace(WHITESPACE, " ").take(120)
@@ -259,45 +281,54 @@ object MediaHttpClient {
         }
     }
 
+    /** Extracts the HTTP status a probe reported, or null when it never got a response. */
+    private fun statusOf(probeResult: String): Int? =
+        if (probeResult.startsWith("HTTP")) {
+            probeResult.removePrefix("HTTP ").takeWhile { it.isDigit() }.toIntOrNull()
+        } else null
+
     private fun conclusionFor(
         host: String,
         primary: String,
+        http2: String,
         alternateHost: String?,
         alternate: String?
     ): String {
-        val primaryAnswered = primary.startsWith("HTTP")
+        val primaryStatus = statusOf(primary)
+        val http2Status = statusOf(http2)
+        val alternateStatus = alternate?.let(::statusOf)
 
-        // No comparison host to test against (host is not Catbox, or no rewrite configured).
-        if (alternate == null) {
-            return if (primaryAnswered) {
-                "DIAGNOSIS: $host answers now (${primary.take(40)}…) — the failed play was most " +
-                    "likely a stale pooled connection or a momentary network drop; OkHttp retries " +
-                    "these automatically. If it recurs, look at the error code, not the host."
-            } else {
-                "DIAGNOSIS: $host is unreachable from this network (no HTTP response at all). " +
-                    "Check mobile data vs Wi-Fi and any VPN/captive portal, then compare with a " +
-                    "browser on the same device."
-            }
+        // The HTTP/2 contrast is the most specific finding, so it wins when present.
+        if (primaryStatus != null && http2Status == null) {
+            return "DIAGNOSIS: HTTP/1.1 reaches $host but HTTP/2 dies (" +
+                "stream reset / no response) — your network's HTTP/2 path to this host is " +
+                "broken by NAT64 or an inspecting middlebox. Media is pinned to HTTP/1.1, so " +
+                "this is already worked around; no user action needed."
         }
 
-        val alternateAnswered = alternate.startsWith("HTTP")
-
-        return when {
-            primaryAnswered ->
-                "DIAGNOSIS: $host is reachable — the failure was transport-level, not host-level. " +
-                    "The next player error should survive OkHttp's retry."
-
-            alternateAnswered ->
-                "DIAGNOSIS: $host is blocked on this network but $alternateHost works — this is an " +
-                    "ISP/DNS-level block of $host, not a User-Agent or app bug. Fixes, in order of " +
-                    "preference: (1) relay media through your own backend/domain, (2) enable " +
-                    "HOST_REWRITES in MediaHttpClient, (3) let the user use a VPN or DNS-over-HTTPS."
-
-            else ->
-                "DIAGNOSIS: neither $host nor $alternateHost responded — the network path itself is " +
-                    "broken (airplane mode, captive portal, dead DNS, or an aggressive middlebox). " +
-                    "Retry on a different network to confirm."
+        if (primaryStatus == null && alternateStatus != null) {
+            return "DIAGNOSIS: $host is unreachable on this network but $alternateHost answers — " +
+                "the host is blocked (ISP/DNS/middlebox), not the app. Fixes, in order of " +
+                "preference: (1) relay media through your own backend/domain, (2) enable " +
+                "HOST_REWRITES in MediaHttpClient, (3) let the user use a VPN or DNS-over-HTTPS."
         }
+
+        if (primaryStatus == null && alternate == null) {
+            return "DIAGNOSIS: $host is unreachable from this network (no HTTP response at all), " +
+                "and no comparison host is configured. Check mobile data vs Wi-Fi and any " +
+                "VPN/captive portal, then compare with a browser on the same device."
+        }
+
+        if (primaryStatus == null) {
+            return "DIAGNOSIS: neither $host nor $alternateHost responded — the network path " +
+                "itself is broken (airplane mode, captive portal, dead DNS, or an aggressive " +
+                "middlebox). Retry on a different network to confirm."
+        }
+
+        return "DIAGNOSIS: $host answers now (HTTP $primaryStatus) — the failed play was most " +
+            "likely a pooled connection that had already been closed, or a momentary network " +
+            "drop. OkHttp retries these; if it recurs, the status in this line is the thing to " +
+            "look at."
     }
 
     private val WHITESPACE = Regex("\\s+")

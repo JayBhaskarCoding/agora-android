@@ -324,3 +324,52 @@ block-bodied function relied on a trailing expression) is fixed.
    status existed, and (b) the DNS/probe verdict naming the guilty layer.
 3. Turn on Wi-Fi *and* mobile data (and a VPN) to see whether the verdict changes —
    a block that disappears on one path is an ISP block, not an app bug.
+
+---
+
+## 6. Posts blank / black on a *different* device
+
+### Symptom
+
+Media posted from device A renders there, but on device B (fresh install, same account)
+the post shows no image and a black video frame.
+
+### Why it looked device-specific
+
+Device A renders from **cache** — Coil's disk/memory cache for images, `SimpleCache` for
+video — so it keeps working even when the media host is unreachable. Device B has an empty
+cache and must fetch from `files.catbox.moe`, which is exactly the host failing in §5. Two
+separate defects made this worse:
+
+1. **`FeedViewModel.createPost` dropped failed uploads silently.** Uploads are mapped with
+   `async { CatboxClient.uploadBytes(...) }.awaitAll().filterNotNull()`, so an upload that
+   fails (very likely when Catbox is blocked) simply disappears, and the post row is still
+   inserted with `media_urls = []`. The author sees their local preview; every other device
+   sees a post with no media — **permanently**, because the bytes were never stored anywhere.
+2. **`PostMediaCarousel` used `AsyncImage` with no error slot**, so a failed load renders
+   nothing at all — indistinguishable from "post has no media". A black `PlayerView` is the
+   video equivalent of the same silence.
+
+### Fix
+
+| File | Change |
+|---|---|
+| `viewmodel/FeedViewModel.kt` | `createPost` and `savePostChanges` now **abort and tell the user** when any media upload fails (`UploadState.Error` + a `FeedUpload` Logcat line), instead of persisting a post with lost media. |
+| `ui/PostMediaCarousel.kt` | Images load through `SubcomposeAsyncImage` with explicit loading/error states: failures show a "Media unavailable" placeholder, and the URL + throwable are logged under tag `PostMedia`. A blank box can no longer masquerade as a post without media. |
+
+### The durable fix (not yet implemented)
+
+Both §5 and this section point at the same conclusion: **stop storing user media on
+Catbox.** The app already requires Supabase to be reachable for everything else, so media
+hosted in Supabase Storage has no *new* failure mode, whereas Catbox adds a host that is
+blocked on many networks (and is a third party that can delete files).
+
+There is already a partial precedent in the codebase: `editPost` uploads to the
+`post-media` bucket (falling back to `post_images`) and stores `publicUrl(...)`, while
+`createPost` still posts to Catbox — so the same app already produces both kinds of URLs.
+
+Recommended migration:
+1. Point `createPost` at Supabase Storage (same two-bucket fallback as `editPost`).
+2. Add a `MediaStorage` seam so the upload target is one decision in one file.
+3. Backfill: posts whose `media_urls` still reference `files.catbox.moe` can be re-hosted
+   lazily on first successful fetch, or left to whatever `HOST_REWRITES` route is chosen.

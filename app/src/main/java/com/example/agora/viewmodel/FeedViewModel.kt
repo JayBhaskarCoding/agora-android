@@ -11,6 +11,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import android.util.Log
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Composition
@@ -653,6 +654,28 @@ class FeedViewModel : ViewModel() {
                     emptyList()
                 }
 
+                // A failed upload used to be dropped silently by `filterNotNull()`, so the
+                // post was still inserted — with empty media_urls. On the author's device the
+                // media looked fine (it was still a local Uri / in Coil's cache); on any other
+                // device the post rendered with no image and a black video, permanently. Refuse
+                // to persist a post whose media did not land.
+                if (mediaUris.isNotEmpty() && uploadedUrls.size < mediaUris.size) {
+                    Log.e(
+                        "FeedUpload",
+                        "Aborting createPost: only ${uploadedUrls.size}/${mediaUris.size} media " +
+                            "items uploaded (media host unreachable?) — not saving a post with " +
+                            "lost media"
+                    )
+                    _uploadState.value = UploadState.Error(
+                        "Couldn't upload ${mediaUris.size - uploadedUrls.size} of " +
+                            "${mediaUris.size} media item(s). Nothing was posted — check your " +
+                            "connection and try again."
+                    )
+                    delay(3500.milliseconds)
+                    _uploadState.value = UploadState.Idle
+                    return@launch
+                }
+
                 _uploadState.value = UploadState.Uploading(0.85f, "Saving post to database...")
                 val userId = currentUserId ?: return@launch
 
@@ -846,6 +869,22 @@ class FeedViewModel : ViewModel() {
 
                 val finalMediaUrls = keptRemoteUrls + newUploadedUrls
                 val userId = currentUserId ?: return@launch
+
+                // Same silent-loss guard as createPost: never save an edit that drops media.
+                if (newLocalUris.isNotEmpty() && newUploadedUrls.size < newLocalUris.size) {
+                    Log.e(
+                        "FeedUpload",
+                        "Aborting savePostChanges: only ${newUploadedUrls.size}/" +
+                            "${newLocalUris.size} new media items uploaded"
+                    )
+                    _uploadState.value = UploadState.Error(
+                        "Couldn't upload ${newLocalUris.size - newUploadedUrls.size} of " +
+                            "${newLocalUris.size} media item(s). Your changes were not saved."
+                    )
+                    delay(3500.milliseconds)
+                    _uploadState.value = UploadState.Idle
+                    return@launch
+                }
 
                 _uploadState.value = UploadState.Uploading(0.85f, "Saving changes...")
                 withContext(Dispatchers.IO) {

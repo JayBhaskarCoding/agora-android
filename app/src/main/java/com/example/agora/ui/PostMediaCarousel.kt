@@ -1,5 +1,6 @@
 package com.example.agora.ui
 
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -7,15 +8,25 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BrokenImage
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
+import androidx.compose.ui.unit.sp
+import coil.compose.SubcomposeAsyncImage
+import coil.request.ImageRequest
+
+private const val TAG = "PostMedia"
 
 @Composable
 fun PostMediaCarousel(
@@ -48,13 +59,10 @@ fun PostMediaCarousel(
                         modifier = Modifier.fillMaxSize()
                     )
                 } else {
-                    AsyncImage(
-                        model = url,
-                        contentDescription = "Post Image",
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clickable { onMediaClick(url) },
-                        contentScale = ContentScale.Crop
+                    PostMediaImage(
+                        url = url,
+                        onClick = { onMediaClick(url) },
+                        modifier = Modifier.fillMaxSize()
                     )
                 }
             }
@@ -82,6 +90,71 @@ fun PostMediaCarousel(
                             )
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * A post image with an explicit failure state.
+ *
+ * `AsyncImage` with no error slot renders *nothing* when the fetch fails, which is
+ * indistinguishable from a post that has no media — the exact symptom reported when a post
+ * was opened on a device whose network cannot reach the media host. `SubcomposeAsyncImage`
+ * lets the failure be shown and logged (URL + reason) instead of swallowed.
+ */
+@Composable
+private fun PostMediaImage(
+    url: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val request = remember(context, url) {
+        ImageRequest.Builder(context)
+            .data(url)
+            .listener(onError = { _, throwable ->
+                Log.e(
+                    TAG,
+                    "Post image failed to load: $url — " +
+                        "${throwable.javaClass.simpleName}: ${throwable.message}",
+                    throwable
+                )
+            })
+            .build()
+    }
+
+    SubcomposeAsyncImage(
+        model = request,
+        contentDescription = "Post Image",
+        modifier = modifier.clickable { onClick() },
+        contentScale = ContentScale.Crop,
+        loading = { PostMediaPlaceholder(text = null) },
+        error = { PostMediaPlaceholder(text = "Media unavailable") }
+    )
+}
+
+@Composable
+private fun PostMediaPlaceholder(text: String?) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center
+    ) {
+        if (text != null) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    imageVector = Icons.Default.BrokenImage,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = text,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
