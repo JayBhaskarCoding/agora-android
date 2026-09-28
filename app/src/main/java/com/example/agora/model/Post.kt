@@ -1,10 +1,12 @@
 package com.example.agora.model
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 
+@Immutable
 @Serializable
 data class AuthorProfile(
     @SerialName("first_name") val firstName: String? = "User",
@@ -13,6 +15,13 @@ data class AuthorProfile(
     @SerialName("avatar_url") val avatarUrl: String? = null
 )
 
+/**
+ * Feed/post domain model. Marked [Immutable] so the Compose compiler can skip
+ * recomposition of post cards when the list is replaced with an equal copy.
+ * All properties are derived from the immutable constructor params and are
+ * precomputed once (instead of `get()`) to keep recompositions cheap.
+ */
+@Immutable
 @Serializable
 data class Post(
     val id: String = "",
@@ -27,12 +36,12 @@ data class Post(
     val myReaction: String? = null,
     @SerialName("profiles") val authorProfile: AuthorProfile? = null
 ) {
-    val imageUrls: List<String> get() = mediaUrls.ifEmpty { fallbackImageUrls }
-    val timeAgo: String get() = formatTimestamp(createdAt)
+    val imageUrls: List<String> = mediaUrls.ifEmpty { fallbackImageUrls }
+    val timeAgo: String = formatTimestamp(createdAt)
 
-    val firstName: String get() = authorProfile?.firstName?.ifBlank { null } ?: "User"
-    val handle: String get() = authorProfile?.handle?.ifBlank { null } ?: "user"
-    val userAvatarUrl: String? get() = authorProfile?.avatarUrl
+    val firstName: String = authorProfile?.firstName?.ifBlank { null } ?: "User"
+    val handle: String = authorProfile?.handle?.ifBlank { null } ?: "user"
+    val userAvatarUrl: String? = authorProfile?.avatarUrl
 
     private fun formatTimestamp(instantString: String?): String {
         if (instantString.isNullOrBlank()) return "Just now"

@@ -10,8 +10,10 @@ import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.NoCredentialException
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.agora.data.DeviceIdProvider
 import com.example.agora.data.supabaseClient
 import com.example.agora.model.Profile
+import com.example.agora.service.SessionConflictRelay
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import io.github.jan.supabase.auth.OtpType
@@ -29,12 +31,12 @@ import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.postgrest.rpc
 import io.github.jan.supabase.realtime.PostgresAction
 import io.github.jan.supabase.realtime.RealtimeChannel
-import io.github.jan.supabase.realtime.broadcast.BroadcastPayload
 import io.github.jan.supabase.realtime.channel
 import io.github.jan.supabase.realtime.postgresChangeFlow
 import io.github.jan.supabase.realtime.realtime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -42,6 +44,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -51,17 +54,26 @@ import java.util.UUID
 
 enum class PasswordResetStep { EMAIL, OTP, NEW_PASSWORD }
 
+/** Polling fallback for the single-device claim check (Realtime is the fast path). */
+private const val DEVICE_CLAIM_POLL_INTERVAL_MS = 5_000L
+
 class AuthViewModel : ViewModel() {
 
     private var activeSessionChannel: RealtimeChannel? = null
     private var sessionConflictJob: Job? = null
 
+    /**
+     * Set to true immediately before an explicit sign-in so that the next
+     * [startDeviceSession] claims this device (latest login wins). Cold starts
+     * never set it: they validate the existing claim instead of stealing it.
+     */
+    @Volatile
+    private var claimDeviceOnNextSession = false
+
     val sessionStatus = supabaseClient.auth.sessionStatus
 
     private val _remoteLogoutEvent = MutableStateFlow(false)
     val remoteLogoutEvent: StateFlow<Boolean> = _remoteLogoutEvent.asStateFlow()
-
-    private var localSessionId: String = ""
 
     private val _userState = MutableStateFlow<UserInfo?>(null)
     val userState: StateFlow<UserInfo?> = _userState.asStateFlow()
@@ -90,12 +102,22 @@ class AuthViewModel : ViewModel() {
     private val resendTimestamps = mutableListOf<Long>()
 
     init {
+        // Global session-revoked events (Realtime or polling) -> flag for the
+        // root UI to show the mandatory dialog. The session itself is only
+        // cleared after the user acknowledges it ([confirmRemoteLogout]).
+        viewModelScope.launch {
+            SessionConflictRelay.events.collect {
+                stopDeviceListeners()
+                _remoteLogoutEvent.value = true
+            }
+        }
+
         viewModelScope.launch {
             val currentUser = supabaseClient.auth.currentUserOrNull()
             _userState.value = currentUser
 
             currentUser?.id?.let { userId ->
-                listenForSessionConflicts(userId)
+                startDeviceSession(userId)
             }
 
             supabaseClient.auth.sessionStatus.collect { status ->
@@ -104,9 +126,7 @@ class AuthViewModel : ViewModel() {
                         val user = status.session.user
                         _userState.value = user
                         user?.id?.let { userId ->
-                            if (activeSessionChannel == null || localSessionId.isBlank()) {
-                                listenForSessionConflicts(userId)
-                            }
+                            startDeviceSession(userId)
                             // Verify profile completeness to guard against abandoned onboarding on cold start
                             verifyProfileCompleteness(userId)
                         }
@@ -141,9 +161,11 @@ class AuthViewModel : ViewModel() {
                 _isCheckingProfileCompleteness.value = true
                 hasCompletedColdStartCheck = true
 
-                val profile = supabaseClient.from("profiles")
-                    .select { filter { eq("id", userId) } }
-                    .decodeSingleOrNull<Profile>()
+                val profile = withContext(Dispatchers.IO) {
+                    supabaseClient.from("profiles")
+                        .select { filter { eq("id", userId) } }
+                        .decodeSingleOrNull<Profile>()
+                }
 
                 val isIncomplete = profile == null ||
                         profile.firstName == "Pending" ||
@@ -219,127 +241,151 @@ class AuthViewModel : ViewModel() {
         }
     }
 
-    private suspend fun broadcastSessionChange(userId: String, newSessionId: String) {
-        val enableRealtime = false
-        if (!enableRealtime) return
+    // =====================================================================================
+    // SINGLE-DEVICE LOGIN POLICY
+    //
+    // profiles.current_device_id holds the device id (UUID persisted on-device) of the
+    // device that currently owns the session. Explicit logins claim the column (latest
+    // login wins); every running device watches the column (Supabase Realtime + polling
+    // fallback) and raises a global SessionConflictRelay event when it no longer matches.
+    // =====================================================================================
 
-        try {
-            val channel = supabaseClient.channel("session_conflict_$userId")
-            channel.subscribe()
-            channel.broadcast(
-                event = "session_changed",
-                payload = BroadcastPayload.Json(buildJsonObject { put("session_id", newSessionId) })
-            )
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    private fun listenForSessionConflicts(userId: String, explicitSessionId: String? = null) {
-        val enableRealtime = false
-        if (!enableRealtime) return
-
-        val previousJob = sessionConflictJob
-        val previousChannel = activeSessionChannel
-
-        sessionConflictJob = viewModelScope.launch(Dispatchers.IO) {
+    private suspend fun claimDeviceSession(userId: String) {
+        withContext(Dispatchers.IO) {
             try {
-                previousJob?.cancel()
-                try {
-                    previousChannel?.unsubscribe()
-                } catch (_: Exception) {}
-
-                activeSessionChannel = null
-
-                if (!explicitSessionId.isNullOrBlank()) {
-                    localSessionId = explicitSessionId
-                } else if (localSessionId.isBlank()) {
-                    val profile = supabaseClient.from("profiles")
-                        .select {
-                            filter { eq("id", userId) }
-                        }.decodeSingleOrNull<Profile>()
-
-                    val serverSessionId = profile?.activeSessionId
-
-                    if (serverSessionId.isNullOrBlank()) {
-                        localSessionId = UUID.randomUUID().toString()
-                        supabaseClient.from("profiles").update(
-                            mapOf("active_session_id" to localSessionId)
-                        ) {
-                            filter { eq("id", userId) }
-                        }
-                    } else {
-                        localSessionId = serverSessionId
-                    }
-                }
-
-                try {
-                    supabaseClient.realtime.connect()
-                } catch (_: Exception) {}
-
-                val channel = supabaseClient.channel("session_conflict_$userId")
-                activeSessionChannel = channel
-
-                val broadcastFlow = channel.broadcastFlow("session_changed")
-                val changeFlow = channel.postgresChangeFlow<PostgresAction.Update>(schema = "public") {
-                    table = "profiles"
-                    filter("id", FilterOperator.EQ, userId)
-                }
-
-                channel.subscribe()
-
-                // Polling Fallback (runs every 3 seconds)
-                val pollingJob = launch {
-                    while (isActive) {
-                        delay(3000)
-                        try {
-                            val serverProfile = supabaseClient.from("profiles")
-                                .select { filter { eq("id", userId) } }
-                                .decodeSingleOrNull<Profile>()
-
-                            val currentServerId = serverProfile?.activeSessionId
-                            if (!currentServerId.isNullOrEmpty() && localSessionId.isNotEmpty() && currentServerId != localSessionId) {
-                                triggerAutomaticLogout()
-                                break
-                            }
-                        } catch (_: Exception) {}
-                    }
-                }
-
-                // Listen to Realtime Broadcast Messages
-                launch {
-                    broadcastFlow.collect { broadcast ->
-                        val payloadJson = (broadcast.payload as? BroadcastPayload.Json)?.value
-                        val jsonObject = payloadJson as? JsonObject
-                        val newSessionId = jsonObject?.get("session_id")?.jsonPrimitive?.content
-                        if (!newSessionId.isNullOrEmpty() && localSessionId.isNotEmpty() && newSessionId != localSessionId) {
-                            pollingJob.cancel()
-                            triggerAutomaticLogout()
-                        }
-                    }
-                }
-
-                // Listen to Postgres Changes
-                changeFlow.collect { action ->
-                    val newSessionId = action.record["active_session_id"]?.jsonPrimitive?.content
-                    if (!newSessionId.isNullOrEmpty() && localSessionId.isNotEmpty() && newSessionId != localSessionId) {
-                        pollingJob.cancel()
-                        triggerAutomaticLogout()
-                    }
+                supabaseClient.from("profiles").update(
+                    mapOf("current_device_id" to DeviceIdProvider.deviceId)
+                ) {
+                    filter { eq("id", userId) }
                 }
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (e is CancellationException) throw e
                 e.printStackTrace()
             }
         }
     }
 
-    private suspend fun triggerAutomaticLogout() {
-        withContext(Dispatchers.Main) {
-            _errorMessage.value = "Your session has ended because a new device logged into this account."
-            _remoteLogoutEvent.value = true
-            signOut()
+    private suspend fun fetchRemoteDeviceId(userId: String): String? {
+        return withContext(Dispatchers.IO) {
+            try {
+                supabaseClient.from("profiles")
+                    .select { filter { eq("id", userId) } }
+                    .decodeSingleOrNull<Profile>()
+                    ?.currentDeviceId
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                null
+            }
         }
+    }
+
+    /**
+     * Reads a nullable string field from a Realtime record. JsonNull must map to
+     * null — [JsonNull] is a JsonPrimitive whose content is the literal "null",
+     * which would otherwise fake a device mismatch when a claim is released.
+     */
+    private fun JsonObject.stringOrNull(key: String): String? =
+        (this[key] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content
+
+    /**
+     * Starts (or resumes) the single-device session for [userId].
+     *
+     * - After an explicit sign-in ([claimDeviceOnNextSession] == true) this device
+     *   claims `current_device_id` — kicking any other device.
+     * - On a cold start the claim is only adopted when the column is empty (legacy
+     *   rows); a foreign claim raises the session-revoked event instead of stealing it.
+     */
+    private fun startDeviceSession(userId: String) {
+        if (sessionConflictJob?.isActive == true) return
+
+        sessionConflictJob = viewModelScope.launch {
+            if (claimDeviceOnNextSession) {
+                claimDeviceOnNextSession = false
+                claimDeviceSession(userId)
+            } else {
+                val remoteDeviceId = fetchRemoteDeviceId(userId)
+                when {
+                    remoteDeviceId.isNullOrBlank() -> claimDeviceSession(userId)
+                    remoteDeviceId != DeviceIdProvider.deviceId -> {
+                        // Account is owned by another device right now.
+                        SessionConflictRelay.notifySessionRevoked()
+                        return@launch
+                    }
+                }
+            }
+            listenForDeviceChanges(userId)
+        }
+    }
+
+    /** Realtime (postgres_changes) + polling fallback on the user's profiles row. */
+    private suspend fun listenForDeviceChanges(userId: String) {
+        coroutineScope {
+            // Fast path: Supabase Realtime on this user's row.
+            launch(Dispatchers.IO) {
+                try {
+                    supabaseClient.realtime.connect()
+                    val channel = supabaseClient.channel("device_session_$userId")
+                    activeSessionChannel = channel
+
+                    val changeFlow = channel.postgresChangeFlow<PostgresAction.Update>(schema = "public") {
+                        table = "profiles"
+                        filter("id", FilterOperator.EQ, userId)
+                    }
+
+                    channel.subscribe()
+
+                    changeFlow.collect { action ->
+                        val remoteDeviceId = action.record.stringOrNull("current_device_id")
+                        if (!remoteDeviceId.isNullOrBlank() && remoteDeviceId != DeviceIdProvider.deviceId) {
+                            SessionConflictRelay.notifySessionRevoked()
+                        }
+                    }
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    e.printStackTrace()
+                }
+            }
+
+            // Safety net: polling covers Realtime outages / restricted websockets.
+            launch {
+                while (isActive) {
+                    delay(DEVICE_CLAIM_POLL_INTERVAL_MS)
+                    val remoteDeviceId = fetchRemoteDeviceId(userId)
+                    if (!remoteDeviceId.isNullOrBlank() && remoteDeviceId != DeviceIdProvider.deviceId) {
+                        SessionConflictRelay.notifySessionRevoked()
+                        break
+                    }
+                }
+            }
+
+            // Both children run until the parent session job is cancelled
+            // ([stopDeviceListeners] / signOut). If Realtime dies, polling keeps
+            // guarding; coroutineScope suspends until both are done.
+        }
+    }
+
+    private fun stopDeviceListeners() {
+        val previousJob = sessionConflictJob
+        val previousChannel = activeSessionChannel
+        sessionConflictJob = null
+        activeSessionChannel = null
+
+        viewModelScope.launch(Dispatchers.IO) {
+            previousJob?.cancel()
+            try {
+                previousChannel?.unsubscribe()
+            } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * Called by the root UI once the user acknowledged the
+     * "You have been logged in on another device" dialog. Clears the session and
+     * all local user state; MainActivity then routes back to Login.
+     */
+    fun confirmRemoteLogout() {
+        _remoteLogoutEvent.value = false
+        signOut()
     }
 
     fun clearRemoteLogoutFlag() {
@@ -382,16 +428,20 @@ class AuthViewModel : ViewModel() {
                 }
 
                 // Pre-verification check: Ensure an account with this email exists in Supabase database
-                val existingProfiles = supabaseClient.from("profiles")
-                    .select { filter { eq("email", cleanEmail) } }
-                    .decodeList<Profile>()
+                val existingProfiles = withContext(Dispatchers.IO) {
+                    supabaseClient.from("profiles")
+                        .select { filter { eq("email", cleanEmail) } }
+                        .decodeList<Profile>()
+                }
 
                 if (existingProfiles.isEmpty()) {
                     _errorMessage.value = "No account found with this email address."
                     return@launch
                 }
 
-                supabaseClient.auth.resetPasswordForEmail(cleanEmail)
+                withContext(Dispatchers.IO) {
+                    supabaseClient.auth.resetPasswordForEmail(cleanEmail)
+                }
                 recoveryEmail = cleanEmail
                 _passwordResetStep.value = PasswordResetStep.OTP
             } catch (e: Exception) {
@@ -410,11 +460,13 @@ class AuthViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 clearError()
-                supabaseClient.auth.verifyEmailOtp(
-                    type = OtpType.Email.RECOVERY,
-                    email = recoveryEmail,
-                    token = cleanCode
-                )
+                withContext(Dispatchers.IO) {
+                    supabaseClient.auth.verifyEmailOtp(
+                        type = OtpType.Email.RECOVERY,
+                        email = recoveryEmail,
+                        token = cleanCode
+                    )
+                }
                 _passwordResetStep.value = PasswordResetStep.NEW_PASSWORD
             } catch (e: Exception) {
                 _errorMessage.value = handleAuthError(e)
@@ -431,16 +483,18 @@ class AuthViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 clearError()
-                supabaseClient.auth.updateUser {
-                    password = newPassword
-                }
+                withContext(Dispatchers.IO) {
+                    supabaseClient.auth.updateUser {
+                        password = newPassword
+                    }
 
-                val currentUserId = supabaseClient.auth.currentUserOrNull()?.id
-                if (currentUserId != null) {
-                    supabaseClient.from("profiles").update(
-                        mapOf("password_changed_at" to Instant.now().toString())
-                    ) {
-                        filter { eq("id", currentUserId) }
+                    val currentUserId = supabaseClient.auth.currentUserOrNull()?.id
+                    if (currentUserId != null) {
+                        supabaseClient.from("profiles").update(
+                            mapOf("password_changed_at" to Instant.now().toString())
+                        ) {
+                            filter { eq("id", currentUserId) }
+                        }
                     }
                 }
 
@@ -471,11 +525,13 @@ class AuthViewModel : ViewModel() {
             if (!Patterns.EMAIL_ADDRESS.matcher(loginEmail).matches()) {
                 val handleToSearch = loginEmail.removePrefix("@")
                 try {
-                    val response = supabaseClient.from("profiles")
-                        .select { filter { eq("handle", handleToSearch) } }
-                        .decodeSingleOrNull<JsonObject>()
+                    val response = withContext(Dispatchers.IO) {
+                        supabaseClient.from("profiles")
+                            .select { filter { eq("handle", handleToSearch) } }
+                            .decodeSingleOrNull<JsonObject>()
+                    }
 
-                    val foundEmail = response?.get("email")?.jsonPrimitive?.content
+                    val foundEmail = response?.stringOrNull("email")
                     if (foundEmail != null) {
                         loginEmail = foundEmail
                     } else {
@@ -489,27 +545,25 @@ class AuthViewModel : ViewModel() {
             }
 
             try {
+                // Claim the device BEFORE the session flips so the session-status
+                // collector cannot mistake the previous device's claim for a conflict.
+                claimDeviceOnNextSession = true
                 supabaseClient.auth.signInWith(Email) {
                     email = loginEmail
                     password = passwordInput
                 }
             } catch (e: Exception) {
+                claimDeviceOnNextSession = false
                 _errorMessage.value = handleAuthError(e)
                 return@launch
             }
 
             try {
                 val userId = supabaseClient.auth.currentUserOrNull()?.id ?: return@launch
-                val newSessionId = UUID.randomUUID().toString()
-
-                supabaseClient.from("profiles").update(
-                    mapOf("active_session_id" to newSessionId)
-                ) {
-                    filter { eq("id", userId) }
-                }
-
-                broadcastSessionChange(userId, newSessionId)
-                listenForSessionConflicts(userId, explicitSessionId = newSessionId)
+                // Covers the case where the session-status collector hasn't started the
+                // device session yet (or the session was already active). Idempotent.
+                claimDeviceOnNextSession = true
+                startDeviceSession(userId)
             } catch (e: Exception) {
                 e.printStackTrace()
                 _errorMessage.value = "Login succeeded, but session sync failed: ${e.localizedMessage}"
@@ -551,6 +605,7 @@ class AuthViewModel : ViewModel() {
                     Log.d("GoogleAuth", "Retrieved Google ID Token: $token")
 
                     // 🌟 CRITICAL: Authenticate with Supabase Auth using Google ID Token via IDToken provider
+                    claimDeviceOnNextSession = true
                     withContext(Dispatchers.IO) {
                         supabaseClient.auth.signInWith(IDToken) {
                             idToken = token
@@ -585,18 +640,9 @@ class AuthViewModel : ViewModel() {
                         } else {
                             Log.d("GoogleAuth", "Existing Google user with complete profile. Proceeding to Feed...")
                             _isOnboarding.value = false
-                            val newSessionId = UUID.randomUUID().toString()
-                            withContext(Dispatchers.IO) {
-                                try {
-                                    supabaseClient.from("profiles").update(
-                                        mapOf("active_session_id" to newSessionId)
-                                    ) {
-                                        filter { eq("id", userId) }
-                                    }
-                                } catch (_: Exception) {}
-                            }
-                            broadcastSessionChange(userId, newSessionId)
-                            listenForSessionConflicts(userId, explicitSessionId = newSessionId)
+                            // Claim this device (latest login wins) and start conflict listeners.
+                            claimDeviceOnNextSession = true
+                            startDeviceSession(userId)
                         }
                     }
 
@@ -633,14 +679,16 @@ class AuthViewModel : ViewModel() {
                 val tempPassword = UUID.randomUUID().toString() + "A1!a"
                 val tempHandle = "user_" + UUID.randomUUID().toString().substring(0, 8)
 
-                val response = supabaseClient.auth.signUpWith(Email) {
-                    email = cleanEmail
-                    password = tempPassword
+                val response = withContext(Dispatchers.IO) {
+                    supabaseClient.auth.signUpWith(Email) {
+                        email = cleanEmail
+                        password = tempPassword
 
-                    data = buildJsonObject {
-                        put("handle", tempHandle)
-                        put("first_name", "Pending")
-                        put("last_name", "User")
+                        data = buildJsonObject {
+                            put("handle", tempHandle)
+                            put("first_name", "Pending")
+                            put("last_name", "User")
+                        }
                     }
                 }
 
@@ -671,11 +719,13 @@ class AuthViewModel : ViewModel() {
                 clearError()
                 _isOnboarding.value = true
 
-                supabaseClient.auth.verifyEmailOtp(
-                    type = OtpType.Email.SIGNUP,
-                    email = pendingEmail,
-                    token = cleanCode
-                )
+                withContext(Dispatchers.IO) {
+                    supabaseClient.auth.verifyEmailOtp(
+                        type = OtpType.Email.SIGNUP,
+                        email = pendingEmail,
+                        token = cleanCode
+                    )
+                }
                 _awaitingOtp.value = false
             } catch (e: Exception) {
                 _isOnboarding.value = false
@@ -687,12 +737,13 @@ class AuthViewModel : ViewModel() {
     fun signOut() {
         val previousJob = sessionConflictJob
         val previousChannel = activeSessionChannel
+        val signingOutUserId = supabaseClient.auth.currentUserOrNull()?.id
 
         sessionConflictJob = null
         activeSessionChannel = null
+        claimDeviceOnNextSession = false
 
         hasCompletedColdStartCheck = false
-        localSessionId = ""
         _userState.value = null
         _isOnboarding.value = false
         _awaitingOtp.value = false
@@ -708,6 +759,23 @@ class AuthViewModel : ViewModel() {
                 try {
                     previousChannel?.unsubscribe()
                 } catch (_: Exception) {}
+
+                // Release the device claim while the JWT is still valid. The guard on
+                // current_device_id ensures we never clear a claim owned by the device
+                // that kicked us (the remote-logout path).
+                if (signingOutUserId != null) {
+                    try {
+                        supabaseClient.from("profiles").update(
+                            mapOf("current_device_id" to null)
+                        ) {
+                            filter {
+                                eq("id", signingOutUserId)
+                                eq("current_device_id", DeviceIdProvider.deviceId)
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+
                 supabaseClient.auth.signOut()
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -721,13 +789,15 @@ class AuthViewModel : ViewModel() {
                 clearError()
                 val userId = supabaseClient.auth.currentUserOrNull()?.id ?: return@launch
 
-                supabaseClient.from("profiles").update(
-                    {
-                        set("gender", gender)
-                        set("dob", dob)
+                withContext(Dispatchers.IO) {
+                    supabaseClient.from("profiles").update(
+                        {
+                            set("gender", gender)
+                            set("dob", dob)
+                        }
+                    ) {
+                        filter { eq("id", userId) }
                     }
-                ) {
-                    filter { eq("id", userId) }
                 }
                 onSuccess()
             } catch (e: Exception) {
@@ -745,16 +815,18 @@ class AuthViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 clearError()
-                supabaseClient.auth.updateUser {
-                    password = newPassword
-                }
+                withContext(Dispatchers.IO) {
+                    supabaseClient.auth.updateUser {
+                        password = newPassword
+                    }
 
-                val currentUserId = supabaseClient.auth.currentUserOrNull()?.id
-                if (currentUserId != null) {
-                    supabaseClient.from("profiles").update(
-                        mapOf("password_changed_at" to Instant.now().toString())
-                    ) {
-                        filter { eq("id", currentUserId) }
+                    val currentUserId = supabaseClient.auth.currentUserOrNull()?.id
+                    if (currentUserId != null) {
+                        supabaseClient.from("profiles").update(
+                            mapOf("password_changed_at" to Instant.now().toString())
+                        ) {
+                            filter { eq("id", currentUserId) }
+                        }
                     }
                 }
 
@@ -772,15 +844,17 @@ class AuthViewModel : ViewModel() {
                 clearError()
                 val userId = supabaseClient.auth.currentUserOrNull()?.id ?: return@launch
 
-                supabaseClient.from("profiles").update(
-                    {
-                        set("first_name", firstName)
-                        set("last_name", lastName)
-                        set("gender", gender.ifBlank { null })
-                        set("dob", dob.ifBlank { null })
+                withContext(Dispatchers.IO) {
+                    supabaseClient.from("profiles").update(
+                        {
+                            set("first_name", firstName)
+                            set("last_name", lastName)
+                            set("gender", gender.ifBlank { null })
+                            set("dob", dob.ifBlank { null })
+                        }
+                    ) {
+                        filter { eq("id", userId) }
                     }
-                ) {
-                    filter { eq("id", userId) }
                 }
                 onSuccess()
             } catch (e: Exception) {
@@ -807,29 +881,35 @@ class AuthViewModel : ViewModel() {
 
                 val cleanHandle = handle.trim().removePrefix("@")
 
-                supabaseClient.auth.updateUser {
-                    password = realPassword
-                    data = buildJsonObject {
-                        put("first_name", firstName)
-                        put("last_name", lastName)
-                        put("handle", cleanHandle)
-                        put("gender", gender)
-                        put("dob", dob)
+                withContext(Dispatchers.IO) {
+                    supabaseClient.auth.updateUser {
+                        password = realPassword
+                        data = buildJsonObject {
+                            put("first_name", firstName)
+                            put("last_name", lastName)
+                            put("handle", cleanHandle)
+                            put("gender", gender)
+                            put("dob", dob)
+                        }
+                    }
+
+                    supabaseClient.from("profiles").update(
+                        {
+                            set("first_name", firstName)
+                            set("last_name", lastName.ifBlank { null })
+                            set("handle", cleanHandle)
+                            set("gender", gender.ifBlank { null })
+                            set("dob", dob.ifBlank { null })
+                            set("email", userEmail)
+                        }
+                    ) {
+                        filter { eq("id", userId) }
                     }
                 }
 
-                supabaseClient.from("profiles").update(
-                    {
-                        set("first_name", firstName)
-                        set("last_name", lastName.ifBlank { null })
-                        set("handle", cleanHandle)
-                        set("gender", gender.ifBlank { null })
-                        set("dob", dob.ifBlank { null })
-                        set("email", userEmail)
-                    }
-                ) {
-                    filter { eq("id", userId) }
-                }
+                // Registration finished on this device: claim the single-device session.
+                claimDeviceOnNextSession = true
+                startDeviceSession(userId)
 
                 onSuccess()
             } catch (e: Exception) {

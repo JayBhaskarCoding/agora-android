@@ -54,8 +54,10 @@ import androidx.navigation.navDeepLink
 import coil.compose.AsyncImage
 import com.example.agora.data.supabaseClient
 import com.example.agora.model.Profile
+import com.example.agora.navigation.DeepLinkRouter
 import com.example.agora.viewmodel.AuthViewModel
 import com.example.agora.viewmodel.FeedViewModel
+import com.example.agora.viewmodel.PostDetailViewModel
 import com.example.agora.viewmodel.ThemeViewModel
 import com.example.agora.viewmodel.UploadState
 import dev.chrisbanes.haze.HazeState
@@ -63,8 +65,10 @@ import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.hazeSource
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 fun Modifier.hazeChild(
     state: HazeState,
@@ -84,6 +88,37 @@ fun MainScreen(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
+    // 🌟 Notification deep links (cold start, warm taps, foreground banner taps) are
+    //    routed here once the NavHost exists. Idempotent: if the target post is already
+    //    open (e.g. NavHost's native navDeepLink handling won the race), we stand down.
+    val pendingDeepLink by DeepLinkRouter.pending.collectAsState()
+    LaunchedEffect(pendingDeepLink) {
+        val target = pendingDeepLink ?: return@LaunchedEffect
+
+        // The NavHost publishes its graph during its first composition; wait (bounded)
+        // until the controller has a current destination before navigating.
+        var attempts = 0
+        while (navController.currentBackStackEntry == null && attempts < 300) {
+            delay(16)
+            attempts++
+        }
+        if (navController.currentBackStackEntry == null) return@LaunchedEffect
+
+        val currentEntry = navController.currentBackStackEntry
+        val alreadyOpen =
+            currentEntry?.destination?.route?.startsWith("post/") == true &&
+                currentEntry.arguments?.getString("postId") == target.postId
+        if (!alreadyOpen) {
+            navController.navigate(target.toRoute()) {
+                popUpTo(navController.graph.findStartDestination().id) {
+                    saveState = true
+                }
+                launchSingleTop = true
+            }
+        }
+        DeepLinkRouter.consume(target)
+    }
+
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val coroutineScope = rememberCoroutineScope()
     val currentUser = supabaseClient.auth.currentUserOrNull()
@@ -92,9 +127,11 @@ fun MainScreen(
     LaunchedEffect(currentUser) {
         if (currentUser != null) {
             try {
-                val profile = supabaseClient.from("profiles")
-                    .select { filter { eq("id", currentUser.id) } }
-                    .decodeSingle<Profile>()
+                val profile = withContext(Dispatchers.IO) {
+                    supabaseClient.from("profiles")
+                        .select { filter { eq("id", currentUser.id) } }
+                        .decodeSingle<Profile>()
+                }
                 userHandle = "@${profile.handle}"
             } catch (_: Exception) {
                 userHandle = "@user"
@@ -206,10 +243,19 @@ fun MainScreen(
         }
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
+            // 🌟 Perf: attach the expensive full-tree blur ONLY while a radius is active.
+            //    A permanently-attached blur node re-rasterizes the whole scaffold every
+            //    frame during the drawer/post transitions (major jank source on low-end GPUs).
+            val scaffoldModifier = if (globalBlurRadius > 0.dp) {
+                Modifier.blur(radius = globalBlurRadius)
+            } else {
+                Modifier
+            }
+
             Scaffold(
                 containerColor = MaterialTheme.colorScheme.background,
                 contentWindowInsets = WindowInsets(0, 0, 0, 0),
-                modifier = Modifier.blur(radius = globalBlurRadius)
+                modifier = scaffoldModifier
             ) { innerPadding ->
                 NavHost(
                     navController = navController,
@@ -300,17 +346,20 @@ fun MainScreen(
                             decorFitsSystemWindows = false
                         )
                     ) { backStackEntry ->
-                        val postId = backStackEntry.arguments?.getString("postId")
-                        val commentId = backStackEntry.arguments?.getString("commentId")
+                        // 🌟 Destination-scoped ViewModel: postId/commentId arrive through
+                        //    SavedStateHandle (nav args), and the post is fetched by id —
+                        //    so a notification deep link works even when the feed hasn't
+                        //    loaded the post, without mutating FeedViewModel state.
+                        val postDetailViewModel: PostDetailViewModel = viewModel(
+                            viewModelStoreOwner = backStackEntry
+                        )
                         SinglePostScreen(
-                            postId = postId,
-                            commentId = commentId,
-                            feedViewModel = feedViewModel,
-                            themeViewModel = themeViewModel,
+                            viewModel = postDetailViewModel,
                             onBack = { navController.popBackStack() },
                             onNavigateToProfile = { clickedUserId ->
                                 navController.navigate("profile?userId=$clickedUserId")
-                            }
+                            },
+                            onPostChanged = { updated -> feedViewModel.syncPostState(updated) }
                         )
                     }
                 }

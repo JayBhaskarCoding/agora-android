@@ -14,7 +14,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,15 +24,17 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
-import com.example.agora.media.ExoPlayerHelper
-import com.example.agora.media.VideoCache
+import com.example.agora.media.FeedPlayerPool
 
+/**
+ * Inline feed video cell.
+ *
+ * Players come from [FeedPlayerPool] (bounded reuse — no create/destroy churn
+ * while scrolling), mute is session-global, and playback never autoplays here;
+ * tapping opens the fullscreen player.
+ */
 @OptIn(UnstableApi::class)
 @Composable
 fun FeedVideoPlayer(
@@ -44,38 +45,24 @@ fun FeedVideoPlayer(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Mute state survives LazyColumn item recycling
-    var isMuted by rememberSaveable { mutableStateOf(true) }
+    val isMuted by FeedPlayerPool.isMuted.collectAsState()
 
-    // 🌟 Cached ExoPlayer instance with custom Unisoc hardware codec fallback
-    val exoPlayer = remember(context, videoUrl) {
-        val mediaSource = ProgressiveMediaSource.Factory(
-            VideoCache.getCacheDataSourceFactory(context)
-        ).createMediaSource(MediaItem.fromUri(videoUrl))
+    // Pooled player: acquired once per (composition, url), returned on dispose
+    // or when the item is recycled for a different URL.
+    val exoPlayer = remember(videoUrl) { FeedPlayerPool.acquire(context, videoUrl) }
 
-        ExoPlayerHelper.createExoPlayer(context).apply {
-            setMediaSource(mediaSource)
-            prepare()
-            repeatMode = Player.REPEAT_MODE_ALL
-            playWhenReady = false // No autoplay in feed
-            volume = if (isMuted) 0f else 1f
-        }
-    }
-
-    // Dynamic volume updates when toggled
-    LaunchedEffect(isMuted) {
+    // Dynamic volume updates when the shared mute state toggles
+    LaunchedEffect(isMuted, exoPlayer) {
         exoPlayer.volume = if (isMuted) 0f else 1f
     }
 
-    // Lifecycle Observer to pause on ON_PAUSE and release on ON_DESTROY
+    // Lifecycle Observer: pause on ON_PAUSE. The pool owns the player instance,
+    // so we never release() it here — only hand it back.
     DisposableEffect(lifecycleOwner, exoPlayer) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_PAUSE -> {
                     exoPlayer.playWhenReady = false
-                }
-                Lifecycle.Event.ON_DESTROY -> {
-                    exoPlayer.release()
                 }
                 else -> {}
             }
@@ -83,7 +70,8 @@ fun FeedVideoPlayer(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            exoPlayer.release()
+            exoPlayer.playWhenReady = false
+            FeedPlayerPool.release(exoPlayer)
         }
     }
 
@@ -103,6 +91,15 @@ fun FeedVideoPlayer(
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
                 }
+            },
+            update = { playerView ->
+                // Rebind when the pooled player instance changes (item recycling).
+                if (playerView.player !== exoPlayer) {
+                    playerView.player = exoPlayer
+                }
+            },
+            onRelease = { playerView ->
+                playerView.player = null
             },
             modifier = Modifier.fillMaxSize()
         )
@@ -125,7 +122,7 @@ fun FeedVideoPlayer(
 
         // Persistent Mute/Unmute toggle button in bottom right
         IconButton(
-            onClick = { isMuted = !isMuted },
+            onClick = { FeedPlayerPool.setMuted(!isMuted) },
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(12.dp)

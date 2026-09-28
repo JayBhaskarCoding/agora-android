@@ -76,7 +76,10 @@ serve(async (req) => {
           post_id: customData.post_id || "",
           comment_id: commentId,
           action: commentId ? "open_comment" : "open_post",
-          author_id: customData.author_id || ""
+          author_id: customData.author_id || "",
+          // Forwarded so the Android client can suppress self-action notifications
+          sender_id: customData.sender_id || "",
+          reporter_id: customData.reporter_id || ""
         },
         android: {
           priority: "high",

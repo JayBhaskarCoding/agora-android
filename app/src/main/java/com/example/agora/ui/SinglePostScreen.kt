@@ -23,40 +23,40 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.agora.model.Comment
-import com.example.agora.viewmodel.FeedViewModel
-import com.example.agora.viewmodel.ThemeViewModel
+import com.example.agora.model.Post
+import com.example.agora.viewmodel.PostDetailUiState
+import com.example.agora.viewmodel.PostDetailViewModel
 import kotlinx.coroutines.delay
 
+/**
+ * Post details screen, opened from the feed or from a notification deep link
+ * (`agora://post/{postId}` / `https://auth-agora.info/post/{postId}`).
+ *
+ * All data comes from the destination-scoped [PostDetailViewModel] (nav args are
+ * read from its SavedStateHandle), so opening a post from a notification never
+ * depends on — or mutates — the main feed's state.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SinglePostScreen(
-    postId: String?,
-    commentId: String? = null,
-    feedViewModel: FeedViewModel,
-    themeViewModel: ThemeViewModel = viewModel(),
+    viewModel: PostDetailViewModel,
     onBack: () -> Unit,
-    onNavigateToProfile: (String) -> Unit
+    onNavigateToProfile: (String) -> Unit,
+    onPostChanged: (Post) -> Unit = {}
 ) {
-    val posts by feedViewModel.posts.collectAsState()
-    val comments by feedViewModel.comments.collectAsState()
-    val post = remember(posts, postId) { posts.find { it.id == postId } }
+    val uiState by viewModel.uiState.collectAsState()
+    val listState = rememberLazyListState()
+    val commentId = viewModel.commentId
 
     var expandedImageUrl by remember { mutableStateOf<String?>(null) }
-    val listState = rememberLazyListState()
-
-    LaunchedEffect(postId) {
-        if (postId != null) {
-            feedViewModel.fetchCommentsForPost(postId)
-        }
-    }
 
     // 🌟 Auto-scroll to specific comment when commentId argument is present
-    LaunchedEffect(comments, commentId) {
-        if (!commentId.isNullOrBlank() && comments.isNotEmpty()) {
-            val commentIndex = comments.indexOfFirst { it.id == commentId }
+    LaunchedEffect(uiState, commentId) {
+        val loaded = uiState as? PostDetailUiState.Loaded ?: return@LaunchedEffect
+        if (!commentId.isNullOrBlank() && loaded.comments.isNotEmpty()) {
+            val commentIndex = loaded.comments.indexOfFirst { it.id == commentId }
             if (commentIndex != -1) {
                 // Item 0 is PostCard, Item 1 is "Comments" header -> offset by 2
                 listState.animateScrollToItem(commentIndex + 2)
@@ -75,69 +75,98 @@ fun SinglePostScreen(
             val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
             val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
-            if (post == null) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(top = statusBarTop + 76.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "Post not found or loading...",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 16.sp
-                    )
+            when (val state = uiState) {
+                is PostDetailUiState.Loading -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = statusBarTop + 76.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
                 }
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(
-                        top = statusBarTop + 76.dp,
-                        bottom = navBarBottom + 32.dp
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(20.dp)
-                ) {
-                    item {
-                        PostCard(
-                            post = post,
-                            currentUserId = feedViewModel.currentUserId,
-                            isExpanded = true,
-                            onToggleExpand = {},
-                            onLikeClicked = { isLiked, emoji -> feedViewModel.setLikeStatus(post.id, isLiked, emoji) },
-                            onCommentClicked = {},
-                            onImageClicked = { url -> expandedImageUrl = url },
-                            onUserClicked = { onNavigateToProfile(post.userId) },
-                            onOptionsClicked = {}
-                        )
-                    }
 
-                    item {
-                        Text(
-                            text = "Comments",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
-                        )
-                    }
-
-                    if (comments.isEmpty()) {
-                        item {
+                is PostDetailUiState.Error -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = statusBarTop + 76.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
-                                text = "No comments yet.",
+                                text = state.message,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 14.sp,
-                                modifier = Modifier.padding(horizontal = 20.dp)
+                                fontSize = 16.sp
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(onClick = { viewModel.retry() }, shape = CircleShape) {
+                                Text("Retry")
+                            }
+                        }
+                    }
+                }
+
+                is PostDetailUiState.Loaded -> {
+                    val post = state.post
+                    val comments = state.comments
+
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(
+                            top = statusBarTop + 76.dp,
+                            bottom = navBarBottom + 32.dp
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(20.dp)
+                    ) {
+                        item {
+                            PostCard(
+                                post = post,
+                                currentUserId = viewModel.currentUserId,
+                                isExpanded = true,
+                                onToggleExpand = {},
+                                onLikeClicked = { isLiked, emoji ->
+                                    val updated = viewModel.setLikeStatus(isLiked, emoji)
+                                    if (updated != null) {
+                                        onPostChanged(updated)
+                                    }
+                                },
+                                onCommentClicked = {},
+                                onImageClicked = { url -> expandedImageUrl = url },
+                                onUserClicked = { onNavigateToProfile(post.userId) },
+                                onOptionsClicked = {}
                             )
                         }
-                    } else {
-                        items(comments, key = { comment -> comment.id }) { comment ->
-                            val isTargetComment = comment.id == commentId
-                            CommentItemRow(
-                                comment = comment,
-                                isTargetComment = isTargetComment
+
+                        item {
+                            Text(
+                                text = "Comments",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
                             )
+                        }
+
+                        if (comments.isEmpty()) {
+                            item {
+                                Text(
+                                    text = "No comments yet.",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 14.sp,
+                                    modifier = Modifier.padding(horizontal = 20.dp)
+                                )
+                            }
+                        } else {
+                            items(comments, key = { comment -> comment.id }) { comment ->
+                                val isTargetComment = comment.id == commentId
+                                CommentItemRow(
+                                    comment = comment,
+                                    isTargetComment = isTargetComment
+                                )
+                            }
                         }
                     }
                 }

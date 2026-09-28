@@ -18,19 +18,24 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.agora.data.supabaseClient
 import com.example.agora.model.FcmTokenUpdate
+import com.example.agora.navigation.DeepLinkRouter
 import com.example.agora.service.PushNotificationService
 import com.example.agora.ui.InAppNotificationManager
 import com.example.agora.ui.LoginScreen
@@ -89,13 +94,24 @@ fun syncFcmTokenAndSubscribeTopics() {
 
 class MainActivity : ComponentActivity() {
 
-    // 🌟 INTENT INJECTION HACK: Extract FCM notification extras & forge URI into intent.data for native NavHost handling
+    /**
+     * Splash is released as soon as the auth session resolves (see the
+     * LaunchedEffect in [setContent]) instead of for a fixed delay — this used to
+     * add a hard 800ms to every cold start.
+     */
+    @Volatile
+    private var keepSplashOnScreen = true
+
+    // 🌟 INTENT INJECTION: Extract FCM notification extras / deep link URI, publish
+    //    them to the DeepLinkRouter (single source of truth for post navigation) and
+    //    forge intent.data so the NavHost's native navDeepLink path can also match.
     private fun injectDeepLink(intent: Intent?) {
         if (intent == null) return
-        Log.d("FCM_TEST", "Extras: ${intent.extras?.keySet()}")
+        Log.d("FCM_TEST", "Extras: ${intent.extras?.keySet()} data: ${intent.data}")
 
-        val postId = intent.getStringExtra("post_id") ?: intent.data?.getQueryParameter("post_id")
-        val commentId = intent.getStringExtra("comment_id") ?: intent.data?.getQueryParameter("comment_id")
+        val parsed = DeepLinkRouter.parse(intent)
+        val postId = parsed?.postId
+        val commentId = parsed?.commentId
 
         if (!postId.isNullOrBlank()) {
             val uriString = if (!commentId.isNullOrBlank()) {
@@ -103,21 +119,26 @@ class MainActivity : ComponentActivity() {
             } else {
                 "agora://post/$postId"
             }
-            Log.d("FCM_TEST", "Injecting intent.data with forged URI: $uriString")
+            Log.d("FCM_TEST", "Routing post deep link: $uriString")
             intent.data = Uri.parse(uriString)
             intent.action = Intent.ACTION_VIEW
+
+            // MainScreen observes this and navigates once the NavHost exists
+            // (works for cold starts, warm onNewIntent and foreground banner taps).
+            DeepLinkRouter.submit(postId, commentId)
+
             intent.removeExtra("post_id")
             intent.removeExtra("comment_id")
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        var keepSplashOnScreen = true
         val splashScreen = installSplashScreen()
         splashScreen.setKeepOnScreenCondition { keepSplashOnScreen }
 
+        // Fail-safe: never hold the splash screen longer than this, even if auth stalls.
         lifecycleScope.launch {
-            delay(800)
+            delay(1500)
             keepSplashOnScreen = false
         }
 
@@ -125,7 +146,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         createNotificationChannel()
 
-        // 🌟 Inject forged deep link URI into intent.data before setContent runs
+        // 🌟 Publish any notification deep link before setContent so the NavHost and
+        //    the DeepLinkRouter both see it (whichever navigates first wins; the other
+        //    detects the duplicate and stands down).
         injectDeepLink(intent)
 
         intent?.let {
@@ -157,6 +180,13 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // Release the splash as soon as the auth session resolves.
+                LaunchedEffect(sessionStatus) {
+                    if (sessionStatus !is SessionStatus.Initializing) {
+                        keepSplashOnScreen = false
+                    }
+                }
+
                 LaunchedEffect(sessionStatus, isOnboarding) {
                     if (sessionStatus is SessionStatus.Authenticated && !isOnboarding) {
                         isSigningUpState.value = false
@@ -177,21 +207,48 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // 🌟 SINGLE-DEVICE LOGIN: mandatory, non-dismissible warning shown BEFORE the
+                //    session is cleared. "OK" (or a 5s auto-timeout) signs the user out,
+                //    wipes local user state and routes back to Login with the back stack gone.
                 if (remoteLogout) {
+                    AlertDialog(
+                        onDismissRequest = { /* non-dismissible */ },
+                        properties = DialogProperties(
+                            dismissOnBackPress = false,
+                            dismissOnClickOutside = false
+                        ),
+                        title = { Text("Session ended") },
+                        text = { Text("You have been logged in on another device") },
+                        confirmButton = {
+                            TextButton(
+                                onClick = {
+                                    clearLocalUserCaches(applicationContext)
+                                    isSigningUpState.value = false
+                                    authViewModel.confirmRemoteLogout()
+                                }
+                            ) {
+                                Text("OK")
+                            }
+                        }
+                    )
+
                     LaunchedEffect(Unit) {
-                        Toast.makeText(
-                            applicationContext,
-                            "A new device logged into this account. You have been logged out.",
-                            Toast.LENGTH_LONG
-                        ).show()
-                        authViewModel.clearRemoteLogoutFlag()
+                        delay(5000)
+                        clearLocalUserCaches(applicationContext)
                         isSigningUpState.value = false
+                        authViewModel.confirmRemoteLogout()
                     }
                 }
 
                 val isCheckingProfileCompleteness by authViewModel.isCheckingProfileCompleteness.collectAsState()
 
-                InAppNotificationManager {
+                InAppNotificationManager(
+                    onNotificationClick = { postId, commentId ->
+                        // Foreground banner tap routes to the post via the same router
+                        // used by notification taps.
+                        DeepLinkRouter.submit(postId, commentId)
+                    }
+                ) {
                     Surface(
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
@@ -258,6 +315,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * Clears user-scoped local state after a remote logout. Theme preferences and
+     * the persistent device id are device-scoped and intentionally preserved.
+     */
+    private fun clearLocalUserCaches(context: Context) {
+        // Supabase session snapshot (auth.signOut also clears it; be explicit).
+        context.getSharedPreferences("agora_session", Context.MODE_PRIVATE)
+            .edit().clear().apply()
     }
 
     private fun createNotificationChannel() {

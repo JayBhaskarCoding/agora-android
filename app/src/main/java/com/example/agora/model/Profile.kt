@@ -1,8 +1,10 @@
 package com.example.agora.model
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
+@Immutable
 @Serializable
 data class Profile(
     val id: String = "",
@@ -14,7 +16,8 @@ data class Profile(
     val dob: String? = null,
     @SerialName("password_changed_at")
     val passwordChangedAt: String? = null,
-    @SerialName("active_session_id")
-    val activeSessionId: String? = null,
+    /** Single-device login claim: device id of the device currently allowed to hold the session. */
+    @SerialName("current_device_id")
+    val currentDeviceId: String? = null,
     val email: String? = null
 )
