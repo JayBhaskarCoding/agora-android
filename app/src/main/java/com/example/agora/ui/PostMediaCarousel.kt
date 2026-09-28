@@ -113,7 +113,9 @@ private fun PostMediaImage(
     val request = remember(context, url) {
         ImageRequest.Builder(context)
             .data(url)
-            .listener(onError = { _, throwable ->
+            .listener(onError = { _, result ->
+                // Coil 2.x hands the callback a Result wrapper, not the Throwable itself.
+                val throwable = result.throwable
                 Log.e(
                     TAG,
                     "Post image failed to load: $url — " +
