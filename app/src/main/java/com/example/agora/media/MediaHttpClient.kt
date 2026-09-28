@@ -127,13 +127,6 @@ object MediaHttpClient {
             .build()
     }
 
-    /** HTTP/2-only twin of [probeClient], used purely to demonstrate the H2 contrast. */
-    private val http2ProbeClient: OkHttpClient by lazy {
-        probeClient.newBuilder()
-            .protocols(listOf(Protocol.HTTP_2))
-            .build()
-    }
-
     /**
      * Upstream factory for [VideoCache]'s `CacheDataSource`, so cache misses and
      * [VideoPreloader]'s writes both go through [okHttpClient].
@@ -220,9 +213,6 @@ object MediaHttpClient {
         val primary = probe(url, probeClient, "HTTP/1.1")
         Log.e(TAG, "probe[$host] (HTTP/1.1) → $primary")
 
-        val http2 = probe(url, http2ProbeClient, "HTTP/2")
-        Log.e(TAG, "probe[$host] (HTTP/2) → $http2")
-
         val alternateHost =
             if (host == CATBOX_HOST) DIAGNOSTIC_ALTERNATE_HOST else HOST_REWRITES[host]
         val alternate = alternateHost?.let { alternateHost ->
@@ -232,7 +222,7 @@ object MediaHttpClient {
             }
         }
 
-        Log.e(TAG, conclusionFor(host, primary, http2, alternateHost, alternate))
+        Log.e(TAG, conclusionFor(host, primary, alternateHost, alternate))
     }
 
     private fun logDnsResolution(host: String) {
@@ -290,21 +280,11 @@ object MediaHttpClient {
     private fun conclusionFor(
         host: String,
         primary: String,
-        http2: String,
         alternateHost: String?,
         alternate: String?
     ): String {
         val primaryStatus = statusOf(primary)
-        val http2Status = statusOf(http2)
         val alternateStatus = alternate?.let(::statusOf)
-
-        // The HTTP/2 contrast is the most specific finding, so it wins when present.
-        if (primaryStatus != null && http2Status == null) {
-            return "DIAGNOSIS: HTTP/1.1 reaches $host but HTTP/2 dies (" +
-                "stream reset / no response) — your network's HTTP/2 path to this host is " +
-                "broken by NAT64 or an inspecting middlebox. Media is pinned to HTTP/1.1, so " +
-                "this is already worked around; no user action needed."
-        }
 
         if (primaryStatus == null && alternateStatus != null) {
             return "DIAGNOSIS: $host is unreachable on this network but $alternateHost answers — " +
