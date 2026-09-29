@@ -36,6 +36,8 @@ fun generateUniqueHandle(firstName: String, lastName: String): String {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OnboardingFlowScreen(
+    initialFirstName: String = "",
+    initialLastName: String = "",
     onSaveData: (firstName: String, lastName: String, handle: String, gender: String, dob: String, password: String) -> Unit,
     onThemeChanged: (isDark: Boolean?) -> Unit,
     onFinish: () -> Unit
@@ -43,10 +45,19 @@ fun OnboardingFlowScreen(
     var currentStep by remember { mutableIntStateOf(1) }
 
     // Step 1 State
-    var firstName by remember { mutableStateOf("") }
-    var lastName by remember { mutableStateOf("") }
+    var firstName by remember(initialFirstName) { mutableStateOf(initialFirstName) }
+    var lastName by remember(initialLastName) { mutableStateOf(initialLastName) }
     var handle by remember { mutableStateOf("") }
     var hasGeneratedHandle by remember { mutableStateOf(false) }
+
+    // Auto-generate initial handle if Google provided first name
+    LaunchedEffect(initialFirstName, initialLastName) {
+        if (!hasGeneratedHandle && firstName.isNotBlank() && handle.isBlank()) {
+            handle = generateUniqueHandle(firstName, lastName)
+            hasGeneratedHandle = true
+        }
+    }
+
     var gender by remember { mutableStateOf("") }
     var dob by remember { mutableStateOf("") }
     var expandedGenderDropdown by remember { mutableStateOf(false) }

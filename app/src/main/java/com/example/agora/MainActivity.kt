@@ -169,6 +169,8 @@ class MainActivity : ComponentActivity() {
 
                 val isSigningUpState = remember { mutableStateOf(false) }
                 val isOnboarding by authViewModel.isOnboarding.collectAsState()
+                val googleFirstName by authViewModel.googleFirstName.collectAsState()
+                val googleLastName by authViewModel.googleLastName.collectAsState()
 
                 val context = LocalContext.current
                 val permissionLauncher = rememberLauncherForActivityResult(
@@ -272,6 +274,8 @@ class MainActivity : ComponentActivity() {
                                         }
                                     } else if (isOnboarding) {
                                         OnboardingFlowScreen(
+                                            initialFirstName = googleFirstName,
+                                            initialLastName = googleLastName,
                                             onSaveData = { firstName, lastName, handle, gender, dob, password ->
                                                 authViewModel.saveOnboardingDetails(firstName, lastName, handle, gender, dob, password) { }
                                             },

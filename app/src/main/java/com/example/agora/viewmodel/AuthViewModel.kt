@@ -48,6 +48,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.time.Instant
 import java.util.UUID
@@ -93,6 +94,12 @@ class AuthViewModel : ViewModel() {
 
     private val _isOnboarding = MutableStateFlow(false)
     val isOnboarding: StateFlow<Boolean> = _isOnboarding.asStateFlow()
+
+    private val _googleFirstName = MutableStateFlow("")
+    val googleFirstName: StateFlow<String> = _googleFirstName.asStateFlow()
+
+    private val _googleLastName = MutableStateFlow("")
+    val googleLastName: StateFlow<String> = _googleLastName.asStateFlow()
 
     private val _isCheckingProfileCompleteness = MutableStateFlow(true)
     val isCheckingProfileCompleteness: StateFlow<Boolean> = _isCheckingProfileCompleteness.asStateFlow()
@@ -604,6 +611,7 @@ class AuthViewModel : ViewModel() {
 
                     // 🌟 CRITICAL: Authenticate with Supabase Auth using Google ID Token via IDToken provider
                     claimDeviceOnNextSession = true
+                    hasCompletedColdStartCheck = true
                     withContext(Dispatchers.IO) {
                         supabaseClient.auth.signInWith(IDToken) {
                             idToken = token
@@ -611,7 +619,8 @@ class AuthViewModel : ViewModel() {
                         }
                     }
 
-                    val userId = supabaseClient.auth.currentUserOrNull()?.id
+                    val currentUser = supabaseClient.auth.currentUserOrNull()
+                    val userId = currentUser?.id
                     if (userId != null) {
                         // 🌟 Differentiating Login vs Registration: Query profiles table
                         val profile = withContext(Dispatchers.IO) {
@@ -633,7 +642,23 @@ class AuthViewModel : ViewModel() {
 
                         if (isIncomplete) {
                             Log.d("GoogleAuth", "New Google user or incomplete profile. Directing to Onboarding...")
-                            hasCompletedColdStartCheck = true
+                            val metadata = currentUser.userMetadata
+                            val fullName = metadata?.get("full_name")?.jsonPrimitive?.content
+                                ?: metadata?.get("name")?.jsonPrimitive?.content
+                                ?: ""
+                            val givenName = metadata?.get("given_name")?.jsonPrimitive?.content
+                            val familyName = metadata?.get("family_name")?.jsonPrimitive?.content
+
+                            val parsedFirstName = givenName?.ifBlank { null }
+                                ?: fullName.trim().split("\\s+".toRegex()).firstOrNull()?.ifBlank { null }
+                                ?: ""
+                            val parsedLastName = familyName?.ifBlank { null }
+                                ?: fullName.trim().split("\\s+".toRegex()).drop(1).joinToString(" ").ifBlank { null }
+                                ?: ""
+
+                            _googleFirstName.value = parsedFirstName
+                            _googleLastName.value = parsedLastName
+
                             _isOnboarding.value = true
                         } else {
                             Log.d("GoogleAuth", "Existing Google user with complete profile. Proceeding to Feed...")
