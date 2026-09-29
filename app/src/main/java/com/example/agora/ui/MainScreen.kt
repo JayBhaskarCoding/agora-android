@@ -55,6 +55,7 @@ import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
 import coil.compose.AsyncImage
 import com.example.agora.data.supabaseClient
+import com.example.agora.model.Post
 import com.example.agora.model.Profile
 import com.example.agora.navigation.DeepLinkRouter
 import com.example.agora.viewmodel.AuthViewModel
@@ -349,14 +350,35 @@ fun MainScreen(
                         val postDetailViewModel: PostDetailViewModel = viewModel(
                             viewModelStoreOwner = backStackEntry
                         )
+
+                        // Edit-from-detail: host the feed's editor here so a post
+                        // opened via notification deep link gets full edit parity.
+                        var detailPostToEdit by remember { mutableStateOf<Post?>(null) }
+
                         SinglePostScreen(
                             viewModel = postDetailViewModel,
                             onBack = { navController.popBackStack() },
                             onNavigateToProfile = { clickedUserId ->
                                 navController.navigate("profile?userId=$clickedUserId")
                             },
-                            onPostChanged = { updated -> feedViewModel.syncPostState(updated) }
+                            onPostChanged = { updated -> feedViewModel.syncPostState(updated) },
+                            onDeletePost = { id -> feedViewModel.deletePost(id) },
+                            onReportPost = { id, reason -> feedViewModel.reportPost(id, reason) },
+                            onEditPost = { post -> detailPostToEdit = post }
                         )
+
+                        detailPostToEdit?.let { post ->
+                            EditPostDialog(
+                                post = post,
+                                feedViewModel = feedViewModel,
+                                onDismiss = {
+                                    detailPostToEdit = null
+                                    // Re-fetch the post + comments so the edited
+                                    // content shows immediately on the detail screen.
+                                    postDetailViewModel.retry()
+                                }
+                            )
+                        }
                     }
                 }
             }
