@@ -24,7 +24,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import com.example.agora.data.CatboxClient
+import com.example.agora.data.CloudinaryClient
 import com.example.agora.data.supabaseClient
 import com.example.agora.model.Comment
 import com.example.agora.model.CommentInsertRequest
@@ -606,14 +606,14 @@ class FeedViewModel : ViewModel() {
     suspend fun uploadPostImage(context: Context, imageUri: Uri): String? {
         val bytes = compressImage(context, imageUri)
         return if (bytes.isNotEmpty()) {
-            CatboxClient.uploadBytes(bytes, "image/webp")
+            CloudinaryClient.uploadBytes(bytes, "image/webp")
         } else null
     }
 
     suspend fun uploadPostVideo(context: Context, videoUri: Uri): String? {
         val bytes = compressVideo(context, videoUri)
         return if (bytes.isNotEmpty()) {
-            CatboxClient.uploadBytes(bytes, "video/mp4")
+            CloudinaryClient.uploadBytes(bytes, "video/mp4")
         } else null
     }
 
@@ -645,7 +645,7 @@ class FeedViewModel : ViewModel() {
 
                                 if (bytes.isNotEmpty()) {
                                     val mimeType = if (isVideo) "video/mp4" else "image/webp"
-                                    CatboxClient.uploadBytes(bytes, mimeType)
+                                    CloudinaryClient.uploadBytes(bytes, mimeType)
                                 } else null
                             }
                         }.awaitAll().filterNotNull()
@@ -858,7 +858,7 @@ class FeedViewModel : ViewModel() {
 
                                 if (bytes.isNotEmpty()) {
                                     val mimeType = if (isVideo) "video/mp4" else "image/webp"
-                                    CatboxClient.uploadBytes(bytes, mimeType)
+                                    CloudinaryClient.uploadBytes(bytes, mimeType)
                                 } else null
                             }
                         }.awaitAll().filterNotNull()

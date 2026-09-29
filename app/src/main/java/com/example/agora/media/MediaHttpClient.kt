@@ -85,8 +85,7 @@ object MediaHttpClient {
      * prefer pointing it at a relay you control (e.g. a Supabase Edge Function that streams
      * the file through your own domain) over someone else's mirror.
      */
-    private val HOST_REWRITES: Map<String, String> =
-        mapOf("files.catbox.moe" to "files.pixstash.moe")
+    private val HOST_REWRITES: Map<String, String> = emptyMap()
 
     private const val CONNECT_TIMEOUT_SECONDS = 15L
     private const val READ_TIMEOUT_SECONDS = 30L
