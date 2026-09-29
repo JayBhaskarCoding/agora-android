@@ -10,6 +10,7 @@ import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import com.example.agora.BuildConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -209,7 +210,19 @@ object MediaHttpClient {
         // Best-effort bounds; the map is only ever touched from the player thread.
         if (lastDiagnosticAt.size > 32) lastDiagnosticAt.clear()
 
-        scope.launch { runDiagnostics(url) }
+        scope.launch {
+            // Diagnostics are strictly best-effort: an uncaught exception in this
+            // scope crashes the whole process on a dispatcher worker (observed with
+            // an old OkHttp protocol config: "protocols must contain
+            // h2_prior_knowledge or http/1.1: [h2]"). Never let probing kill playback.
+            try {
+                runDiagnostics(url)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Network diagnostics failed for $url: ${e.javaClass.simpleName}: ${e.message}")
+            }
+        }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
