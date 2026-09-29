@@ -179,15 +179,28 @@ object MediaHttpClient {
                     )
                 }
             } catch (e: IOException) {
-                // IOException here means no usable response at all: DNS, TCP, TLS or a
-                // peer that closed the socket. Same signature as the reported crash.
-                Log.e(
-                    TAG,
-                    "${request.method} ${request.url} → no response after " +
-                        "${SystemClock.elapsedRealtime() - startedAt}ms: " +
-                        "${e.javaClass.simpleName}: ${e.message}",
-                    e
-                )
+                // Intentional cancellations (player released/seeked, Coil superseded
+                // the fetch, caller timeout) surface as IOException("Canceled") —
+                // they are NOT transport failures, so they must not pollute the
+                // ERROR-level diagnostics that real outages are read from.
+                if (chain.call().isCanceled()) {
+                    Log.d(
+                        TAG,
+                        "${request.method} ${request.url} → canceled after " +
+                            "${SystemClock.elapsedRealtime() - startedAt}ms " +
+                            "(caller-initiated, not a network failure)"
+                    )
+                } else {
+                    // IOException here means no usable response at all: DNS, TCP, TLS or a
+                    // peer that closed the socket. Same signature as the reported crash.
+                    Log.e(
+                        TAG,
+                        "${request.method} ${request.url} → no response after " +
+                            "${SystemClock.elapsedRealtime() - startedAt}ms: " +
+                            "${e.javaClass.simpleName}: ${e.message}",
+                        e
+                    )
+                }
                 throw e
             }
         }
