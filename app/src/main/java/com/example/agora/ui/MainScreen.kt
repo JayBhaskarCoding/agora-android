@@ -723,7 +723,12 @@ private fun NavRailItem(
             modifier = Modifier.size(38.dp),
             contentAlignment = Alignment.Center
         ) {
-            AnimatedVisibility(
+            // K2 resolution: the RowScope overload wins candidate selection but
+            // cannot borrow Row's implicit receiver across this BoxScope lambda
+            // boundary ("cannot be called with an implicit receiver"). Qualify it
+            // explicitly — enter/exit are fully specified (fade + scale, no
+            // expand), so behavior is identical to the top-level variant.
+            this@Row.AnimatedVisibility(
                 visible = selected,
                 enter = fadeIn(tween(220)) + scaleIn(
                     animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
