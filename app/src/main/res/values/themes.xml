@@ -3,19 +3,6 @@
     <!-- Base App Theme -->
     <style name="Theme.Agora" parent="android:Theme.Material.Light.NoActionBar" />
 
-    <!-- 🌟 Noir chrome for the uCrop photo editor (UCropActivity).
-         The immersive editor is ALWAYS dark — runtime colors arrive through
-         UCrop.Options extras (see AgoraCropTheme.kt); this theme only removes
-         the stock Light AppCompat surfaces (toolbar/window/status bar). -->
-    <style name="Theme.Agora.UCrop" parent="Theme.AppCompat.NoActionBar">
-        <item name="android:windowBackground">#0B0C13</item>
-        <item name="android:statusBarColor">#000000</item>
-        <item name="android:navigationBarColor">#0B0C13</item>
-        <item name="colorPrimary">#12141D</item>
-        <item name="colorPrimaryDark">#000000</item>
-        <item name="colorAccent">#818CF8</item>
-    </style>
-
     <!-- 🌟 Native Splash Screen Theme (Light Mode: Pure White #FFFFFF) -->
     <style name="Theme.App.Starting" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">#FFFFFF</item>
