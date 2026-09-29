@@ -501,7 +501,7 @@ fun MainScreen(
                 ) {
                     Row(
                         modifier = Modifier
-                            .height(68.dp)
+                            .height(80.dp)
                             .shadow(
                                 elevation = 22.dp,
                                 shape = pillShape,
@@ -734,11 +734,10 @@ fun MainScreen(
 }
 
 /**
- * A bottom-nav rail item: a fixed 38dp icon well plus a 4dp selection dot that
- * springs in BELOW the icon. The dot's slot is always reserved, so the pill
- * keeps its original 68dp height, shape and compact feel — no label-driven
- * stretch, no vertical icon jump — while the active tab still reads clearly
- * (dot + accent tint + glow).
+ * A bottom-nav rail item: icon well with a centered text label BELOW it —
+ * the standard premium bottom-nav stack. The label is always present (tint
+ * marks the active tab together with the glow), so nothing animates layout,
+ * nothing jumps, and the pill keeps one stable, thicker geometry.
  */
 @Composable
 private fun NavRailItem(
@@ -754,23 +753,16 @@ private fun NavRailItem(
         animationSpec = tween(durationMillis = 220),
         label = "NavRailTint"
     )
-    val dotProgress by animateFloatAsState(
-        targetValue = if (selected) 1f else 0f,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "NavRailDot"
-    )
 
     Column(
         modifier = Modifier
-            .height(46.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Top
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
-            modifier = Modifier.size(38.dp),
+            modifier = Modifier.size(34.dp),
             contentAlignment = Alignment.Center
         ) {
             // K2 resolution: qualify the scope overload explicitly — the
@@ -807,22 +799,17 @@ private fun NavRailItem(
                 imageVector = if (selected) selectedIcon else icon,
                 contentDescription = label,
                 tint = tint,
-                modifier = Modifier.size(23.dp)
+                modifier = Modifier.size(22.dp)
             )
         }
 
-        // Selection dot — scales/fades in within its reserved slot, so the
-        // pill geometry never changes and nothing jumps.
-        Spacer(modifier = Modifier.height(3.dp))
-        Box(
-            modifier = Modifier
-                .size(4.dp)
-                .graphicsLayer {
-                    scaleX = dotProgress
-                    scaleY = dotProgress
-                    alpha = dotProgress
-                }
-                .background(colors.accent, CircleShape)
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = label,
+            style = AgoraType.NavLabel,
+            color = tint,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
