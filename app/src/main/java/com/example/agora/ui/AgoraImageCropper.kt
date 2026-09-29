@@ -405,20 +405,20 @@ fun AgoraImageCropDialog(
                                 style = Stroke(width = 1.5.dp.toPx())
                             )
                             val arm = 18.dp.toPx()
-                            val accentStroke = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
+                            val accentWidth = 3.dp.toPx()
                             val accent = Color.White.copy(alpha = 0.60f)
                             // top-left
-                            drawLine(accent, Offset(wl, wt), Offset(wl + arm, wt), accentStroke)
-                            drawLine(accent, Offset(wl, wt), Offset(wl, wt + arm), accentStroke)
+                            drawLine(accent, Offset(wl, wt), Offset(wl + arm, wt), accentWidth, StrokeCap.Round)
+                            drawLine(accent, Offset(wl, wt), Offset(wl, wt + arm), accentWidth, StrokeCap.Round)
                             // top-right
-                            drawLine(accent, Offset(wl + g.winW, wt), Offset(wl + g.winW - arm, wt), accentStroke)
-                            drawLine(accent, Offset(wl + g.winW, wt), Offset(wl + g.winW, wt + arm), accentStroke)
+                            drawLine(accent, Offset(wl + g.winW, wt), Offset(wl + g.winW - arm, wt), accentWidth, StrokeCap.Round)
+                            drawLine(accent, Offset(wl + g.winW, wt), Offset(wl + g.winW, wt + arm), accentWidth, StrokeCap.Round)
                             // bottom-left
-                            drawLine(accent, Offset(wl, wt + g.winH), Offset(wl + arm, wt + g.winH), accentStroke)
-                            drawLine(accent, Offset(wl, wt + g.winH), Offset(wl, wt + g.winH - arm), accentStroke)
+                            drawLine(accent, Offset(wl, wt + g.winH), Offset(wl + arm, wt + g.winH), accentWidth, StrokeCap.Round)
+                            drawLine(accent, Offset(wl, wt + g.winH), Offset(wl, wt + g.winH - arm), accentWidth, StrokeCap.Round)
                             // bottom-right
-                            drawLine(accent, Offset(wl + g.winW, wt + g.winH), Offset(wl + g.winW - arm, wt + g.winH), accentStroke)
-                            drawLine(accent, Offset(wl + g.winW, wt + g.winH), Offset(wl + g.winW, wt + g.winH - arm), accentStroke)
+                            drawLine(accent, Offset(wl + g.winW, wt + g.winH), Offset(wl + g.winW - arm, wt + g.winH), accentWidth, StrokeCap.Round)
+                            drawLine(accent, Offset(wl + g.winW, wt + g.winH), Offset(wl + g.winW, wt + g.winH - arm), accentWidth, StrokeCap.Round)
                         }
                     }
                 }
