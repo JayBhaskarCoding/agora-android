@@ -13,6 +13,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeEffect
+
+fun Modifier.hazeChild(
+    state: HazeState,
+    shape: Shape
+): Modifier = this
+    .clip(shape)
+    .hazeEffect(state = state)
 
 /**
  * Standard Design Tokens for Glassmorphism across Agora.

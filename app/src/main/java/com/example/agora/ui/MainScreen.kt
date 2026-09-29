@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.agora.ui.theme.LocalDarkTheme
+import com.example.agora.ui.theme.hazeChild
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.util.Consumer
@@ -70,13 +71,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-fun Modifier.hazeChild(
-    state: HazeState,
-    shape: Shape
-): Modifier = this
-    .clip(shape)
-    .hazeEffect(state = state)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -269,6 +263,7 @@ fun MainScreen(
                         GlobalFeedScreen(
                             viewModel = feedViewModel,
                             themeViewModel = themeViewModel,
+                            hazeState = hazeState,
                             onNavigateToProfile = { clickedUserId ->
                                 navController.navigate("profile?userId=$clickedUserId")
                             },
@@ -373,113 +368,115 @@ fun MainScreen(
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                         .navigationBarsPadding()
-                        .padding(bottom = 16.dp, start = 24.dp, end = 24.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            // 1. Background Heavy Blur Layer
-            val isDarkTheme = LocalDarkTheme.current
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(0.88f)
-                    .height(64.dp)
-                    .hazeChild(state = hazeState, shape = CircleShape)
-                    .background(
-                        brush = Brush.verticalGradient(
-                            colors = if (isDarkTheme) {
-                                listOf(
-                                    Color(0xFF1E293B).copy(alpha = 0.65f),
-                                    Color(0xFF0F172A).copy(alpha = 0.75f)
-                                )
-                            } else {
-                                listOf(
-                                    Color.White.copy(alpha = 0.80f),
-                                    Color.White.copy(alpha = 0.60f)
-                                )
-                            }
-                        ),
-                        shape = CircleShape
-                    )
-                    .border(
-                        width = 1.dp,
-                        brush = Brush.verticalGradient(
-                            colors = listOf(
-                                Color.White.copy(alpha = if (isDarkTheme) 0.35f else 0.75f),
-                                Color.White.copy(alpha = if (isDarkTheme) 0.08f else 0.20f)
-                            )
-                        ),
-                        shape = CircleShape
-                    )
-            )
-
-            // 2. Foreground Crisp Icons Layer
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth(0.88f)
-                    .height(64.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Home Tab
-                IconButton(
-                    onClick = {
-                        navController.navigate("feed") {
-                            popUpTo(navController.graph.findStartDestination().id) {
-                                saveState = true
-                            }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    },
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Icon(
-                        imageVector = if (currentRoute == "feed") Icons.Filled.Home else Icons.Outlined.Home,
-                        contentDescription = "Home",
-                        tint = if (currentRoute == "feed") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(26.dp)
-                    )
-                }
-
-                // Create Post Island Button
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary)
-                        .clickable { showComposeScreen = true },
+                        .padding(bottom = 24.dp, start = 16.dp, end = 16.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Create",
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp)
+                    // 1. Background Heavy Blur Layer
+                    val isDarkTheme = LocalDarkTheme.current
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.85f)
+                            .height(64.dp)
+                            .hazeChild(state = hazeState, shape = CircleShape)
+                            .background(
+                                brush = Brush.verticalGradient(
+                                    colors = if (isDarkTheme) {
+                                        listOf(
+                                            Color(0xFF1E293B).copy(alpha = 0.65f),
+                                            Color(0xFF0F172A).copy(alpha = 0.75f)
+                                        )
+                                    } else {
+                                        listOf(
+                                            Color.White.copy(alpha = 0.80f),
+                                            Color.White.copy(alpha = 0.60f)
+                                        )
+                                    }
+                                ),
+                                shape = CircleShape
+                            )
+                            .border(
+                                width = 1.dp,
+                                brush = Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color.White.copy(alpha = if (isDarkTheme) 0.35f else 0.75f),
+                                        Color.White.copy(alpha = if (isDarkTheme) 0.08f else 0.20f)
+                                    )
+                                ),
+                                shape = CircleShape
+                            )
                     )
-                }
 
-                // Profile Tab
-                val isProfileTab = currentRoute?.startsWith("profile") == true && navBackStackEntry?.arguments?.getString("userId") == null
-                IconButton(
-                    onClick = {
-                        navController.navigate("profile") {
-                            popUpTo(navController.graph.findStartDestination().id) {
-                                saveState = true
-                            }
-                            launchSingleTop = true
-                            restoreState = true
+                    // 2. Foreground Crisp Icons Layer
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth(0.85f)
+                            .height(64.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Home Tab
+                        val isHome = currentRoute == "feed"
+                        IconButton(
+                            onClick = {
+                                navController.navigate("feed") {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isHome) Icons.Filled.Home else Icons.Outlined.Home,
+                                contentDescription = "Home",
+                                tint = if (isHome) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(26.dp)
+                            )
                         }
-                    },
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Icon(
-                        imageVector = if (isProfileTab) Icons.Filled.Person else Icons.Outlined.Person,
-                        contentDescription = "Profile",
-                        tint = if (isProfileTab) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(26.dp)
-                    )
+
+                        // Create Post Island Button
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary)
+                                .clickable { showComposeScreen = true },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Create",
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+
+                        // Profile Tab
+                        val isProfileTab = currentRoute?.startsWith("profile") == true && navBackStackEntry?.arguments?.getString("userId") == null
+                        IconButton(
+                            onClick = {
+                                navController.navigate("profile") {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isProfileTab) Icons.Filled.Person else Icons.Outlined.Person,
+                                contentDescription = "Profile",
+                                tint = if (isProfileTab) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+                    }
                 }
             }
-        }
 
         // --- INSTAGRAM-STYLE UPLOAD BANNER ---
         AnimatedVisibility(

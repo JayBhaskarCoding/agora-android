@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.agora.ui.theme.hazeChild
 import coil.compose.AsyncImage
 import com.example.agora.R
 import com.example.agora.media.VideoPreloader
@@ -69,6 +70,7 @@ import kotlin.time.Duration.Companion.milliseconds
 fun GlobalFeedScreen(
     viewModel: FeedViewModel = viewModel(),
     themeViewModel: ThemeViewModel = viewModel(),
+    hazeState: dev.chrisbanes.haze.HazeState? = null,
     onNavigateToProfile: (String) -> Unit,
     onNavigateToSearch: () -> Unit
 ) {
@@ -144,15 +146,80 @@ fun GlobalFeedScreen(
         label = "FeedCommentsBlur"
     )
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                brush = if (isDarkTheme) {
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color(0xFF070B14),
+                            Color(0xFF0F172A),
+                            Color(0xFF070B14)
+                        )
+                    )
+                } else {
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color(0xFFF8FAFC),
+                            Color(0xFFEEF2F6),
+                            Color(0xFFE2E8F0)
+                        )
+                    )
+                }
+            )
+    ) {
 
-        // 1. THE BACKGROUND IMAGE
-        androidx.compose.foundation.Image(
-            painter = androidx.compose.ui.res.painterResource(id = bgImage),
-            contentDescription = "Feed Background",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.blur(radius=7.dp).fillMaxSize()
-        )
+        // 1. THE AMBIENT MESH GRADIENT GLOW ORBS (Ultra-Smooth, Seamless iOS Feel)
+        if (isDarkTheme) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset(x = (-40).dp, y = (-20).dp)
+                    .size(340.dp)
+                    .blur(110.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF4F46E5).copy(alpha = 0.28f))
+            )
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .offset(x = 60.dp, y = 100.dp)
+                    .size(320.dp)
+                    .blur(115.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF9333EA).copy(alpha = 0.24f))
+            )
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .offset(x = (-30).dp, y = 80.dp)
+                    .size(360.dp)
+                    .blur(120.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF06B6D4).copy(alpha = 0.20f))
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .size(320.dp)
+                    .blur(90.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF818CF8).copy(alpha = 0.25f))
+            )
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(320.dp)
+                    .blur(95.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF38BDF8).copy(alpha = 0.20f))
+            )
+        }
 
         // 2. THE SCROLLING FEED
         val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -283,17 +350,32 @@ fun GlobalFeedScreen(
             }
         }
 
-        // 3. FLOATING MAXIMIZED GLASSMORPHIC TOP BANNER (Native Fallback)
+        // 3. FLOATING FROSTED GLASS TOP BAR (iOS Blur Aesthetic)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                // 1. Faux Glass Gradient (Solid at top, fading to transparent at bottom)
+                .then(
+                    if (hazeState != null) {
+                        Modifier.hazeChild(state = hazeState, shape = RoundedCornerShape(0.dp))
+                    } else {
+                        Modifier
+                    }
+                )
                 .background(
                     brush = Brush.verticalGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.surface.copy(alpha = 1.0f),
-                            MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)
-                        )
+                        colors = if (isDarkTheme) {
+                            listOf(
+                                Color(0xFF0F172A).copy(alpha = 0.82f),
+                                Color(0xFF0F172A).copy(alpha = 0.65f),
+                                Color(0xFF0F172A).copy(alpha = 0.40f)
+                            )
+                        } else {
+                            listOf(
+                                Color.White.copy(alpha = 0.88f),
+                                Color.White.copy(alpha = 0.75f),
+                                Color.White.copy(alpha = 0.50f)
+                            )
+                        }
                     )
                 )
         ) {
@@ -302,30 +384,46 @@ fun GlobalFeedScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .statusBarsPadding()
-                    .height(64.dp)
-                    .padding(horizontal = 16.dp),
+                    .height(60.dp)
+                    .padding(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // Invisible balance box for true visual center of title
+                Box(modifier = Modifier.size(40.dp))
+
                 Text(
                     text = "Agora",
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 24.sp,
+                    fontSize = 22.sp,
+                    letterSpacing = 0.5.sp,
                     color = MaterialTheme.colorScheme.onBackground
                 )
 
-                IconButton(onClick = onNavigateToSearch) {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = "Search Users",
-                        tint = MaterialTheme.colorScheme.onBackground
-                    )
+                // Sleek circular glass button for search
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.20f)),
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    IconButton(
+                        onClick = onNavigateToSearch,
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Search Users",
+                            tint = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
 
-            // Glass Bottom Border Edge
+            // Glass Bottom Specular Border Edge
             HorizontalDivider(
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                color = if (isDarkTheme) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.08f),
                 thickness = 1.dp,
                 modifier = Modifier.align(Alignment.BottomCenter)
             )
@@ -725,13 +823,18 @@ fun PostCard(
                 )
             }
 
-            // Media (Multi-Media Carousel with Indicators)
+            // Media (Multi-Media Carousel with Indicators & Frosted Video Overlays)
             if (post.imageUrls.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(14.dp))
                 PostMediaCarousel(
                     mediaUrls = post.imageUrls,
                     onMediaClick = { url -> onImageClicked(url) },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    post = post,
+                    onLikeClicked = onLikeClicked,
+                    onCommentClicked = onCommentClicked,
+                    onUserClicked = onUserClicked,
+                    onShowReactorsClick = onShowReactorsClick
                 )
             }
 
