@@ -221,12 +221,16 @@ fun CreatePostScreen(
 
                             Box(
                                 modifier = Modifier
-                                    .size(110.dp)
+                                    // 🌟 Feed-sized cards: 80% of the carousel width at a
+                                    // 4:5 portrait ratio — exactly how media reads in the feed.
+                                    .fillParentMaxWidth(0.8f)
+                                    .aspectRatio(4f / 5f)
                                     .clip(RoundedCornerShape(20.dp))
                                     .border(1.dp, agora.cardBorder, RoundedCornerShape(20.dp))
                                     .clickable {
-                                        // 🌟 Tapping preview sets activeEditUri to open enlarged view/re-trim overlay
-                                        activeEditUri = uri
+                                        // 🌟 The whole card is the edit button: videos open the
+                                        // trim studio overlay, images open the crop studio directly.
+                                        if (isVideo) activeEditUri = uri else cropSourceUri = uri
                                     }
                             ) {
                                 if (isVideo) {
@@ -274,8 +278,8 @@ fun CreatePostScreen(
                                     )
                                 }
 
-                                // 🌟 On-demand Crop/Edit chip — small frosted pill that
-                                // mirrors the close button; videos keep tap-to-trim instead.
+                                // 🌟 Decorative edit badge — the entire card already
+                                // routes taps to the crop studio; this just hints at it.
                                 if (!isVideo) {
                                     Box(
                                         modifier = Modifier
@@ -284,8 +288,7 @@ fun CreatePostScreen(
                                             .size(26.dp)
                                             .clip(CircleShape)
                                             .background(Color.Black.copy(alpha = 0.55f))
-                                            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
-                                            .clickable { cropSourceUri = uri },
+                                            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Icon(
@@ -365,8 +368,10 @@ fun CreatePostScreen(
             if (isVideo) {
                 Surface(
                     modifier = Modifier
-                        .fillMaxWidth(0.94f)
-                        .wrapContentHeight(),
+                        // 🌟 Immersive sheet — bounded height so the player
+                        // preview can weight-expand above the trim deck.
+                        .fillMaxWidth(0.96f)
+                        .fillMaxHeight(0.92f),
                     shape = RoundedCornerShape(28.dp),
                     color = Color(0xFF12141D).copy(alpha = 0.96f),
                     border = BorderStroke(1.dp, Color.White.copy(alpha = 0.09f))

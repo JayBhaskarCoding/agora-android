@@ -7,6 +7,12 @@ import android.net.Uri
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.annotation.OptIn
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -24,7 +30,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -50,6 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.forEachGesture
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -70,6 +76,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.SeekParameters
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -126,8 +133,11 @@ fun VideoTrimmerDialog(
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth(0.94f)
-                .wrapContentHeight(),
+                // 🌟 Immersive geometry — near-fullscreen sheet, matching the
+                // image crop studio's premium vibe. Bounded height lets the
+                // preview claim all remaining space via weight(1f).
+                .fillMaxWidth(0.96f)
+                .fillMaxHeight(0.92f),
             shape = RoundedCornerShape(28.dp),
             color = TrimSurface,
             border = BorderStroke(1.dp, TrimHairline)
@@ -217,7 +227,7 @@ fun VideoTrimmerContent(
 
     Column(
         modifier = Modifier
-            .fillMaxWidth()
+            .fillMaxSize()
             .clip(RoundedCornerShape(28.dp))
     ) {
         // ── Top glass toolbar ───────────────────────────────────────────
@@ -305,11 +315,11 @@ fun VideoTrimmerContent(
             )
         }
 
-        // ── Preview ─────────────────────────────────────────────────────
+        // ── Preview — immersive: expands into every pixel above the trim deck ──
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(210.dp)
+                .weight(1f)
                 .background(Color.Black),
             contentAlignment = Alignment.Center
         ) {
@@ -326,6 +336,44 @@ fun VideoTrimmerContent(
                 },
                 modifier = Modifier.fillMaxSize()
             )
+
+            // 🌟 Tap-to-play/pause: a transparent gesture layer over the
+            // PlayerView hole-punch. The player's own controller stays off,
+            // so taps can never be swallowed by media3 view chrome.
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .pointerInput(exoPlayer) {
+                        detectTapGestures {
+                            isPlaying = !isPlaying
+                            exoPlayer.playWhenReady = isPlaying
+                        }
+                    }
+            )
+
+            // Frosted play badge springs in while paused — a clear hint that
+            // tapping the video resumes playback.
+            AnimatedVisibility(
+                visible = !isPlaying,
+                enter = fadeIn(tween(180)) + scaleIn(tween(220), initialScale = 0.6f),
+                exit = fadeOut(tween(120)) + scaleOut(tween(120), targetScale = 0.6f)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(58.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.45f))
+                        .border(1.dp, TrimHairline, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(30.dp)
+                    )
+                }
+            }
         }
 
         // ── Filmstrip + trim handles + readouts ─────────────────────────
@@ -432,6 +480,10 @@ fun VideoTrimmerContent(
                                     scrubbing = true
                                     isPlaying = false
                                     exoPlayer.playWhenReady = false
+                                    // 🌟 Snap to sync frames WHILE dragging — seeks stay
+                                    // cheap and fluid under a flood of drag events, so the
+                                    // player can never pile up work or ANR.
+                                    exoPlayer.setSeekParameters(SeekParameters.CLOSEST_SYNC)
 
                                     var prevX = down.position.x
                                     loop@ while (true) {
@@ -440,14 +492,20 @@ fun VideoTrimmerContent(
                                         if (pressed.isEmpty()) break@loop
                                         val x = pressed[0].position.x
                                         val ms = (x / w).coerceIn(0f, 1f) * dur
+                                        val targetMs: Float
                                         when (mode) {
                                             0 -> {
+                                                // Left handle scrubs the preview to the
+                                                // exact start-cut millisecond, live.
                                                 trimStart = ms.coerceIn(0f, trimEnd - MIN_TRIM_MS)
                                                 exoPlayer.seekTo(trimStart.toLong())
+                                                targetMs = trimStart
                                             }
                                             1 -> {
+                                                // Right handle previews the exact end cut.
                                                 trimEnd = ms.coerceIn(trimStart + MIN_TRIM_MS, dur)
                                                 exoPlayer.seekTo(trimEnd.toLong())
+                                                targetMs = trimEnd
                                             }
                                             else -> {
                                                 val delta = ((x - prevX) / w) * dur
@@ -455,14 +513,21 @@ fun VideoTrimmerContent(
                                                     .coerceIn(0f, (dur - windowMs).coerceAtLeast(0f))
                                                 trimStart = ns
                                                 trimEnd = ns + windowMs
+                                                exoPlayer.seekTo(ns.toLong())
+                                                targetMs = ns
                                             }
                                         }
                                         prevX = x
-                                        playheadMs = exoPlayer.currentPosition.toFloat()
+                                        // Drive the playhead from the seek TARGET — ExoPlayer's
+                                        // async currentPosition would lag a frame behind.
+                                        playheadMs = targetMs
                                         event.changes.forEach { it.consume() }
                                     }
 
                                     scrubbing = false
+                                    // Exact seek on release so the preview settles on the
+                                    // true cut frame, not the nearest sync frame.
+                                    exoPlayer.setSeekParameters(SeekParameters.DEFAULT)
                                     exoPlayer.seekTo(trimStart.toLong())
                                     playheadMs = trimStart
                                     if (wasPlaying) {
