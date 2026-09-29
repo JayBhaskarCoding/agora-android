@@ -1,7 +1,6 @@
 package com.example.agora.ui
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -17,12 +16,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -32,7 +29,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
-import com.example.agora.R
+import com.example.agora.ui.components.VibrantGlassBackground
+import com.example.agora.ui.theme.rememberAgoraColors
 import com.example.agora.viewmodel.FeedViewModel
 import com.example.agora.viewmodel.ThemeViewModel
 
@@ -61,7 +59,7 @@ fun UserSearchScreen(
     onUserClick: (String) -> Unit
 ) {
     val isDarkTheme = com.example.agora.ui.theme.LocalDarkTheme.current
-    val bgImage = if (isDarkTheme) R.drawable.app_background_dark else R.drawable.app_background_light
+    val agora = rememberAgoraColors()
 
     var searchQuery by remember { mutableStateOf("") }
     val searchResults by feedViewModel.searchResults.collectAsState()
@@ -70,17 +68,8 @@ fun UserSearchScreen(
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
-    Box(modifier = Modifier.fillMaxSize()) {
-
-        // 🌟 1. REACTIVE BLURRED BACKGROUND IMAGE
-        Image(
-            painter = painterResource(id = bgImage),
-            contentDescription = "Search Background",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .blur(radius = 7.dp)
-                .fillMaxSize()
-        )
+    // ✦ Agora Noir canvas — no blurred wallpaper, the same aurora gradient as the feed.
+    VibrantGlassBackground(isDarkTheme = isDarkTheme) {
 
         // 🌟 2. SCROLLING SEARCH RESULTS
         LazyColumn(
@@ -115,8 +104,8 @@ fun UserSearchScreen(
 
                     Surface(
                         shape = RoundedCornerShape(18.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)),
+                        color = agora.cardSurface,
+                        border = BorderStroke(1.dp, agora.cardBorder),
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { onUserClick(profile.id) }
@@ -169,73 +158,73 @@ fun UserSearchScreen(
             }
         }
 
-        // 🌟 3. FLOATING MAXIMIZED FAUX GLASS SEARCH BAR
+        // 🌟 3. FLOATING SEARCH BAR — seamless scrim, no hairline divider
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(
                     brush = Brush.verticalGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.surface.copy(alpha = 1.0f),
-                            MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)
+                        colorStops = arrayOf(
+                            0.0f to agora.canvasTop.copy(alpha = 0.96f),
+                            0.72f to agora.canvasTop.copy(alpha = 0.88f),
+                            1.0f to Color.Transparent
                         )
                     )
                 )
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .height(64.dp)
-                    .padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = MaterialTheme.colorScheme.onBackground
+            Column {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .height(64.dp)
+                        .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = MaterialTheme.colorScheme.onBackground
+                        )
+                    }
+
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = {
+                            searchQuery = it
+                            feedViewModel.searchusers(it)
+                        },
+                        placeholder = {
+                            Text(
+                                text = "Search users...",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        singleLine = true,
+                        shape = CircleShape,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(end = 8.dp),
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = agora.insetSurface,
+                            unfocusedContainerColor = agora.insetSurface.copy(alpha = 0.6f),
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent
+                        ),
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     )
                 }
 
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = {
-                        searchQuery = it
-                        feedViewModel.searchusers(it)
-                    },
-                    placeholder = {
-                        Text(
-                            text = "Search users...",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    },
-                    singleLine = true,
-                    shape = CircleShape,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(end = 8.dp),
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-                        focusedIndicatorColor = Color.Transparent,
-                        unfocusedIndicatorColor = Color.Transparent
-                    ),
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                )
+                // Scrim fade-out strip — replaces the hard divider line
+                Spacer(modifier = Modifier.height(12.dp))
             }
-
-            HorizontalDivider(
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-                thickness = 1.dp,
-                modifier = Modifier.align(Alignment.BottomCenter)
-            )
         }
     }
 }

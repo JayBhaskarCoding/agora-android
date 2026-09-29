@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -12,8 +13,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -75,11 +80,33 @@ fun RegisterScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
+                    // ✦ Gradient wordmark — same signature as the feed top bar.
                     Text(
-                        text = "Join Agora",
+                        text = buildAnnotatedString {
+                            withStyle(
+                                SpanStyle(
+                                    brush = Brush.linearGradient(
+                                        colors = listOf(
+                                            MaterialTheme.colorScheme.onBackground,
+                                            MaterialTheme.colorScheme.onBackground.copy(alpha = 0.66f)
+                                        )
+                                    ),
+                                    fontWeight = FontWeight.Black
+                                )
+                            ) {
+                                append("join agora")
+                            }
+                            withStyle(
+                                SpanStyle(
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Black
+                                )
+                            ) {
+                                append(".")
+                            }
+                        },
                         fontSize = 40.sp,
-                        fontWeight = FontWeight.Black,
-                        color = MaterialTheme.colorScheme.primary,
+                        letterSpacing = (-1.1).sp,
                         modifier = Modifier.padding(bottom = 6.dp)
                     )
 
@@ -105,7 +132,8 @@ fun RegisterScreen(
                             Text(
                                 text = "Verify Email",
                                 fontSize = 22.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = (-0.5).sp,
                                 color = MaterialTheme.colorScheme.onBackground,
                                 modifier = Modifier
                                     .align(Alignment.Start)
@@ -147,12 +175,12 @@ fun RegisterScreen(
                                                     .size(46.dp)
                                                     .border(
                                                         width = if (isFocused) 2.dp else 1.dp,
-                                                        color = if (isFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
-                                                        shape = RoundedCornerShape(14.dp)
+                                                        color = if (isFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                                        shape = RoundedCornerShape(16.dp)
                                                     )
                                                     .background(
-                                                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
-                                                        shape = RoundedCornerShape(14.dp)
+                                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                                                        shape = RoundedCornerShape(16.dp)
                                                     ),
                                                 contentAlignment = Alignment.Center
                                             ) {
@@ -175,7 +203,7 @@ fun RegisterScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(54.dp),
-                                shape = RoundedCornerShape(16.dp),
+                                shape = CircleShape,
                                 enabled = otpCode.length == 6
                             ) {
                                 Text(
@@ -199,7 +227,8 @@ fun RegisterScreen(
                             Text(
                                 text = "Get Started",
                                 fontSize = 22.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = (-0.5).sp,
                                 color = MaterialTheme.colorScheme.onBackground,
                                 modifier = Modifier
                                     .align(Alignment.Start)
@@ -246,7 +275,7 @@ fun RegisterScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(54.dp),
-                                shape = RoundedCornerShape(16.dp),
+                                shape = CircleShape,
                                 enabled = email.isNotBlank()
                             ) {
                                 Text(

@@ -3,6 +3,7 @@ package com.example.agora.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -10,17 +11,20 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.agora.R
 import com.example.agora.ui.components.VibrantGlassBackground
-import com.example.agora.ui.theme.GlassTokens
 import com.example.agora.ui.theme.LocalDarkTheme
 import com.example.agora.ui.theme.glassmorphic
 import com.example.agora.viewmodel.AuthViewModel
@@ -76,11 +80,33 @@ fun LoginScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
+                    // ✦ Gradient wordmark — same signature as the feed top bar.
                     Text(
-                        text = "Agora",
-                        fontSize = 42.sp,
-                        fontWeight = FontWeight.Black,
-                        color = MaterialTheme.colorScheme.primary,
+                        text = buildAnnotatedString {
+                            withStyle(
+                                SpanStyle(
+                                    brush = Brush.linearGradient(
+                                        colors = listOf(
+                                            MaterialTheme.colorScheme.onBackground,
+                                            MaterialTheme.colorScheme.onBackground.copy(alpha = 0.66f)
+                                        )
+                                    ),
+                                    fontWeight = FontWeight.Black
+                                )
+                            ) {
+                                append("agora")
+                            }
+                            withStyle(
+                                SpanStyle(
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Black
+                                )
+                            ) {
+                                append(".")
+                            }
+                        },
+                        fontSize = 44.sp,
+                        letterSpacing = (-1.2).sp,
                         modifier = Modifier.padding(bottom = 6.dp)
                     )
 
@@ -105,7 +131,8 @@ fun LoginScreen(
                         Text(
                             text = "Welcome Back",
                             fontSize = 22.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = (-0.5).sp,
                             color = MaterialTheme.colorScheme.onBackground,
                             modifier = Modifier
                                 .align(Alignment.Start)
@@ -167,7 +194,7 @@ fun LoginScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(54.dp),
-                            shape = RoundedCornerShape(16.dp),
+                            shape = CircleShape,
                             enabled = identifier.isNotBlank() && password.length >= 8
                         ) {
                             Text(
@@ -213,8 +240,8 @@ fun LoginScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(54.dp),
-                            shape = RoundedCornerShape(16.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+                            shape = CircleShape,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,

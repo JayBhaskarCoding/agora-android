@@ -7,8 +7,8 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -24,12 +24,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -41,10 +39,11 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import coil.compose.AsyncImage
-import com.example.agora.R
 import com.example.agora.media.CompressionState
 import com.example.agora.media.VideoCompressorTrimmer
+import com.example.agora.ui.components.VibrantGlassBackground
 import com.example.agora.ui.theme.LocalDarkTheme
+import com.example.agora.ui.theme.rememberAgoraColors
 import com.example.agora.viewmodel.FeedViewModel
 import com.example.agora.viewmodel.ThemeViewModel
 import com.yalantis.ucrop.UCrop
@@ -83,7 +82,7 @@ fun CreatePostScreen(
 ) {
     val context = LocalContext.current
     val isDarkTheme = LocalDarkTheme.current
-    val bgImage = if (isDarkTheme) R.drawable.app_background_dark else R.drawable.app_background_light
+    val agora = rememberAgoraColors()
 
     var postText by remember { mutableStateOf("") }
     
@@ -145,16 +144,8 @@ fun CreatePostScreen(
 
     val canPost = postText.trim().isNotBlank() || selectedMedia.isNotEmpty()
 
-    Box(modifier = Modifier.fillMaxSize()) {
-
-        Image(
-            painter = painterResource(id = bgImage),
-            contentDescription = "Create Post Background",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .blur(radius = 7.dp)
-                .fillMaxSize()
-        )
+    // ✦ Agora Noir canvas — no blurred wallpaper, the same aurora gradient as the feed.
+    VibrantGlassBackground(isDarkTheme = isDarkTheme) {
 
         Scaffold(
             containerColor = Color.Transparent,
@@ -259,7 +250,8 @@ fun CreatePostScreen(
                             Box(
                                 modifier = Modifier
                                     .size(110.dp)
-                                    .clip(RoundedCornerShape(18.dp))
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .border(1.dp, agora.cardBorder, RoundedCornerShape(20.dp))
                                     .clickable {
                                         // 🌟 Tapping preview sets activeEditUri to open enlarged view/re-trim overlay
                                         activeEditUri = uri
@@ -316,8 +308,8 @@ fun CreatePostScreen(
 
                 Surface(
                     shape = RoundedCornerShape(24.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                    color = agora.cardSurface,
+                    border = BorderStroke(1.dp, agora.cardBorder),
                     modifier = Modifier
                         .fillMaxWidth()
                         .navigationBarsPadding()

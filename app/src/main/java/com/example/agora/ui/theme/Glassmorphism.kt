@@ -1,12 +1,9 @@
 package com.example.agora.ui.theme
 
-import android.os.Build
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -29,77 +26,84 @@ fun Modifier.hazeChild(
     }
 
 /**
- * Standard Design Tokens for Glassmorphism across Agora.
+ * ✦ Design tokens — Noir pass.
+ *
+ * The names are kept for source compatibility, but the values now describe the
+ * solid, sculpted surfaces of the flagship feed design: opaque cards, hairline
+ * borders and a faint top sheen instead of translucent frosted glass.
  */
 object GlassTokens {
     val RadiusSmall: Dp = 12.dp
     val RadiusMedium: Dp = 18.dp
-    val RadiusLarge: Dp = 24.dp
+    val RadiusLarge: Dp = 28.dp
     val RadiusPill: Dp = 100.dp
 
-    // Frosted surfaces
-    val DarkSurface: Color = Color(0xFF0F172A).copy(alpha = 0.55f)
-    val DarkSurfaceSubtle: Color = Color(0xFF1E293B).copy(alpha = 0.40f)
-    val LightSurface: Color = Color.White.copy(alpha = 0.65f)
-    val LightSurfaceSubtle: Color = Color.White.copy(alpha = 0.45f)
+    // Solid Noir surfaces
+    val DarkSurface: Color = Color(0xFF12141D)
+    val DarkSurfaceSubtle: Color = Color(0xFF1C1F2B)
+    val LightSurface: Color = Color(0xFFFFFFFF)
+    val LightSurfaceSubtle: Color = Color(0xFFF3F1EA)
 
-    // Glass borders (specular highlight on edges)
+    // Hairline edges
     val DarkBorder: Brush = Brush.linearGradient(
         colors = listOf(
-            Color.White.copy(alpha = 0.25f),
-            Color.White.copy(alpha = 0.05f)
+            Color.White.copy(alpha = 0.10f),
+            Color.White.copy(alpha = 0.06f)
         )
     )
 
     val LightBorder: Brush = Brush.linearGradient(
         colors = listOf(
-            Color.White.copy(alpha = 0.70f),
-            Color.White.copy(alpha = 0.20f)
+            Color(0xFFE7E4DB),
+            Color(0xFFEDEAE1)
+        )
+    )
+
+    // Top specular sheen (dark mode only — invisible on white cards)
+    val DarkSheen: Brush = Brush.verticalGradient(
+        colorStops = arrayOf(
+            0f to Color.White.copy(alpha = 0.045f),
+            0.16f to Color.Transparent
         )
     )
 }
 
 /**
- * Applies a frosted glass surface style with background translucency,
- * specular edge lighting (border), and clipping.
+ * Applies the Noir card finish: an opaque surface with a faint top sheen and a
+ * hairline border, clipped to [shape]. Drop-in replacement for the former
+ * frosted-glass treatment — every screen using it now matches the feed cards.
  */
 fun Modifier.glassmorphic(
     shape: Shape = RoundedCornerShape(GlassTokens.RadiusLarge),
     isDark: Boolean = true,
     borderWidth: Dp = 1.dp
-): Modifier = this
-    .clip(shape)
-    .background(
-        brush = Brush.verticalGradient(
-            colors = if (isDark) {
-                listOf(
-                    Color(0xFF1E293B).copy(alpha = 0.65f),
-                    Color(0xFF0F172A).copy(alpha = 0.75f)
-                )
-            } else {
-                listOf(
-                    Color.White.copy(alpha = 0.75f),
-                    Color.White.copy(alpha = 0.55f)
-                )
-            }
-        ),
-        shape = shape
-    )
-    .border(
+): Modifier {
+    var mod = this
+        .clip(shape)
+        .background(
+            color = if (isDark) GlassTokens.DarkSurface else GlassTokens.LightSurface,
+            shape = shape
+        )
+    if (isDark) {
+        mod = mod.background(brush = GlassTokens.DarkSheen, shape = shape)
+    }
+    return mod.border(
         width = borderWidth,
         brush = if (isDark) GlassTokens.DarkBorder else GlassTokens.LightBorder,
         shape = shape
     )
+}
 
 /**
- * Frosted glass pill style ideal for action buttons, badge overlays, and tag chips.
+ * Noir pill finish for action buttons, badge overlays and tag chips: a solid
+ * inset surface with a hairline edge.
  */
 fun Modifier.glassPill(
     isDark: Boolean = true
 ): Modifier = this
     .clip(RoundedCornerShape(GlassTokens.RadiusPill))
     .background(
-        color = if (isDark) Color.Black.copy(alpha = 0.45f) else Color.White.copy(alpha = 0.60f),
+        color = if (isDark) GlassTokens.DarkSurfaceSubtle else GlassTokens.LightSurfaceSubtle,
         shape = RoundedCornerShape(GlassTokens.RadiusPill)
     )
     .border(

@@ -2,7 +2,9 @@ package com.example.agora.ui.theme
 
 import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -11,26 +13,50 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import com.example.agora.viewmodel.ThemePreference
 
 val LocalDarkTheme = staticCompositionLocalOf { true }
 
+// ✦ Noir corner-radius scale (shared by Shapes + explicit screen styling)
+private val Shape8 = RoundedCornerShape(8.dp)
+private val Shape12 = RoundedCornerShape(12.dp)
+private val Shape16 = RoundedCornerShape(16.dp)
+private val Shape22 = RoundedCornerShape(22.dp)
+private val Shape28 = RoundedCornerShape(28.dp)
+
+// ✦ AGORA NOIR — the global MaterialTheme now speaks the same language as the
+//   feed design system: obsidian canvases, solid graphite surfaces, warm paper
+//   light mode, hairline outlines and the brand indigo accent.
 private val LightColorScheme = lightColorScheme(
     primary = AgoraIndigo,
     onPrimary = White,
     primaryContainer = Color(0xFFEEF2FF),
     onPrimaryContainer = Color(0xFF3730A3),
-    background = Slate50,
-    onBackground = Gray900,
+    secondary = NoirSecondaryLight,
+    onSecondary = White,
+    secondaryContainer = NoirSecondaryContainerLight,
+    onSecondaryContainer = NoirOnSecondaryContainerLight,
+    tertiary = NoirTertiaryLight,
+    onTertiary = White,
+    tertiaryContainer = NoirTertiaryContainerLight,
+    onTertiaryContainer = NoirOnTertiaryContainerLight,
+    background = NoirCanvasLight,
+    onBackground = NoirInkLight,
     surface = White,
-    onSurface = Gray900,
-    surfaceVariant = Slate100,
-    onSurfaceVariant = Slate500,
-    error = AgoraRed,
+    onSurface = NoirInkLight,
+    surfaceVariant = NoirInsetLight,
+    onSurfaceVariant = NoirTextSecondaryLight,
+    surfaceContainerLowest = White,
+    surfaceContainerLow = NoirContainerLowLight,
+    surfaceContainer = NoirCanvasLight,
+    surfaceContainerHigh = NoirContainerHighLight,
+    surfaceContainerHighest = NoirContainerHighestLight,
+    error = NoirDangerLight,
     onError = White,
-    outline = Slate200,
-    outlineVariant = Color(0xFFD1D5DB)
+    outline = NoirOutlineLight,
+    outlineVariant = NoirHairlineLight
 )
 
 private val DarkColorScheme = darkColorScheme(
@@ -38,16 +64,39 @@ private val DarkColorScheme = darkColorScheme(
     onPrimary = White,
     primaryContainer = Color(0xFF312E81),
     onPrimaryContainer = Color(0xFFE0E7FF),
-    background = Slate900,
-    onBackground = Slate100,
-    surface = Slate800,
-    onSurface = Slate100,
-    surfaceVariant = Color(0xFF334155),
-    onSurfaceVariant = Slate400,
+    secondary = NoirSecondaryDark,
+    onSecondary = Color(0xFF1B1430),
+    secondaryContainer = NoirSecondaryContainerDark,
+    onSecondaryContainer = NoirOnSecondaryContainerDark,
+    tertiary = NoirTertiaryDark,
+    onTertiary = Color(0xFF062830),
+    tertiaryContainer = NoirTertiaryContainerDark,
+    onTertiaryContainer = NoirOnTertiaryContainerDark,
+    background = NoirCanvasDark,
+    onBackground = NoirOnSurfaceDark,
+    surface = NoirSurfaceDark,
+    onSurface = NoirOnSurfaceDark,
+    surfaceVariant = NoirInsetDark,
+    onSurfaceVariant = NoirTextSecondaryDark,
+    surfaceContainerLowest = NoirCanvasDarkDeep,
+    surfaceContainerLow = NoirContainerLowDark,
+    surfaceContainer = NoirSurfaceDark,
+    surfaceContainerHigh = NoirContainerHighDark,
+    surfaceContainerHighest = NoirContainerHighestDark,
     error = AgoraRed,
     onError = White,
-    outline = Color(0xFF475569),
-    outlineVariant = Color(0xFF64748B)
+    outline = NoirOutlineDark,
+    outlineVariant = NoirHairlineDark
+)
+
+// ✦ Noir corner language: matches the feed's card/plate/chip radii so every
+//   M3 component (dialogs, sheets, date pickers) inherits the same silhouettes.
+private val AgoraShapes = Shapes(
+    extraSmall = Shape8,
+    small = Shape12,
+    medium = Shape16,
+    large = Shape22,
+    extraLarge = Shape28
 )
 
 @Composable
@@ -87,6 +136,7 @@ fun AgoraTheme(
         MaterialTheme(
             colorScheme = colorScheme,
             typography = Typography,
+            shapes = AgoraShapes,
             content = content
         )
     }
