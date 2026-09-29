@@ -1,20 +1,15 @@
 package com.example.agora.ui
 
 import android.content.Intent
-import android.net.Uri
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -23,14 +18,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.CloudOff
+import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
@@ -39,7 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -47,36 +43,57 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.agora.ui.theme.hazeChild
 import coil.compose.AsyncImage
-import com.example.agora.R
 import com.example.agora.media.VideoPreloader
 import com.example.agora.model.Post
+import com.example.agora.ui.theme.AgoraRingGradient
+import com.example.agora.ui.theme.AgoraType
+import com.example.agora.ui.theme.hazeChild
+import com.example.agora.ui.theme.rememberAgoraColors
 import com.example.agora.viewmodel.FeedViewModel
 import com.example.agora.viewmodel.ThemeViewModel
 import com.example.agora.viewmodel.UploadState
+import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.time.Duration.Companion.milliseconds
 
+/**
+ * ✦ AGORA NOIR — HOME FEED
+ *
+ * The feed is rebuilt as an editorial-luxury experience:
+ *  - a deep obsidian canvas with ambient aurora washes (warm paper in light mode),
+ *  - a scroll-reactive frosted top bar with a gradient wordmark,
+ *  - solid sculpted post cards with hairline borders, a top specular sheen,
+ *    gallery-plate media and a divided action bar,
+ *  - spring-driven micro-interactions (item reveal, morphing like counts).
+ *
+ * All data behavior is untouched: FeedViewModel collection, VideoPreloader
+ * prefetching, pull-to-refresh, comment/reactor sheets, edit/delete/report
+ * flows and the full-screen media viewer work exactly as before.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GlobalFeedScreen(
     viewModel: FeedViewModel = viewModel(),
     themeViewModel: ThemeViewModel = viewModel(),
-    hazeState: dev.chrisbanes.haze.HazeState? = null,
+    hazeState: HazeState? = null,
     onNavigateToProfile: (String) -> Unit,
-    onNavigateToSearch: () -> Unit
+    onNavigateToSearch: () -> Unit,
+    onCreatePost: () -> Unit = {}
 ) {
-    // Collect the theme state directly from your custom toggle logic
-    val isDarkTheme = com.example.agora.ui.theme.LocalDarkTheme.current
-    val bgImage = if (isDarkTheme) R.drawable.app_background_dark else R.drawable.app_background_light
+    val colors = rememberAgoraColors()
 
     val posts by viewModel.posts.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
@@ -92,7 +109,14 @@ fun GlobalFeedScreen(
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
     val reportOptions = remember { listOf("Spam", "Harassment", "Hate Speech", "Misinformation", "Other") }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+
+    // ✦ Scroll-reactive top bar: the frosted header materializes only once
+    //    content actually slides underneath it.
+    val isScrolled by remember {
+        derivedStateOf {
+            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 8
+        }
+    }
 
     // 🌟 Pre-cache the next 1-2 videos in the list so they start instantly when
     //    scrolled into view (or opened fullscreen). Re-triggered per scroll position.
@@ -121,23 +145,14 @@ fun GlobalFeedScreen(
     var expandedImageUrl by remember { mutableStateOf<String?>(null) }
     var showCommentSheet by remember { mutableStateOf(false) }
     var selectedPostId by remember { mutableStateOf<String?>(null) }
-    var newCommentText by remember { mutableStateOf("") }
 
     // Options Menu & Delete Confirmation States
     var optionsPost by remember { mutableStateOf<Post?>(null) }
     var postToDelete by remember { mutableStateOf<Post?>(null) }
     var postToEdit by remember { mutableStateOf<Post?>(null) }
-    var editPostText by remember { mutableStateOf("") }
 
     var postToReport by remember { mutableStateOf<Post?>(null) }
     var reportReason by remember { mutableStateOf("Spam") }
-
-    var keptUrls by remember { mutableStateOf<List<String>>(emptyList()) }
-    var newlyAddedUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
-
-    val editLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
-        newlyAddedUris = newlyAddedUris + uris
-    }
 
     val isCommentsSheetOpen = showCommentSheet && selectedPostId != null
     val feedBlurRadius by animateDpAsState(
@@ -150,78 +165,95 @@ fun GlobalFeedScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(
-                brush = if (isDarkTheme) {
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color(0xFF070B14),
-                            Color(0xFF0F172A),
-                            Color(0xFF070B14)
-                        )
-                    )
-                } else {
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color(0xFFF8FAFC),
-                            Color(0xFFEEF2F6),
-                            Color(0xFFE2E8F0)
-                        )
-                    )
-                }
+                brush = Brush.verticalGradient(
+                    colors = listOf(colors.canvasTop, colors.canvasBottom)
+                )
             )
     ) {
 
-        // 1. THE AMBIENT MESH GRADIENT GLOW ORBS (Ultra-Smooth, Seamless iOS Feel)
-        if (isDarkTheme) {
+        // ✦ 1. AMBIENT AURORA WASHES — soft radial glows painted with gradient
+        //    brushes (no runtime blur modifier), so they cost a single raster
+        //    pass instead of re-blurring every frame.
+        if (colors.isDark) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .offset(x = (-40).dp, y = (-20).dp)
-                    .size(340.dp)
-                    .blur(110.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF4F46E5).copy(alpha = 0.28f))
+                    .offset(x = (-100).dp, y = (-80).dp)
+                    .size(440.dp)
+                    .background(
+                        brush = Brush.radialGradient(
+                            colorStops = arrayOf(
+                                0f to colors.auroraPrimary.copy(alpha = 0.20f),
+                                0.55f to colors.auroraPrimary.copy(alpha = 0.08f),
+                                1f to Color.Transparent
+                            )
+                        )
+                    )
             )
-
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .offset(x = 60.dp, y = 100.dp)
-                    .size(320.dp)
-                    .blur(115.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF9333EA).copy(alpha = 0.24f))
+                    .offset(x = 110.dp, y = 80.dp)
+                    .size(400.dp)
+                    .background(
+                        brush = Brush.radialGradient(
+                            colorStops = arrayOf(
+                                0f to colors.auroraSecondary.copy(alpha = 0.14f),
+                                0.55f to colors.auroraSecondary.copy(alpha = 0.05f),
+                                1f to Color.Transparent
+                            )
+                        )
+                    )
             )
-
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .offset(x = (-30).dp, y = 80.dp)
-                    .size(360.dp)
-                    .blur(120.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF06B6D4).copy(alpha = 0.20f))
+                    .offset(x = (-80).dp, y = 60.dp)
+                    .size(420.dp)
+                    .background(
+                        brush = Brush.radialGradient(
+                            colorStops = arrayOf(
+                                0f to colors.auroraTertiary.copy(alpha = 0.10f),
+                                0.55f to colors.auroraTertiary.copy(alpha = 0.04f),
+                                1f to Color.Transparent
+                            )
+                        )
+                    )
             )
         } else {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .size(320.dp)
-                    .blur(90.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF818CF8).copy(alpha = 0.25f))
+                    .offset(x = (-90).dp, y = (-70).dp)
+                    .size(400.dp)
+                    .background(
+                        brush = Brush.radialGradient(
+                            colorStops = arrayOf(
+                                0f to colors.auroraPrimary.copy(alpha = 0.34f),
+                                0.6f to colors.auroraPrimary.copy(alpha = 0.12f),
+                                1f to Color.Transparent
+                            )
+                        )
+                    )
             )
-
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .size(320.dp)
-                    .blur(95.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF38BDF8).copy(alpha = 0.20f))
+                    .offset(x = 90.dp, y = 40.dp)
+                    .size(400.dp)
+                    .background(
+                        brush = Brush.radialGradient(
+                            colorStops = arrayOf(
+                                0f to colors.auroraSecondary.copy(alpha = 0.26f),
+                                0.6f to colors.auroraSecondary.copy(alpha = 0.10f),
+                                1f to Color.Transparent
+                            )
+                        )
+                    )
             )
         }
 
-        // 2. THE SCROLLING FEED
+        // ✦ 2. THE SCROLLING FEED
         val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
         val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
@@ -249,10 +281,10 @@ fun GlobalFeedScreen(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
-                    top = statusBarTop + 76.dp, // Clears top bar (64dp) + status bar inset + spacing
-                    bottom = navBarBottom + 94.dp // Clears floating bottom bar (62dp + 16dp) + nav bar inset + buffer
+                    top = statusBarTop + 84.dp,   // Clears frosted top bar (64dp + divider + fade)
+                    bottom = navBarBottom + 108.dp // Clears floating nav pill (68dp + 18dp margin) + buffer
                 ),
-                verticalArrangement = Arrangement.spacedBy(28.dp)
+                verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
                 if (isLoading && posts.isEmpty()) {
                     items(3) {
@@ -260,57 +292,39 @@ fun GlobalFeedScreen(
                     }
                 } else if (feedError != null && posts.isEmpty()) {
                     item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 60.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(
-                                    text = feedError ?: "Something went wrong",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 15.sp
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Button(
-                                    onClick = { viewModel.fetchPostsFromCloud() },
-                                    shape = CircleShape
-                                ) {
-                                    Text("Retry")
-                                }
-                            }
-                        }
+                        FeedErrorState(
+                            message = feedError ?: "Something went wrong",
+                            onRetry = { viewModel.fetchPostsFromCloud() }
+                        )
                     }
                 } else if (posts.isEmpty()) {
                     item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 60.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(
-                                    text = "No posts yet.",
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onBackground
-                                )
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = "Be the first to share something with the community!",
-                                    fontSize = 14.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
+                        FeedEmptyState(onCreatePost = onCreatePost)
                     }
                 } else {
                     items(
                         items = posts,
                         key = { post -> post.id }
                     ) { post ->
+                        // ✦ One-shot reveal: cards rise and fade in the first time
+                        //    they are composed (rememberSaveable keeps them still on
+                        //    scroll-back and rotation).
+                        var appeared by rememberSaveable(post.id) { mutableStateOf(false) }
+                        LaunchedEffect(post.id) { appeared = true }
+                        val enterAlpha by animateFloatAsState(
+                            targetValue = if (appeared) 1f else 0f,
+                            animationSpec = tween(durationMillis = 420),
+                            label = "FeedItemAlpha"
+                        )
+                        val enterShift by animateFloatAsState(
+                            targetValue = if (appeared) 0f else 1f,
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                stiffness = Spring.StiffnessMediumLow
+                            ),
+                            label = "FeedItemShift"
+                        )
+
                         val isPostExpanded = post.id == expandedPostId
                         val onToggle = remember(post.id) {
                             {
@@ -332,6 +346,12 @@ fun GlobalFeedScreen(
                         PostCard(
                             post = post,
                             currentUserId = viewModel.currentUserId,
+                            modifier = Modifier
+                                .animateItem()
+                                .graphicsLayer {
+                                    alpha = enterAlpha
+                                    translationY = enterShift * 40.dp.toPx()
+                                },
                             isExpanded = isPostExpanded,
                             onToggleExpand = onToggle,
                             onLikeClicked = onLike,
@@ -350,127 +370,59 @@ fun GlobalFeedScreen(
             }
         }
 
-        // 3. FLOATING FROSTED GLASS TOP BAR (Seamless iOS Gradient Blur, zero hard borders)
-        val topBarHeight = 64.dp
-        val fadeExtensionHeight = 28.dp
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(
-                    if (hazeState != null) {
-                        Modifier.hazeChild(state = hazeState, shape = RoundedCornerShape(0.dp), blurRadius = 32.dp)
-                    } else {
-                        Modifier
-                    }
-                )
-                .background(
-                    brush = Brush.verticalGradient(
-                        colorStops = arrayOf(
-                            0.0f to (if (isDarkTheme) Color(0xFF0F172A).copy(alpha = 0.88f) else Color.White.copy(alpha = 0.92f)),
-                            0.65f to (if (isDarkTheme) Color(0xFF0F172A).copy(alpha = 0.85f) else Color.White.copy(alpha = 0.90f)),
-                            0.82f to (if (isDarkTheme) Color(0xFF0F172A).copy(alpha = 0.50f) else Color.White.copy(alpha = 0.55f)),
-                            1.0f to Color.Transparent
-                        )
-                    )
-                )
-        ) {
-            // Foreground Content
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .height(topBarHeight)
-                    .padding(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Invisible balance box for true visual center of title
-                Box(modifier = Modifier.size(40.dp))
-
-                Text(
-                    text = "Agora",
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 22.sp,
-                    letterSpacing = 0.5.sp,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-
-                // Sleek circular glass button for search
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.50f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)),
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    IconButton(
-                        onClick = onNavigateToSearch,
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "Search Users",
-                            tint = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(fadeExtensionHeight))
-        }
+        // ✦ 3. SCROLL-REACTIVE FROSTED TOP BAR
+        FeedTopBar(
+            hazeState = hazeState,
+            isScrolled = isScrolled,
+            onSearchClick = onNavigateToSearch
+        )
     }
 
     // --- DYNAMIC POST OPTIONS BOTTOM SHEET ---
     if (optionsPost != null) {
         val targetPost = optionsPost!!
-        ModalBottomSheet(onDismissRequest = { optionsPost = null }) {
+        ModalBottomSheet(
+            onDismissRequest = { optionsPost = null },
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            containerColor = colors.cardSurface,
+            dragHandle = { BottomSheetDefaults.DragHandle(color = colors.hairline) }
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 32.dp, top = 8.dp)
+                    .padding(bottom = 32.dp, top = 4.dp)
             ) {
                 if (targetPost.userId == viewModel.currentUserId) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clickable {
+                    OptionsSheetRow(
+                        label = "Edit Post",
+                        icon = Icons.Default.Edit,
+                        tint = colors.textPrimary,
+                        onClick = {
                             postToEdit = targetPost
-                            editPostText = targetPost.content
-                            keptUrls = targetPost.imageUrls
-                            newlyAddedUris = emptyList()
                             optionsPost = null
-                        }.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.Edit, contentDescription = "Edit", tint = MaterialTheme.colorScheme.onSurface)
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Text("Edit Post", color = MaterialTheme.colorScheme.onSurface, fontSize = 18.sp, fontWeight = FontWeight.Medium)
-                    }
+                        }
+                    )
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                postToDelete = targetPost
-                                optionsPost = null
-                            }
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red)
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Text("Delete Post", color = Color.Red, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    }
+                    OptionsSheetRow(
+                        label = "Delete Post",
+                        icon = Icons.Default.Delete,
+                        tint = colors.danger,
+                        bold = true,
+                        onClick = {
+                            postToDelete = targetPost
+                            optionsPost = null
+                        }
+                    )
                 } else {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clickable {
+                    OptionsSheetRow(
+                        label = "Report Post",
+                        icon = Icons.Default.Warning,
+                        tint = colors.textPrimary,
+                        onClick = {
                             postToReport = targetPost
                             optionsPost = null
-                        }.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.Warning, contentDescription = "Report", tint = MaterialTheme.colorScheme.onSurface)
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Text("Report Post", color = MaterialTheme.colorScheme.onSurface, fontSize = 18.sp, fontWeight = FontWeight.Medium)
-                    }
+                        }
+                    )
                 }
             }
         }
@@ -481,8 +433,15 @@ fun GlobalFeedScreen(
         val targetDelete = postToDelete!!
         AlertDialog(
             onDismissRequest = { postToDelete = null },
-            title = { Text("Delete Post") },
-            text = { Text("Are you sure you want to delete this post? This action cannot be undone.") },
+            shape = RoundedCornerShape(26.dp),
+            containerColor = colors.cardSurface,
+            title = { Text("Delete Post", fontWeight = FontWeight.Bold, color = colors.textPrimary) },
+            text = {
+                Text(
+                    "Are you sure you want to delete this post? This action cannot be undone.",
+                    color = colors.textSecondary
+                )
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -491,12 +450,12 @@ fun GlobalFeedScreen(
                         postToDelete = null
                     }
                 ) {
-                    Text("Delete", color = Color.Red, fontWeight = FontWeight.Bold)
+                    Text("Delete", color = colors.danger, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { postToDelete = null }) {
-                    Text("Cancel", color = Color.Gray)
+                    Text("Cancel", color = colors.textTertiary)
                 }
             }
         )
@@ -517,25 +476,32 @@ fun GlobalFeedScreen(
         val targetReport = postToReport!!
         AlertDialog(
             onDismissRequest = { postToReport = null },
-            title = { Text("Report Post") },
+            shape = RoundedCornerShape(26.dp),
+            containerColor = colors.cardSurface,
+            title = { Text("Report Post", fontWeight = FontWeight.Bold, color = colors.textPrimary) },
             text = {
                 Column {
-                    Text("Why are you reporting this post?", modifier = Modifier.padding(bottom = 12.dp))
+                    Text(
+                        "Why are you reporting this post?",
+                        color = colors.textSecondary,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
                     reportOptions.forEach { reason ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
                                 .clickable { reportReason = reason }
-                                .padding(vertical = 8.dp),
+                                .padding(vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             RadioButton(
                                 selected = reportReason == reason,
                                 onClick = { reportReason = reason },
-                                colors = RadioButtonDefaults.colors(selectedColor = Color.Red)
+                                colors = RadioButtonDefaults.colors(selectedColor = colors.danger)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(reason, fontSize = 16.sp)
+                            Text(reason, fontSize = 15.sp, color = colors.textPrimary)
                         }
                     }
                 }
@@ -547,13 +513,19 @@ fun GlobalFeedScreen(
                         Toast.makeText(context, "Report submitted. Thank you.", Toast.LENGTH_SHORT).show()
                         postToReport = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                    shape = CircleShape,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = colors.danger,
+                        contentColor = Color.White
+                    )
                 ) {
                     Text("Submit Report", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { postToReport = null }) { Text("Cancel", color = Color.Gray) }
+                TextButton(onClick = { postToReport = null }) {
+                    Text("Cancel", color = colors.textTertiary)
+                }
             }
         )
     }
@@ -613,18 +585,28 @@ fun GlobalFeedScreen(
                         contentScale = ContentScale.Fit
                     )
 
-                    IconButton(
-                        onClick = {
-                            expandedImageUrl = null
-                            scale = 1f
-                            offset = Offset.Zero
-                        },
+                    Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
+                            .statusBarsPadding()
                             .padding(16.dp)
-                            .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.55f))
+                            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
+                            .clickable {
+                                expandedImageUrl = null
+                                scale = 1f
+                                offset = Offset.Zero
+                            },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
             }
@@ -655,11 +637,193 @@ fun GlobalFeedScreen(
     }
 }
 
-// 🌟 ZERO-CHROME MEDIA-FIRST POST CARD
+/**
+ * ✦ SCROLL-REACTIVE FROSTED TOP BAR
+ *
+ * At rest it is pure air — just the gradient wordmark and a hairline search
+ * chip floating on the canvas. The moment the feed scrolls underneath, a
+ * frosted haze + scrim materializes with a rounded-bottom silhouette and a
+ * hairline edge, then dissolves again on scroll-to-top.
+ */
+@Composable
+private fun FeedTopBar(
+    hazeState: HazeState?,
+    isScrolled: Boolean,
+    onSearchClick: () -> Unit
+) {
+    val colors = rememberAgoraColors()
+    val scrimAlpha by animateFloatAsState(
+        targetValue = if (isScrolled) 1f else 0f,
+        animationSpec = tween(durationMillis = 300),
+        label = "TopBarScrimAlpha"
+    )
+    val barShape = RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                // 🌟 Perf: attach the haze blur only while the scrim is materialized.
+                if (hazeState != null && scrimAlpha > 0.02f) {
+                    Modifier.hazeChild(state = hazeState, shape = barShape, blurRadius = 26.dp)
+                } else {
+                    Modifier.clip(barShape)
+                }
+            )
+            .background(
+                brush = Brush.verticalGradient(
+                    colorStops = arrayOf(
+                        0.0f to colors.canvasTop.copy(alpha = 0.92f * scrimAlpha),
+                        0.72f to colors.canvasTop.copy(alpha = 0.84f * scrimAlpha),
+                        1.0f to Color.Transparent
+                    )
+                )
+            )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(64.dp)
+                .padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // ✦ Gradient wordmark with an accent period — the only branding the
+            //    feed needs.
+            Text(
+                text = buildAnnotatedString {
+                    withStyle(
+                        SpanStyle(
+                            brush = Brush.linearGradient(
+                                colors = listOf(
+                                    colors.textPrimary,
+                                    colors.textPrimary.copy(alpha = 0.66f)
+                                )
+                            ),
+                            fontWeight = FontWeight.Black
+                        )
+                    ) {
+                        append("agora")
+                    }
+                    withStyle(
+                        SpanStyle(
+                            color = colors.accent,
+                            fontWeight = FontWeight.Black
+                        )
+                    ) {
+                        append(".")
+                    }
+                },
+                style = AgoraType.Wordmark
+            )
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            // Hairline search chip
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(colors.insetSurface.copy(alpha = 0.75f))
+                    .border(width = 1.dp, color = colors.hairline, shape = CircleShape)
+                    .clickable(onClick = onSearchClick),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Search,
+                    contentDescription = "Search Users",
+                    tint = colors.textSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+
+        HorizontalDivider(
+            thickness = 1.dp,
+            color = colors.hairline.copy(alpha = scrimAlpha)
+        )
+
+        // Soft fade under the divider so content never hard-cuts at the corners.
+        Spacer(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(10.dp)
+                .background(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            colors.canvasTop.copy(alpha = 0.22f * scrimAlpha),
+                            Color.Transparent
+                        )
+                    )
+                )
+        )
+    }
+}
+
+/** A single row inside the post-options sheet (Edit / Delete / Report). */
+@Composable
+private fun OptionsSheetRow(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    tint: Color,
+    onClick: () -> Unit,
+    bold: Boolean = false
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 5.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(tint.copy(alpha = 0.10f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = tint,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Spacer(modifier = Modifier.width(16.dp))
+        Text(
+            text = label,
+            color = tint,
+            fontSize = 16.sp,
+            fontWeight = if (bold) FontWeight.Bold else FontWeight.SemiBold
+        )
+    }
+}
+
+/**
+ * ✦ NOIR POST CARD
+ *
+ * A solid sculpted surface (never translucent) with:
+ *  - a 28dp silhouette, hairline border, light-mode elevation and a faint
+ *    specular sheen across the top edge,
+ *  - an identity header: gradient ring reserved for the viewer's own posts,
+ *    tight name/handle stack, chip-style overflow button,
+ *  - caption typography driven through LocalTextStyle/LocalContentColor so
+ *    [ExpandablePostText] keeps its expand/collapse logic untouched,
+ *  - the gallery-plate [PostMediaCarousel],
+ *  - an action bar separated by a hairline: reaction button + counts on the
+ *    left, share on the right.
+ *
+ * Media plumbing (ExoPlayer pool, SubcomposeAsyncImage + error logging) is
+ * entirely delegated and unchanged.
+ */
 @Composable
 fun PostCard(
     post: Post,
     currentUserId: String?,
+    modifier: Modifier = Modifier,
     isExpanded: Boolean = false,
     onToggleExpand: () -> Unit = {},
     onLikeClicked: (isLiked: Boolean, emoji: String) -> Unit,
@@ -670,82 +834,73 @@ fun PostCard(
     onShowReactorsClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val colors = rememberAgoraColors()
+    val cardShape = RoundedCornerShape(28.dp)
+    val isOwnPost = currentUserId != null && post.userId == currentUserId
 
-    // Spring bounce scale animation for the Like button
-    val likeScale by animateFloatAsState(
-        targetValue = if (post.isLikedByMe) 1.25f else 1.0f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessLow
-        ),
-        label = "LikeBounceAnimation"
+    // Like count cross-fades into the accent the instant it's loved.
+    val likeColor by animateColorAsState(
+        targetValue = if (post.isLikedByMe) colors.accent else colors.textTertiary,
+        animationSpec = tween(durationMillis = 220),
+        label = "LikeCountColor"
     )
 
-    val gradientBorder = Brush.linearGradient(
-        colors = listOf(
-            MaterialTheme.colorScheme.primary,
-            MaterialTheme.colorScheme.primaryContainer
-        )
-    )
-
-    // 👉 1. WRAP THE ENTIRE CARD IN A ROOT BOX
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
-            .clip(RoundedCornerShape(24.dp)) // Clips the blur to the card shape
     ) {
-        // 👉 3. THE FOREGROUND CONTENT
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(24.dp))
-                // 1. Diagonal Glass Tint Gradient
+                .shadow(
+                    elevation = colors.cardElevation,
+                    shape = cardShape,
+                    spotColor = Color(0xFF1F2430).copy(alpha = 0.16f),
+                    ambientColor = Color(0xFF1F2430).copy(alpha = 0.10f)
+                )
+                .clip(cardShape)
+                .background(colors.cardSurface)
+                // Specular sheen kissing the top edge of the card.
                 .background(
-                    brush = Brush.linearGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.surface.copy(alpha = 0.85f), // Top-left: higher opacity for text readability
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f) // Bottom-right: lower opacity for glass glow
-                        ),
-                        start = Offset(0f, 0f),
-                        end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY)
+                    brush = Brush.verticalGradient(
+                        colorStops = arrayOf(
+                            0f to colors.cardSheen,
+                            0.16f to Color.Transparent
+                        )
                     )
                 )
-                // 2. Specular Rim Highlight (Catches light along the edge)
-                .border(
-                    width = 1.dp,
-                    brush = Brush.linearGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), // Crisp top-left highlight
-                            Color.Transparent, // Fades away in the middle
-                            MaterialTheme.colorScheme.outline.copy(alpha = 0.15f) // Subtle bottom rim
-                        ),
-                        start = Offset(0f, 0f),
-                        end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY)
-                    ),
-                    shape = RoundedCornerShape(24.dp)
-                )
-                .padding(16.dp)
+                .border(width = 1.dp, color = colors.cardBorder, shape = cardShape)
         ) {
-            // User Header Row
+            // ── Identity header ──────────────────────────────────────────
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 12.dp, top = 14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+                // Avatar — sweep-gradient ring only for the viewer's own posts.
+                Box(
                     modifier = Modifier
-                        .weight(1f)
+                        .size(46.dp)
+                        .clip(CircleShape)
                         .clickable { onUserClicked() }
+                        .background(
+                            brush = if (isOwnPost) {
+                                AgoraRingGradient
+                            } else {
+                                Brush.linearGradient(
+                                    listOf(colors.cardBorder, colors.cardBorder)
+                                )
+                            }
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(44.dp)
-                            .border(1.5.dp, gradientBorder, CircleShape)
-                            .padding(2.dp)
+                            .size(40.dp)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                            .background(colors.insetSurface),
                         contentAlignment = Alignment.Center
                     ) {
                         if (post.userAvatarUrl != null) {
@@ -759,138 +914,163 @@ fun PostCard(
                             Icon(
                                 imageVector = Icons.Default.Person,
                                 contentDescription = "Default Avatar",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                tint = colors.textTertiary,
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                     }
+                }
 
-                    Spacer(modifier = Modifier.width(12.dp))
-
-                    Column {
-                        Text(
-                            text = post.firstName,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 12.dp)
+                ) {
+                    Text(
+                        text = post.firstName,
+                        style = AgoraType.AuthorName,
+                        color = colors.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = "@${post.handle}",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            style = AgoraType.Meta,
+                            color = colors.textTertiary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        Text(
+                            text = "  ·  ${post.timeAgo}",
+                            style = AgoraType.Meta,
+                            color = colors.textTertiary
                         )
                     }
                 }
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = post.timeAgo,
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                // Overflow chip
+                Box(
+                    modifier = Modifier
+                        .padding(start = 8.dp)
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .clickable { onOptionsClicked() }
+                        .background(colors.insetSurface.copy(alpha = 0.65f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.MoreHoriz,
+                        contentDescription = "Post options",
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(18.dp)
                     )
-                    IconButton(onClick = { onOptionsClicked() }) {
-                        Icon(
-                            imageVector = Icons.Default.MoreVert,
-                            contentDescription = "Options",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                }
+            }
+
+            // ── Caption ──────────────────────────────────────────────────
+            if (post.content.isNotBlank()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, top = 12.dp)
+                        .animateContentSize(
+                            animationSpec = spring(stiffness = Spring.StiffnessLow)
+                        )
+                ) {
+                    // Drive ExpandablePostText's typography without touching it:
+                    // its Text composables inherit color + style from locals.
+                    CompositionLocalProvider(
+                        LocalContentColor provides colors.textPrimary,
+                        LocalTextStyle provides AgoraType.Body
+                    ) {
+                        ExpandablePostText(
+                            text = post.content,
+                            isExpanded = isExpanded,
+                            onToggleExpand = onToggleExpand,
+                            minimizedMaxLines = 3
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Content with Smooth Content Size Animation on Expand
-            Box(
-                modifier = Modifier.animateContentSize(
-                    animationSpec = spring(stiffness = Spring.StiffnessLow)
-                )
-            ) {
-                ExpandablePostText(
-                    text = post.content,
-                    isExpanded = isExpanded,
-                    onToggleExpand = onToggleExpand,
-                    minimizedMaxLines = 3
-                )
-            }
-
-            // Media (Multi-Media Carousel with Indicators)
+            // ── Gallery plate media ──────────────────────────────────────
             if (post.imageUrls.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(14.dp))
                 PostMediaCarousel(
                     mediaUrls = post.imageUrls,
                     onMediaClick = { url -> onImageClicked(url) },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            start = 12.dp,
+                            end = 12.dp,
+                            top = if (post.content.isNotBlank()) 14.dp else 12.dp
+                        )
                 )
             }
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Tactile Micro-Interaction Action Bar
+            // ── Action bar ───────────────────────────────────────────────
+            HorizontalDivider(thickness = 1.dp, color = colors.hairline)
+
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 10.dp, end = 10.dp, top = 5.dp, bottom = 5.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Glass pill grouping Like and Comment buttons
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                    ) {
-                        // 🌟 Instagram-Style Reaction Like Button
-                        InstagramLikeButton(
-                            isLiked = post.isLikedByMe,
-                            initialEmoji = post.myReaction,
-                            onLikeChanged = { isLiked, emoji ->
-                                onLikeClicked(isLiked, emoji) // Triggers viewModel.setLikeStatus(post.id, isLiked, emoji)
-                            }
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = post.likes.toString(),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (post.isLikedByMe) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.clickable(enabled = post.likes > 0) {
-                                onShowReactorsClick()
-                            }
-                        )
-
-                        Spacer(modifier = Modifier.width(16.dp))
-
-                        // Comment Button
-                        IconButton(
-                            onClick = { onCommentClicked() },
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.ChatBubbleOutline,
-                                contentDescription = "Comment",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = post.comments.toString(),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                // 🌟 Instagram-Style Reaction Like Button (long-press tray intact)
+                InstagramLikeButton(
+                    isLiked = post.isLikedByMe,
+                    initialEmoji = post.myReaction,
+                    onLikeChanged = { isLiked, emoji ->
+                        onLikeClicked(isLiked, emoji) // Triggers viewModel.setLikeStatus(post.id, isLiked, emoji)
                     }
+                )
+
+                Text(
+                    text = post.likes.toString(),
+                    style = AgoraType.Count,
+                    color = likeColor,
+                    modifier = Modifier
+                        .clickable(enabled = post.likes > 0) { onShowReactorsClick() }
+                        .padding(horizontal = 6.dp, vertical = 10.dp)
+                )
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // Comment cluster
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .clickable { onCommentClicked() }
+                        .padding(horizontal = 10.dp, vertical = 10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.ChatBubbleOutline,
+                        contentDescription = "Comments",
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = post.comments.toString(),
+                        style = AgoraType.Count,
+                        color = colors.textSecondary
+                    )
                 }
 
-                // Share Button Glass Pill
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
-                ) {
-                    IconButton(
-                        onClick = {
+                Spacer(modifier = Modifier.weight(1f))
+
+                // Share
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .clickable {
                             val shareUrl = "https://auth-agora.info/post/${post.id}"
                             val sendIntent = Intent(Intent.ACTION_SEND).apply {
                                 putExtra(
@@ -900,96 +1080,248 @@ fun PostCard(
                                 type = "text/plain"
                             }
                             context.startActivity(Intent.createChooser(sendIntent, "Share Post"))
-                        },
-                        modifier = Modifier.size(40.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Share,
-                            contentDescription = "Share",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                        }
+                        .padding(11.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Share,
+                        contentDescription = "Share post",
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(19.dp)
+                    )
                 }
             }
         }
     }
 }
 
-// 🌟 PREMIUM SHIMMER SKELETON LOADING STATE
+// ✦ PREMIUM PULSING SKELETON — mirrors the real card anatomy 1:1 so the
+//   feed never "jumps" when data lands.
 @Composable
 fun PostCardShimmer() {
-    val infiniteTransition = rememberInfiniteTransition(label = "ShimmerTransition")
+    val colors = rememberAgoraColors()
+    val infiniteTransition = rememberInfiniteTransition(label = "SkeletonPulse")
     val alpha by infiniteTransition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 0.7f,
+        initialValue = 0.35f,
+        targetValue = 0.75f,
         animationSpec = infiniteRepeatable(
-            animation = tween(800, easing = LinearEasing),
+            animation = tween(850, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "ShimmerAlpha"
+        label = "SkeletonAlpha"
     )
 
-    val shimmerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha * 0.15f)
+    val block = if (colors.isDark) {
+        Color.White.copy(alpha = alpha * 0.07f)
+    } else {
+        Color(0xFF1F2430).copy(alpha = alpha * 0.10f)
+    }
+    val cardShape = RoundedCornerShape(28.dp)
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = 16.dp)
+            .clip(cardShape)
+            .background(colors.cardSurface)
+            .border(width = 1.dp, color = colors.cardBorder, shape = cardShape)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(46.dp)
                     .clip(CircleShape)
-                    .background(shimmerColor)
+                    .background(block)
             )
             Spacer(modifier = Modifier.width(12.dp))
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Box(
                     modifier = Modifier
-                        .width(120.dp)
-                        .height(16.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(shimmerColor)
+                        .fillMaxWidth(0.45f)
+                        .height(13.dp)
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(block)
                 )
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Box(
                     modifier = Modifier
-                        .width(80.dp)
-                        .height(12.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(shimmerColor)
+                        .fillMaxWidth(0.28f)
+                        .height(11.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(block)
                 )
             }
         }
 
+        Box(
+            modifier = Modifier
+                .padding(horizontal = 16.dp)
+                .fillMaxWidth(0.9f)
+                .height(14.dp)
+                .clip(RoundedCornerShape(7.dp))
+                .background(block)
+        )
+        Spacer(modifier = Modifier.height(9.dp))
+        Box(
+            modifier = Modifier
+                .padding(horizontal = 16.dp)
+                .fillMaxWidth(0.55f)
+                .height(14.dp)
+                .clip(RoundedCornerShape(7.dp))
+                .background(block)
+        )
+
         Spacer(modifier = Modifier.height(16.dp))
 
         Box(
             modifier = Modifier
-                .fillMaxWidth(0.9f)
-                .height(16.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(shimmerColor)
+                .padding(horizontal = 12.dp)
+                .fillMaxWidth()
+                .height(300.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .background(block)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Row(modifier = Modifier.padding(horizontal = 16.dp)) {
+            Box(
+                modifier = Modifier
+                    .width(64.dp)
+                    .height(20.dp)
+                    .clip(CircleShape)
+                    .background(block)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Box(
+                modifier = Modifier
+                    .width(64.dp)
+                    .height(20.dp)
+                    .clip(CircleShape)
+                    .background(block)
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(block)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+    }
+}
+
+// ✦ EDITORIAL EMPTY STATE — invites the first post instead of dead-ending.
+@Composable
+private fun FeedEmptyState(onCreatePost: () -> Unit) {
+    val colors = rememberAgoraColors()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 64.dp, bottom = 40.dp, start = 32.dp, end = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(96.dp)
+                .clip(CircleShape)
+                .background(colors.accentSoft)
+                .border(width = 1.dp, color = colors.accent.copy(alpha = 0.22f), shape = CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.AutoAwesome,
+                contentDescription = null,
+                tint = colors.accent,
+                modifier = Modifier.size(34.dp)
+            )
+        }
+        Spacer(modifier = Modifier.height(24.dp))
+        Text(
+            text = "The forum awaits",
+            fontSize = 21.sp,
+            fontWeight = FontWeight.Black,
+            letterSpacing = (-0.4).sp,
+            color = colors.textPrimary
         )
         Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "No posts yet. Be the first to start a conversation with the community.",
+            fontSize = 14.sp,
+            lineHeight = 21.sp,
+            textAlign = TextAlign.Center,
+            color = colors.textTertiary
+        )
+        Spacer(modifier = Modifier.height(26.dp))
+        Button(
+            onClick = onCreatePost,
+            shape = CircleShape,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = colors.accent,
+                contentColor = colors.onAccent
+            )
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Add,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Create the first post", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+// ✦ CALM FAILURE STATE — clear cause, one obvious action.
+@Composable
+private fun FeedErrorState(message: String, onRetry: () -> Unit) {
+    val colors = rememberAgoraColors()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 64.dp, bottom = 40.dp, start = 32.dp, end = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
         Box(
             modifier = Modifier
-                .fillMaxWidth(0.6f)
-                .height(16.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(shimmerColor)
+                .size(88.dp)
+                .clip(CircleShape)
+                .background(colors.danger.copy(alpha = 0.10f))
+                .border(width = 1.dp, color = colors.danger.copy(alpha = 0.20f), shape = CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.CloudOff,
+                contentDescription = null,
+                tint = colors.danger,
+                modifier = Modifier.size(32.dp)
+            )
+        }
+        Spacer(modifier = Modifier.height(22.dp))
+        Text(
+            text = message,
+            fontSize = 15.sp,
+            lineHeight = 22.sp,
+            textAlign = TextAlign.Center,
+            color = colors.textSecondary
         )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(200.dp)
-                .clip(RoundedCornerShape(22.dp))
-                .background(shimmerColor)
-        )
+        Spacer(modifier = Modifier.height(20.dp))
+        Button(
+            onClick = onRetry,
+            shape = CircleShape,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = colors.accent,
+                contentColor = colors.onAccent
+            )
+        ) {
+            Text("Retry", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        }
     }
 }
 

@@ -1,48 +1,48 @@
 package com.example.agora.ui
 
-import android.content.Intent
-import android.net.Uri
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.agora.ui.theme.LocalDarkTheme
-import com.example.agora.ui.theme.hazeChild
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.core.util.Consumer
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
@@ -53,17 +53,20 @@ import androidx.navigation.compose.dialog
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
-import coil.compose.AsyncImage
 import com.example.agora.data.supabaseClient
 import com.example.agora.model.Profile
 import com.example.agora.navigation.DeepLinkRouter
+import com.example.agora.ui.theme.AgoraAccentGradient
+import com.example.agora.ui.theme.AgoraRingGradient
+import com.example.agora.ui.theme.AgoraType
+import com.example.agora.ui.theme.hazeChild
+import com.example.agora.ui.theme.rememberAgoraColors
 import com.example.agora.viewmodel.AuthViewModel
 import com.example.agora.viewmodel.FeedViewModel
 import com.example.agora.viewmodel.PostDetailViewModel
 import com.example.agora.viewmodel.ThemeViewModel
 import com.example.agora.viewmodel.UploadState
 import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.hazeSource
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
@@ -72,6 +75,18 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/**
+ * ✦ AGORA NOIR — APP SHELL
+ *
+ * The navigation host, deep-link routing, drawer, upload banner and frosted
+ * focus-blur choreography are preserved exactly; everything visual is rebuilt
+ * in the Noir language:
+ *  - an obsidian drawer panel with an identity header and chip-icon rows,
+ *  - a floating morphing navigation pill — icons at rest, labels spring
+ *    open on the selected tab — around a gradient create FAB with a halo,
+ *  - a status-tinted upload capsule with micro-labels and a rounded progress
+ *    track.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
@@ -79,6 +94,7 @@ fun MainScreen(
     themeViewModel: ThemeViewModel = viewModel(),
     feedViewModel: FeedViewModel = viewModel(key = supabaseClient.auth.currentUserOrNull()?.id)
 ) {
+    val colors = rememberAgoraColors()
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
@@ -160,79 +176,112 @@ fun MainScreen(
         gesturesEnabled = drawerState.isOpen,
         drawerContent = {
             ModalDrawerSheet(
-                drawerContainerColor = Color.Transparent, // 🌟 Transparent container for translucent glass side menu
-                modifier = Modifier.width(280.dp)
+                drawerContainerColor = Color.Transparent, // ✦ Noir panel paints its own surface
+                modifier = Modifier.width(292.dp)
             ) {
-                // 🌟 Custom Translucent Glass Container for Side Menu
                 Column(
                     modifier = Modifier
                         .fillMaxHeight()
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp))
-                        .background(
-                            brush = Brush.horizontalGradient(
-                                colors = listOf(
-                                    Color.Black.copy(alpha = 0.88f),
-                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.80f)
-                                )
-                            )
-                        )
+                        .clip(RoundedCornerShape(topEnd = 30.dp, bottomEnd = 30.dp))
+                        .background(colors.cardSurface.copy(alpha = 0.98f))
                         .border(
                             width = 1.dp,
-                            brush = Brush.horizontalGradient(
-                                colors = listOf(
-                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
-                                    Color.Transparent
-                                )
-                            ),
-                            shape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp)
+                            color = colors.cardBorder,
+                            shape = RoundedCornerShape(topEnd = 30.dp, bottomEnd = 30.dp)
                         )
                 ) {
+                    // ── Identity header ─────────────────────────────────
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(24.dp)
+                            .statusBarsPadding()
+                            .padding(start = 24.dp, end = 24.dp, top = 28.dp, bottom = 24.dp)
                     ) {
+                        Box(
+                            modifier = Modifier
+                                .size(58.dp)
+                                .clip(CircleShape)
+                                .background(AgoraRingGradient),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(52.dp)
+                                    .clip(CircleShape)
+                                    .background(colors.cardSurface),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = userHandle.trimStart('@').take(1).uppercase(),
+                                    fontSize = 22.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = colors.accent
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
                         Text(
                             text = userHandle,
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color.White
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = (-0.4).sp,
+                            color = colors.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "AGORA MEMBER",
+                            style = AgoraType.MicroLabel,
+                            color = colors.textTertiary
                         )
                     }
 
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 24.dp),
+                        thickness = 1.dp,
+                        color = colors.hairline
+                    )
+
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    NavigationDrawerItem(
-                        label = { Text("Account Details", fontWeight = FontWeight.Medium, color = Color.White) },
-                        icon = { Icon(Icons.Default.Person, contentDescription = null, tint = Color.White) },
-                        selected = false,
+                    DrawerNavItem(
+                        label = "Account Details",
+                        icon = Icons.Rounded.Person,
+                        tint = colors.textSecondary,
                         onClick = {
                             coroutineScope.launch { drawerState.close() }
                             navController.navigate("account_details")
-                        },
-                        colors = NavigationDrawerItemDefaults.colors(
-                            unselectedContainerColor = Color.Transparent,
-                            selectedContainerColor = Color.Transparent
-                        ),
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                        }
                     )
 
-                    NavigationDrawerItem(
-                        label = { Text("Log Out", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error) },
-                        icon = { Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-                        selected = false,
+                    DrawerNavItem(
+                        label = "Log Out",
+                        icon = Icons.AutoMirrored.Filled.ExitToApp,
+                        tint = colors.danger,
                         onClick = {
                             coroutineScope.launch { drawerState.close() }
                             authViewModel.signOut()
-                        },
-                        colors = NavigationDrawerItemDefaults.colors(
-                            unselectedContainerColor = Color.Transparent,
-                            selectedContainerColor = Color.Transparent
-                        ),
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                        }
                     )
+
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    // ── Quiet footer ────────────────────────────────────
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .padding(top = 12.dp, bottom = 22.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "AGORA · V1.0",
+                            style = AgoraType.MicroLabel,
+                            color = colors.textTertiary.copy(alpha = 0.7f)
+                        )
+                    }
                 }
             }
         }
@@ -248,7 +297,7 @@ fun MainScreen(
             }
 
             Scaffold(
-                containerColor = MaterialTheme.colorScheme.background,
+                containerColor = colors.canvasTop,
                 contentWindowInsets = WindowInsets(0, 0, 0, 0),
                 modifier = scaffoldModifier
             ) { innerPadding ->
@@ -269,7 +318,8 @@ fun MainScreen(
                             },
                             onNavigateToSearch = {
                                 navController.navigate("search")
-                            }
+                            },
+                            onCreatePost = { showComposeScreen = true }
                         )
                     }
 
@@ -337,10 +387,7 @@ fun MainScreen(
                                 uriPattern = "agora://post/{postId}"
                             }
                         ),
-                        dialogProperties = DialogProperties(
-                            usePlatformDefaultWidth = false,
-                            decorFitsSystemWindows = false
-                        )
+                        dialogProperties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
                     ) { backStackEntry ->
                         // 🌟 Destination-scoped ViewModel: postId/commentId arrive through
                         //    SavedStateHandle (nav args), and the post is fetched by id —
@@ -361,62 +408,42 @@ fun MainScreen(
                 }
             }
 
-            // 🌟 MAXIMIZED FROSTED GLASS FLOATING NAVIGATION ISLAND
+            // ✦ FLOATING MORPHING NAVIGATION PILL
             if (showBottomBar) {
+                val isHome = currentRoute == "feed"
+                val isProfileTab = currentRoute?.startsWith("profile") == true &&
+                    navBackStackEntry?.arguments?.getString("userId") == null
+                val pillShape = RoundedCornerShape(34.dp)
+
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                         .navigationBarsPadding()
-                        .padding(bottom = 24.dp, start = 16.dp, end = 16.dp),
+                        .padding(bottom = 18.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    // 1. Background Heavy Blur Layer
-                    val isDarkTheme = LocalDarkTheme.current
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(0.85f)
-                            .height(64.dp)
-                            .hazeChild(state = hazeState, shape = CircleShape, blurRadius = 52.dp)
-                            .background(
-                                brush = Brush.verticalGradient(
-                                    colors = if (isDarkTheme) {
-                                        listOf(
-                                            Color(0xFF334155).copy(alpha = 0.20f),
-                                            Color(0xFF1E293B).copy(alpha = 0.15f)
-                                        )
-                                    } else {
-                                        listOf(
-                                            Color.White.copy(alpha = 0.25f),
-                                            Color(0xFFF1F5F9).copy(alpha = 0.18f)
-                                        )
-                                    }
-                                ),
-                                shape = CircleShape
-                            )
-                            .border(
-                                width = 1.dp,
-                                brush = Brush.verticalGradient(
-                                    colors = listOf(
-                                        Color.White.copy(alpha = if (isDarkTheme) 0.35f else 0.65f),
-                                        Color.White.copy(alpha = if (isDarkTheme) 0.08f else 0.20f)
-                                    )
-                                ),
-                                shape = CircleShape
-                            )
-                    )
-
-                    // 2. Foreground Crisp Icons Layer
                     Row(
                         modifier = Modifier
-                            .fillMaxWidth(0.85f)
-                            .height(64.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
+                            .height(68.dp)
+                            .shadow(
+                                elevation = 22.dp,
+                                shape = pillShape,
+                                spotColor = Color.Black.copy(alpha = if (colors.isDark) 0.55f else 0.20f),
+                                ambientColor = Color.Black.copy(alpha = 0.12f)
+                            )
+                            .hazeChild(state = hazeState, shape = pillShape, blurRadius = 40.dp)
+                            .background(colors.cardSurface.copy(alpha = if (colors.isDark) 0.70f else 0.80f))
+                            .border(width = 1.dp, color = colors.cardBorder, shape = pillShape)
+                            .padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        // Home Tab
-                        val isHome = currentRoute == "feed"
-                        IconButton(
+                        NavRailItem(
+                            selected = isHome,
+                            label = "Home",
+                            icon = Icons.Outlined.Home,
+                            selectedIcon = Icons.Filled.Home,
                             onClick = {
                                 navController.navigate("feed") {
                                     popUpTo(navController.graph.findStartDestination().id) {
@@ -425,37 +452,76 @@ fun MainScreen(
                                     launchSingleTop = true
                                     restoreState = true
                                 }
-                            },
-                            modifier = Modifier.size(48.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (isHome) Icons.Filled.Home else Icons.Outlined.Home,
-                                contentDescription = "Home",
-                                tint = if (isHome) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(26.dp)
-                            )
-                        }
+                            }
+                        )
 
-                        // Create Post Island Button
+                        // ── Gradient create FAB with halo ───────────────
+                        var fabPressed by remember { mutableStateOf(false) }
+                        val fabScale by animateFloatAsState(
+                            targetValue = if (fabPressed) 0.90f else 1f,
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                stiffness = Spring.StiffnessMedium
+                            ),
+                            label = "FabScale"
+                        )
                         Box(
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary)
-                                .clickable { showComposeScreen = true },
+                            modifier = Modifier.padding(horizontal = 4.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = "Create",
-                                tint = Color.White,
-                                modifier = Modifier.size(24.dp)
+                            // Accent bloom behind the button
+                            Box(
+                                modifier = Modifier
+                                    .size(62.dp)
+                                    .background(
+                                        brush = Brush.radialGradient(
+                                            colorStops = arrayOf(
+                                                0f to colors.accent.copy(alpha = 0.26f),
+                                                0.6f to colors.accent.copy(alpha = 0.07f),
+                                                1f to Color.Transparent
+                                            )
+                                        ),
+                                        shape = CircleShape
+                                    )
                             )
+                            Box(
+                                modifier = Modifier
+                                    .size(52.dp)
+                                    .scale(fabScale)
+                                    .shadow(
+                                        elevation = 14.dp,
+                                        shape = CircleShape,
+                                        spotColor = Color(0xFF6366F1).copy(alpha = 0.55f),
+                                        ambientColor = Color(0xFF8B5CF6).copy(alpha = 0.25f)
+                                    )
+                                    .clip(CircleShape)
+                                    .background(AgoraAccentGradient)
+                                    .pointerInput(Unit) {
+                                        detectTapGestures(
+                                            onPress = {
+                                                fabPressed = true
+                                                tryAwaitRelease()
+                                                fabPressed = false
+                                            },
+                                            onTap = { showComposeScreen = true }
+                                        )
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Add,
+                                    contentDescription = "Create post",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
                         }
 
-                        // Profile Tab
-                        val isProfileTab = currentRoute?.startsWith("profile") == true && navBackStackEntry?.arguments?.getString("userId") == null
-                        IconButton(
+                        NavRailItem(
+                            selected = isProfileTab,
+                            label = "Profile",
+                            icon = Icons.Outlined.Person,
+                            selectedIcon = Icons.Filled.Person,
                             onClick = {
                                 navController.navigate("profile") {
                                     popUpTo(navController.graph.findStartDestination().id) {
@@ -464,76 +530,258 @@ fun MainScreen(
                                     launchSingleTop = true
                                     restoreState = true
                                 }
-                            },
-                            modifier = Modifier.size(48.dp)
+                            }
+                        )
+                    }
+                }
+            }
+
+            // ✦ UPLOAD STATUS CAPSULE
+            AnimatedVisibility(
+                visible = uploadState !is UploadState.Idle,
+                enter = slideInVertically(
+                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+                ) { -it - 60 } + fadeIn(tween(200)),
+                exit = slideOutVertically(
+                    animationSpec = tween(durationMillis = 220)
+                ) { -it - 60 } + fadeOut(tween(180)),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = 14.dp, start = 16.dp, end = 16.dp)
+            ) {
+                val statusLabel = when (uploadState) {
+                    is UploadState.Uploading -> "UPLOADING"
+                    is UploadState.Success -> "POSTED"
+                    is UploadState.Error -> "FAILED"
+                    is UploadState.Idle -> ""
+                }
+                val statusTint = when (uploadState) {
+                    is UploadState.Uploading -> colors.accent
+                    is UploadState.Success -> colors.success
+                    is UploadState.Error -> colors.danger
+                    is UploadState.Idle -> colors.textTertiary
+                }
+                val statusMessage = when (val state = uploadState) {
+                    is UploadState.Uploading -> state.message
+                    is UploadState.Success -> state.message
+                    is UploadState.Error -> state.message
+                    is UploadState.Idle -> ""
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(22.dp),
+                    color = colors.cardSurface.copy(alpha = 0.96f),
+                    border = BorderStroke(1.dp, colors.cardBorder),
+                    shadowElevation = 16.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Status medallion
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(statusTint.copy(alpha = 0.14f)),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = if (isProfileTab) Icons.Filled.Person else Icons.Outlined.Person,
-                                contentDescription = "Profile",
-                                tint = if (isProfileTab) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(26.dp)
+                            when (uploadState) {
+                                is UploadState.Uploading -> CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    color = colors.accent,
+                                    strokeWidth = 2.dp
+                                )
+                                is UploadState.Success -> Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = colors.success,
+                                    modifier = Modifier.size(19.dp)
+                                )
+                                is UploadState.Error -> Icon(
+                                    imageVector = Icons.Default.Warning,
+                                    contentDescription = null,
+                                    tint = colors.danger,
+                                    modifier = Modifier.size(19.dp)
+                                )
+                                is UploadState.Idle -> Spacer(modifier = Modifier.size(19.dp))
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = statusLabel,
+                                style = AgoraType.MicroLabel,
+                                color = statusTint
                             )
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = statusMessage,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = colors.textPrimary,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (uploadState is UploadState.Uploading) {
+                                Spacer(modifier = Modifier.height(9.dp))
+                                LinearProgressIndicator(
+                                    progress = { (uploadState as? UploadState.Uploading)?.progress ?: 1f },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(5.dp)
+                                        .clip(RoundedCornerShape(3.dp)),
+                                    color = colors.accent,
+                                    trackColor = colors.hairline,
+                                    strokeCap = StrokeCap.Round
+                                )
+                            }
                         }
                     }
                 }
             }
+        }
 
-        // --- INSTAGRAM-STYLE UPLOAD BANNER ---
-        AnimatedVisibility(
-            visible = uploadState !is UploadState.Idle,
-            enter = slideInVertically(initialOffsetY = { -it - 100 }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { -it - 100 }) + fadeOut(),
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .statusBarsPadding()
-                .padding(top = 16.dp, start = 16.dp, end = 16.dp)
+        // --- FULL SCREEN CREATE POST DIALOG ---
+        if (showComposeScreen) {
+            CreatePostDialog(
+                feedViewModel = feedViewModel,
+                themeViewModel = themeViewModel,
+                onDismiss = { showComposeScreen = false }
+            )
+        }
+    }
+}
+
+/**
+ * A bottom-nav rail item: a fixed 38dp icon well (so nothing jumps when the
+ * selection glow appears) plus a label that springs open horizontally on
+ * selection, morphing the whole pill.
+ */
+@Composable
+private fun NavRailItem(
+    selected: Boolean,
+    label: String,
+    icon: ImageVector,
+    selectedIcon: ImageVector,
+    onClick: () -> Unit
+) {
+    val colors = rememberAgoraColors()
+    val tint by animateColorAsState(
+        targetValue = if (selected) colors.accent else colors.textTertiary,
+        animationSpec = tween(durationMillis = 220),
+        label = "NavRailTint"
+    )
+
+    Row(
+        modifier = Modifier
+            .clip(CircleShape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.size(38.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Surface(
-                shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shadowElevation = 8.dp,
-                modifier = Modifier.fillMaxWidth(0.9f)
+            AnimatedVisibility(
+                visible = selected,
+                enter = fadeIn(tween(220)) + scaleIn(
+                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                    initialScale = 0.5f
+                ),
+                exit = fadeOut(tween(140)) + scaleOut(
+                    animationSpec = tween(140),
+                    targetScale = 0.5f
+                )
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = when (val state = uploadState) {
-                                is UploadState.Uploading -> state.message
-                                is UploadState.Success -> state.message
-                                is UploadState.Error -> state.message
-                                is UploadState.Idle -> ""
-                            },
-                            fontWeight = FontWeight.Bold,
-                            color = when (uploadState) {
-                                is UploadState.Error -> MaterialTheme.colorScheme.error
-                                is UploadState.Success -> Color(0xFF4CAF50)
-                                else -> MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                            modifier = Modifier.weight(1f)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            brush = Brush.radialGradient(
+                                colorStops = arrayOf(
+                                    0f to colors.accent.copy(alpha = 0.30f),
+                                    0.6f to colors.accent.copy(alpha = 0.08f),
+                                    1f to Color.Transparent
+                                )
+                            ),
+                            shape = CircleShape
                         )
-                    }
+                )
+            }
+            Icon(
+                imageVector = if (selected) selectedIcon else icon,
+                contentDescription = label,
+                tint = tint,
+                modifier = Modifier.size(23.dp)
+            )
+        }
 
-                    if (uploadState is UploadState.Uploading) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        LinearProgressIndicator(
-                            progress = { (uploadState as? UploadState.Uploading)?.progress ?: 1f },
-                            modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
-                            color = MaterialTheme.colorScheme.primary,
-                            trackColor = Color.LightGray
-                        )
-                    }
-                }
+        AnimatedVisibility(
+            visible = selected,
+            enter = fadeIn(tween(220)) + expandHorizontally(
+                animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                expandFrom = Alignment.Start
+            ),
+            exit = fadeOut(tween(120)) + shrinkHorizontally(
+                animationSpec = tween(160),
+                shrinkTowards = Alignment.Start
+            )
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Spacer(modifier = Modifier.width(7.dp))
+                Text(
+                    text = label,
+                    style = AgoraType.NavLabel,
+                    color = tint
+                )
             }
         }
     }
+}
 
-    // --- FULL SCREEN CREATE POST DIALOG ---
-    if (showComposeScreen) {
-        CreatePostDialog(
-            feedViewModel = feedViewModel,
-            themeViewModel = themeViewModel,
-            onDismiss = { showComposeScreen = false }
+/** A drawer row: chip-mounted icon + label, full-width press target. */
+@Composable
+private fun DrawerNavItem(
+    label: String,
+    icon: ImageVector,
+    tint: Color,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 5.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(RoundedCornerShape(13.dp))
+                .background(tint.copy(alpha = 0.10f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(19.dp)
+            )
+        }
+        Spacer(modifier = Modifier.width(14.dp))
+        Text(
+            text = label,
+            fontSize = 14.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = tint
         )
     }
-}
 }
