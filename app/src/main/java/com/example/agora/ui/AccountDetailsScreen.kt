@@ -183,12 +183,10 @@ fun AccountDetailsScreen(
         }
     }
 
-    val gradientBorder = Brush.linearGradient(
-        colors = listOf(
-            MaterialTheme.colorScheme.primary,
-            MaterialTheme.colorScheme.tertiary
-        )
-    )
+    // ✦ Noir identity: the sweep-gradient ring reserved for your own account.
+    val avatarRing = com.example.agora.ui.theme.AgoraRingGradient
+    val accentGradient = com.example.agora.ui.theme.AgoraAccentGradient
+    val microLabel = com.example.agora.ui.theme.AgoraType.MicroLabel
 
     Scaffold(
         snackbarHost = {
@@ -211,7 +209,14 @@ fun AccountDetailsScreen(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
-                title = { Text("Account Details", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp) },
+                title = {
+                    Text(
+                        "Account Details",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 20.sp,
+                        letterSpacing = (-0.4).sp
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -241,44 +246,50 @@ fun AccountDetailsScreen(
                 Box(
                     modifier = Modifier
                         .size(110.dp)
-                        .border(2.dp, gradientBorder, CircleShape)
-                        .padding(4.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .background(avatarRing)
                         .clickable { launcher.launch("image/*") },
                     contentAlignment = Alignment.Center
                 ) {
-                    if (profile?.avatarUrl != null) {
-                        AsyncImage(
-                            model = profile?.avatarUrl,
-                            contentDescription = "Profile Avatar",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
-                        )
-                    } else {
-                        Icon(
-                            Icons.Default.Person,
-                            contentDescription = "Default Avatar",
-                            modifier = Modifier.size(56.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    if (isUploading) {
-                        CircularProgressIndicator(
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(36.dp)
-                        )
+                    Box(
+                        modifier = Modifier
+                            .size(102.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (profile?.avatarUrl != null) {
+                            AsyncImage(
+                                model = profile?.avatarUrl,
+                                contentDescription = "Profile Avatar",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
+                            )
+                        } else {
+                            Icon(
+                                Icons.Default.Person,
+                                contentDescription = "Default Avatar",
+                                modifier = Modifier.size(56.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (isUploading) {
+                            CircularProgressIndicator(
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(36.dp)
+                            )
+                        }
                     }
                 }
 
-                // Camera Badge Button overlapping bottom-right
+                // Camera Badge Button overlapping bottom-right — accent gradient
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .offset(x = (-4).dp, y = (-4).dp)
                         .size(36.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary)
+                        .background(accentGradient)
                         .border(2.dp, MaterialTheme.colorScheme.background, CircleShape)
                         .clickable { launcher.launch("image/*") },
                     contentAlignment = Alignment.Center
@@ -294,32 +305,33 @@ fun AccountDetailsScreen(
 
             Text(
                 text = "@${profile?.handle ?: ""}",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
+                fontSize = 19.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = (-0.3).sp,
                 color = MaterialTheme.colorScheme.onBackground
             )
             Text(
                 text = maskEmail(currentUser?.email ?: ""),
                 fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 24.dp)
+                modifier = Modifier.padding(top = 3.dp, bottom = 24.dp)
             )
 
             // 🌟 2. PERSONAL INFORMATION GROUPED CARD
             Text(
-                text = "Personal Information",
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
+                text = "PERSONAL INFORMATION",
+                style = microLabel,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 8.dp, start = 4.dp)
+                    .padding(bottom = 10.dp, start = 6.dp)
             )
 
             Surface(
                 shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 modifier = Modifier
                     .fillMaxWidth()
                     .animateContentSize()
@@ -403,19 +415,18 @@ fun AccountDetailsScreen(
 
             // 🌟 3. APP PREFERENCES GROUPED CARD
             Text(
-                text = "App Preferences",
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
+                text = "APP PREFERENCES",
+                style = microLabel,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 8.dp, start = 4.dp)
+                    .padding(bottom = 10.dp, start = 6.dp)
             )
 
             Surface(
                 shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
@@ -462,19 +473,18 @@ fun AccountDetailsScreen(
 
             // 🌟 4. SECURITY GROUPED CARD
             Text(
-                text = "Security",
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
+                text = "SECURITY",
+                style = microLabel,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 8.dp, start = 4.dp)
+                    .padding(bottom = 10.dp, start = 6.dp)
             )
 
             Surface(
                 shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -549,13 +559,12 @@ fun AccountDetailsScreen(
 
             // 🌟 6. DANGER ZONE / ACCOUNT ACTIONS
             Text(
-                text = "Account Actions",
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
+                text = "ACCOUNT ACTIONS",
+                style = microLabel,
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 8.dp, start = 4.dp)
+                    .padding(bottom = 10.dp, start = 6.dp)
             )
 
             OutlinedButton(

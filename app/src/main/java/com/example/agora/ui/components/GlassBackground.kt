@@ -6,20 +6,22 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 /**
- * Hyper-modern, deep dynamic mesh/aurora gradient background with seamless blurred ambient color orbs.
- * Completely borderless, seamless, and free of any harsh card lines or chat artifacts.
- * Creates an ultra-premium depth field for iOS-style frosted glass cards to float over.
+ * ✦ AGORA NOIR CANVAS
+ *
+ * The app-wide ambient background, matching the home feed exactly: a deep
+ * obsidian vertical gradient (warm paper in light mode) with soft aurora
+ * washes painted as radial-gradient brushes — no runtime blur modifiers, so
+ * the whole canvas costs a single raster pass.
+ *
+ * Name kept for source compatibility with the auth/onboarding screens.
  */
 @Composable
 fun VibrantGlassBackground(
@@ -31,101 +33,104 @@ fun VibrantGlassBackground(
         modifier = modifier
             .fillMaxSize()
             .background(
-                brush = if (isDarkTheme) {
-                    Brush.linearGradient(
-                        colors = listOf(
-                            Color(0xFF070B14),
-                            Color(0xFF0F172A),
-                            Color(0xFF130E26),
-                            Color(0xFF030712)
+                brush = Brush.verticalGradient(
+                    colors = if (isDarkTheme) {
+                        listOf(
+                            Color(0xFF0B0C13),
+                            Color(0xFF080910),
+                            Color(0xFF06070C)
                         )
-                    )
-                } else {
-                    Brush.linearGradient(
-                        colors = listOf(
-                            Color(0xFFF1F5F9),
-                            Color(0xFFE0E7FF),
-                            Color(0xFFF5F3FF),
-                            Color(0xFFE2E8F0)
+                    } else {
+                        listOf(
+                            Color(0xFFFAF9F5),
+                            Color(0xFFF5F3ED),
+                            Color(0xFFEFEDE5)
                         )
-                    )
-                }
+                    }
+                )
             )
     ) {
         if (isDarkTheme) {
-            // Orb 1: Rich Electric Indigo (Top-Left)
+            // Aurora I — indigo, top-left
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .offset(x = (-40).dp, y = (-40).dp)
-                    .size(340.dp)
-                    .blur(110.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF4F46E5).copy(alpha = 0.38f))
+                    .offset(x = (-100).dp, y = (-80).dp)
+                    .size(440.dp)
+                    .background(
+                        brush = Brush.radialGradient(
+                            colorStops = arrayOf(
+                                0f to Color(0xFF6366F1).copy(alpha = 0.20f),
+                                0.55f to Color(0xFF6366F1).copy(alpha = 0.08f),
+                                1f to Color.Transparent
+                            )
+                        )
+                    )
             )
-
-            // Orb 2: Vibrant Deep Magenta / Violet (Center-Right)
+            // Aurora II — violet, center-right
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .offset(x = 60.dp, y = (-20).dp)
-                    .size(320.dp)
-                    .blur(115.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF9333EA).copy(alpha = 0.30f))
+                    .offset(x = 110.dp, y = 40.dp)
+                    .size(400.dp)
+                    .background(
+                        brush = Brush.radialGradient(
+                            colorStops = arrayOf(
+                                0f to Color(0xFF8B5CF6).copy(alpha = 0.14f),
+                                0.55f to Color(0xFF8B5CF6).copy(alpha = 0.05f),
+                                1f to Color.Transparent
+                            )
+                        )
+                    )
             )
-
-            // Orb 3: Luminous Cyan / Teal (Bottom-Center)
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .offset(y = 60.dp)
-                    .size(360.dp)
-                    .blur(120.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF06B6D4).copy(alpha = 0.26f))
-            )
-
-            // Orb 4: Subtle Rose Accent (Bottom-Left)
+            // Aurora III — cyan, bottom-left
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .offset(x = (-50).dp, y = (-30).dp)
-                    .size(240.dp)
-                    .blur(95.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFFE11D48).copy(alpha = 0.20f))
+                    .offset(x = (-80).dp, y = 60.dp)
+                    .size(420.dp)
+                    .background(
+                        brush = Brush.radialGradient(
+                            colorStops = arrayOf(
+                                0f to Color(0xFF22D3EE).copy(alpha = 0.10f),
+                                0.55f to Color(0xFF22D3EE).copy(alpha = 0.04f),
+                                1f to Color.Transparent
+                            )
+                        )
+                    )
             )
         } else {
-            // Light Theme: Smooth, luminous pastel orbs
+            // Aurora I — indigo bloom, top-left
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .offset(x = (-30).dp, y = (-30).dp)
-                    .size(320.dp)
-                    .blur(90.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF818CF8).copy(alpha = 0.35f))
+                    .offset(x = (-90).dp, y = (-70).dp)
+                    .size(400.dp)
+                    .background(
+                        brush = Brush.radialGradient(
+                            colorStops = arrayOf(
+                                0f to Color(0xFFA5B4FC).copy(alpha = 0.34f),
+                                0.6f to Color(0xFFA5B4FC).copy(alpha = 0.12f),
+                                1f to Color.Transparent
+                            )
+                        )
+                    )
             )
-
+            // Aurora II — sky bloom, bottom-right
             Box(
                 modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .offset(x = 40.dp)
-                    .size(300.dp)
-                    .blur(95.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFFC084FC).copy(alpha = 0.30f))
-            )
-
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .offset(y = 40.dp)
-                    .size(320.dp)
-                    .blur(100.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF38BDF8).copy(alpha = 0.25f))
+                    .align(Alignment.BottomEnd)
+                    .offset(x = 90.dp, y = 40.dp)
+                    .size(400.dp)
+                    .background(
+                        brush = Brush.radialGradient(
+                            colorStops = arrayOf(
+                                0f to Color(0xFF7DD3FC).copy(alpha = 0.26f),
+                                0.6f to Color(0xFF7DD3FC).copy(alpha = 0.10f),
+                                1f to Color.Transparent
+                            )
+                        )
+                    )
             )
         }
 

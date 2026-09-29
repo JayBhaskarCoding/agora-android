@@ -674,8 +674,8 @@ private fun FeedTopBar(
             .background(
                 brush = Brush.verticalGradient(
                     colorStops = arrayOf(
-                        0.0f to colors.canvasTop.copy(alpha = 0.92f * scrimAlpha),
-                        0.72f to colors.canvasTop.copy(alpha = 0.84f * scrimAlpha),
+                        0.0f to colors.canvasTop.copy(alpha = 0.94f * scrimAlpha),
+                        0.68f to colors.canvasTop.copy(alpha = 0.86f * scrimAlpha),
                         1.0f to Color.Transparent
                     )
                 )
@@ -739,21 +739,17 @@ private fun FeedTopBar(
             }
         }
 
-        HorizontalDivider(
-            thickness = 1.dp,
-            color = colors.hairline.copy(alpha = scrimAlpha)
-        )
-
-        // Soft fade under the divider so content never hard-cuts at the corners.
+        // ✦ Seamless edge: no hard divider line — separation comes purely from
+        //    the frosted blur and a last whisper of scrim that fades to air.
         Spacer(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(10.dp)
+                .height(12.dp)
                 .background(
                     brush = Brush.verticalGradient(
-                        colors = listOf(
-                            colors.canvasTop.copy(alpha = 0.22f * scrimAlpha),
-                            Color.Transparent
+                        colorStops = arrayOf(
+                            0.0f to colors.canvasTop.copy(alpha = 0.30f * scrimAlpha),
+                            1.0f to Color.Transparent
                         )
                     )
                 )
@@ -763,7 +759,7 @@ private fun FeedTopBar(
 
 /** A single row inside the post-options sheet (Edit / Delete / Report). */
 @Composable
-private fun OptionsSheetRow(
+internal fun OptionsSheetRow(
     label: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     tint: Color,
@@ -885,7 +881,6 @@ fun PostCard(
                     modifier = Modifier
                         .size(46.dp)
                         .clip(CircleShape)
-                        .clickable { onUserClicked() }
                         .background(
                             brush = if (isOwnPost) {
                                 AgoraRingGradient
@@ -894,7 +889,8 @@ fun PostCard(
                                     listOf(colors.cardBorder, colors.cardBorder)
                                 )
                             }
-                        ),
+                        )
+                        .clickable { onUserClicked() },
                     contentAlignment = Alignment.Center
                 ) {
                     Box(
@@ -958,8 +954,8 @@ fun PostCard(
                         .padding(start = 8.dp)
                         .size(34.dp)
                         .clip(CircleShape)
-                        .clickable { onOptionsClicked() }
-                        .background(colors.insetSurface.copy(alpha = 0.65f)),
+                        .background(colors.insetSurface.copy(alpha = 0.65f))
+                        .clickable { onOptionsClicked() },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
