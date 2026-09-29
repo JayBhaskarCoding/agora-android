@@ -29,7 +29,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
@@ -37,6 +36,7 @@ import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -331,7 +331,9 @@ fun MainScreen(
                     val radius = if (isPostDetailOpen) 16f else drawerFraction * 22f
                     renderEffect = if (radius > 0.01f) {
                         val px = radius.dp.toPx()
-                        BlurEffect(px, px, BlurredEdgeTreatment.Rectangle)
+                        // TileMode.Clamp == clipped-rect semantics (no soft
+                        // transparent vignette at the screen edges).
+                        BlurEffect(px, px, TileMode.Clamp)
                     } else {
                         null
                     }
