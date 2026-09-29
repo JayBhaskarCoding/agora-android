@@ -331,7 +331,9 @@ fun MainScreen(
                     val radius = if (isPostDetailOpen) 16f else drawerFraction * 22f
                     renderEffect = if (radius > 0.01f) {
                         val px = radius.dp.toPx()
-                        BlurEffect(px, px, BlurredEdgeTreatment.Rectangle)
+                        // TileMode.Clamp == clipped-rect semantics (no soft
+                        // transparent vignette at the screen edges).
+                        BlurEffect(px, px, TileMode.Clamp)
                     } else {
                         null
                     }
