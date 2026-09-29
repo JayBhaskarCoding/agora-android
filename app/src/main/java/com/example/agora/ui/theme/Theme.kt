@@ -14,7 +14,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import com.example.agora.viewmodel.ThemePreference
 
-val LocalDarkTheme = staticCompositionLocalOf { false }
+val LocalDarkTheme = staticCompositionLocalOf { true }
 
 private val LightColorScheme = lightColorScheme(
     primary = AgoraIndigo,

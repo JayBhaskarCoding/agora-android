@@ -171,6 +171,7 @@ class MainActivity : ComponentActivity() {
                 val isOnboarding by authViewModel.isOnboarding.collectAsState()
                 val googleFirstName by authViewModel.googleFirstName.collectAsState()
                 val googleLastName by authViewModel.googleLastName.collectAsState()
+                val googleAvatarUrl by authViewModel.googleAvatarUrl.collectAsState()
 
                 val context = LocalContext.current
                 val permissionLauncher = rememberLauncherForActivityResult(
@@ -276,10 +277,21 @@ class MainActivity : ComponentActivity() {
                                         OnboardingFlowScreen(
                                             initialFirstName = googleFirstName,
                                             initialLastName = googleLastName,
-                                            onSaveData = { firstName, lastName, handle, gender, dob, password ->
-                                                authViewModel.saveOnboardingDetails(firstName, lastName, handle, gender, dob, password) { }
+                                            initialAvatarUrl = googleAvatarUrl,
+                                            themeViewModel = themeViewModel,
+                                            onSaveData = { firstName, lastName, handle, gender, dob, password, avatarRemote, avatarLocal ->
+                                                authViewModel.saveOnboardingDetails(
+                                                    context = context,
+                                                    firstName = firstName,
+                                                    lastName = lastName,
+                                                    handle = handle,
+                                                    gender = gender,
+                                                    dob = dob,
+                                                    realPassword = password,
+                                                    avatarRemoteUrl = avatarRemote,
+                                                    avatarLocalUri = avatarLocal
+                                                ) { }
                                             },
-                                            onThemeChanged = { },
                                             onFinish = {
                                                 authViewModel.finishOnboarding()
                                             }

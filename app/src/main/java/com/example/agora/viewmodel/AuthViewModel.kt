@@ -34,6 +34,9 @@ import io.github.jan.supabase.realtime.RealtimeChannel
 import io.github.jan.supabase.realtime.channel
 import io.github.jan.supabase.realtime.postgresChangeFlow
 import io.github.jan.supabase.realtime.realtime
+import io.github.jan.supabase.storage.storage
+import android.net.Uri
+import com.example.agora.utils.ImageUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -100,6 +103,9 @@ class AuthViewModel : ViewModel() {
 
     private val _googleLastName = MutableStateFlow("")
     val googleLastName: StateFlow<String> = _googleLastName.asStateFlow()
+
+    private val _googleAvatarUrl = MutableStateFlow<String?>(null)
+    val googleAvatarUrl: StateFlow<String?> = _googleAvatarUrl.asStateFlow()
 
     private val _isCheckingProfileCompleteness = MutableStateFlow(true)
     val isCheckingProfileCompleteness: StateFlow<Boolean> = _isCheckingProfileCompleteness.asStateFlow()
@@ -659,6 +665,10 @@ class AuthViewModel : ViewModel() {
                             _googleFirstName.value = parsedFirstName
                             _googleLastName.value = parsedLastName
 
+                            val avatarUrl = metadata?.get("picture")?.jsonPrimitive?.content
+                                ?: metadata?.get("avatar_url")?.jsonPrimitive?.content
+                            _googleAvatarUrl.value = avatarUrl?.ifBlank { null }
+
                             _isOnboarding.value = true
                         } else {
                             Log.d("GoogleAuth", "Existing Google user with complete profile. Proceeding to Feed...")
@@ -887,12 +897,15 @@ class AuthViewModel : ViewModel() {
     }
 
     fun saveOnboardingDetails(
+        context: Context,
         firstName: String,
         lastName: String,
         handle: String,
         gender: String,
         dob: String,
         realPassword: String,
+        avatarRemoteUrl: String? = null,
+        avatarLocalUri: Uri? = null,
         onSuccess: () -> Unit
     ) {
         viewModelScope.launch {
@@ -905,6 +918,21 @@ class AuthViewModel : ViewModel() {
                 val cleanHandle = handle.trim().removePrefix("@")
 
                 withContext(Dispatchers.IO) {
+                    var finalAvatarUrl: String? = avatarRemoteUrl
+
+                    if (avatarLocalUri != null) {
+                        try {
+                            val bytes = ImageUtils.compressImageToWebp(context.applicationContext, avatarLocalUri)
+                            if (bytes.isNotEmpty()) {
+                                val fileName = "${userId}/${UUID.randomUUID()}.webp"
+                                supabaseClient.storage.from("avatars").upload(fileName, bytes)
+                                finalAvatarUrl = supabaseClient.storage.from("avatars").publicUrl(fileName)
+                            }
+                        } catch (e: Exception) {
+                            Log.e("AuthViewModel", "Failed to upload avatar: ${e.localizedMessage}", e)
+                        }
+                    }
+
                     supabaseClient.auth.updateUser {
                         password = realPassword
                         data = buildJsonObject {
@@ -924,6 +952,9 @@ class AuthViewModel : ViewModel() {
                             set("gender", gender.ifBlank { null })
                             set("dob", dob.ifBlank { null })
                             set("email", userEmail)
+                            if (!finalAvatarUrl.isNullOrBlank()) {
+                                set("avatar_url", finalAvatarUrl)
+                            }
                         }
                     ) {
                         filter { eq("id", userId) }

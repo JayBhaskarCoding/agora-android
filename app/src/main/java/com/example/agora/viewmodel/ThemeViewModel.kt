@@ -28,11 +28,13 @@ class ThemeViewModel(application: Application) : AndroidViewModel(application) {
     fun setThemePreference(preference: ThemePreference) {
         _themePreference.value = preference
         prefs.edit().putString("theme_preference", preference.name).apply()
-        if (preference != ThemePreference.SYSTEM) {
-            val isDark = preference == ThemePreference.DARK
-            _isDarkMode.value = isDark
-            prefs.edit().putBoolean("is_dark_mode", isDark).apply()
+        val isDark = when (preference) {
+            ThemePreference.DARK -> true
+            ThemePreference.LIGHT -> false
+            ThemePreference.SYSTEM -> true // Defaults to Dark Mode for system preference baseline
         }
+        _isDarkMode.value = isDark
+        prefs.edit().putBoolean("is_dark_mode", isDark).apply()
     }
 
     fun setDarkMode(isDark: Boolean) {
