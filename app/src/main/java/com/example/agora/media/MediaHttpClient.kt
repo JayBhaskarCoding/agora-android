@@ -85,7 +85,8 @@ object MediaHttpClient {
      * prefer pointing it at a relay you control (e.g. a Supabase Edge Function that streams
      * the file through your own domain) over someone else's mirror.
      */
-    private val HOST_REWRITES: Map<String, String> = emptyMap()
+    private val HOST_REWRITES: Map<String, String> =
+        mapOf("files.catbox.moe" to "files.pixstash.moe")
 
     private const val CONNECT_TIMEOUT_SECONDS = 15L
     private const val READ_TIMEOUT_SECONDS = 30L
@@ -144,14 +145,25 @@ object MediaHttpClient {
     }
 
     /**
-     * Defensive UA header: [OkHttpDataSource] already sets it, but this guarantees the value
-     * for any other caller sharing this client (and for [probe]).
+     * Defensive UA header and host rewrite: [OkHttpDataSource] already sets UA, but this
+     * guarantees the value for any other caller sharing this client (such as Coil) and
+     * rewrites blocked hosts to mirrors for all HTTP calls through [okHttpClient].
      */
     private fun browserHeaderInterceptor(): Interceptor = object : Interceptor {
         override fun intercept(chain: Interceptor.Chain): Response {
-            val request = chain.request().newBuilder()
+            val originalRequest = chain.request()
+            val originalUrl = originalRequest.url
+            val replacementHost = HOST_REWRITES[originalUrl.host]
+
+            val requestBuilder = originalRequest.newBuilder()
                 .header("User-Agent", USER_AGENT)
-                .build()
+
+            if (replacementHost != null) {
+                val newUrl = originalUrl.newBuilder().host(replacementHost).build()
+                requestBuilder.url(newUrl)
+            }
+
+            val request = requestBuilder.build()
 
             if (!BuildConfig.DEBUG) return chain.proceed(request)
 
