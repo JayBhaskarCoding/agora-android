@@ -11,6 +11,7 @@ import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import java.io.IOException
 
 @OptIn(UnstableApi::class)
 object ExoPlayerHelper {
@@ -90,7 +91,13 @@ object ExoPlayerHelper {
                     // The failing URL lives on the DataSpec of whichever data source threw, not
                     // on the player, so read it from the exception instead of currentMediaItem
                     // (which may already have moved on). Debounced internally.
-                    httpError?.dataSpec?.uri?.toString()?.let(MediaHttpClient::diagnoseOnFailure)
+                    // Skipped when the root cause is a caller-initiated cancellation
+                    // (release/seek race): there is no network fault to probe.
+                    val isCallerCancellation = generateSequence<Throwable>(error.cause) { it.cause }
+                        .any { it is IOException && it.message == "Canceled" }
+                    if (!isCallerCancellation) {
+                        httpError?.dataSpec?.uri?.toString()?.let(MediaHttpClient::diagnoseOnFailure)
+                    }
                 }
             })
         }
