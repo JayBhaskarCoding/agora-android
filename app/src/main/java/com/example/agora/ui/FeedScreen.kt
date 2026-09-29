@@ -351,43 +351,35 @@ fun GlobalFeedScreen(
         }
 
         // 3. FLOATING FROSTED GLASS TOP BAR (Seamless iOS Gradient Blur, zero hard borders)
-        Box(
+        val topBarHeight = 64.dp
+        val fadeExtensionHeight = 28.dp
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .then(
                     if (hazeState != null) {
-                        Modifier.hazeChild(state = hazeState, shape = RoundedCornerShape(0.dp))
+                        Modifier.hazeChild(state = hazeState, shape = RoundedCornerShape(0.dp), blurRadius = 32.dp)
                     } else {
                         Modifier
                     }
                 )
                 .background(
                     brush = Brush.verticalGradient(
-                        colors = if (isDarkTheme) {
-                            listOf(
-                                Color(0xFF0F172A).copy(alpha = 0.88f),
-                                Color(0xFF0F172A).copy(alpha = 0.60f),
-                                Color(0xFF0F172A).copy(alpha = 0.25f),
-                                Color.Transparent
-                            )
-                        } else {
-                            listOf(
-                                Color.White.copy(alpha = 0.92f),
-                                Color.White.copy(alpha = 0.70f),
-                                Color.White.copy(alpha = 0.30f),
-                                Color.Transparent
-                            )
-                        }
+                        colorStops = arrayOf(
+                            0.0f to (if (isDarkTheme) Color(0xFF0F172A).copy(alpha = 0.88f) else Color.White.copy(alpha = 0.92f)),
+                            0.65f to (if (isDarkTheme) Color(0xFF0F172A).copy(alpha = 0.85f) else Color.White.copy(alpha = 0.90f)),
+                            0.82f to (if (isDarkTheme) Color(0xFF0F172A).copy(alpha = 0.50f) else Color.White.copy(alpha = 0.55f)),
+                            1.0f to Color.Transparent
+                        )
                     )
                 )
-                .padding(bottom = 12.dp)
         ) {
             // Foreground Content
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .statusBarsPadding()
-                    .height(60.dp)
+                    .height(topBarHeight)
                     .padding(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
@@ -423,6 +415,8 @@ fun GlobalFeedScreen(
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.height(fadeExtensionHeight))
         }
     }
 

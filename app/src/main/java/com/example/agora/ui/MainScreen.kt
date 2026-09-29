@@ -377,18 +377,18 @@ fun MainScreen(
                         modifier = Modifier
                             .fillMaxWidth(0.85f)
                             .height(64.dp)
-                            .hazeChild(state = hazeState, shape = CircleShape, blurRadius = 40.dp)
+                            .hazeChild(state = hazeState, shape = CircleShape, blurRadius = 52.dp)
                             .background(
                                 brush = Brush.verticalGradient(
                                     colors = if (isDarkTheme) {
                                         listOf(
-                                            Color(0xFF334155).copy(alpha = 0.85f),
-                                            Color(0xFF1E293B).copy(alpha = 0.90f)
+                                            Color(0xFF334155).copy(alpha = 0.20f),
+                                            Color(0xFF1E293B).copy(alpha = 0.15f)
                                         )
                                     } else {
                                         listOf(
-                                            Color.White.copy(alpha = 0.92f),
-                                            Color(0xFFF1F5F9).copy(alpha = 0.85f)
+                                            Color.White.copy(alpha = 0.25f),
+                                            Color(0xFFF1F5F9).copy(alpha = 0.18f)
                                         )
                                     }
                                 ),
@@ -398,8 +398,8 @@ fun MainScreen(
                                 width = 1.dp,
                                 brush = Brush.verticalGradient(
                                     colors = listOf(
-                                        Color.White.copy(alpha = if (isDarkTheme) 0.45f else 0.80f),
-                                        Color.White.copy(alpha = if (isDarkTheme) 0.15f else 0.30f)
+                                        Color.White.copy(alpha = if (isDarkTheme) 0.35f else 0.65f),
+                                        Color.White.copy(alpha = if (isDarkTheme) 0.08f else 0.20f)
                                     )
                                 ),
                                 shape = CircleShape
