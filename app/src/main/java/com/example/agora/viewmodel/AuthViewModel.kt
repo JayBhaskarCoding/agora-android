@@ -165,12 +165,24 @@ class AuthViewModel : ViewModel() {
      * from Logcat alone (tag: AuthDiagnostics).
      */
     private fun isProfileIncomplete(userId: String, profile: Profile?, source: String): Boolean {
+        // 🌟 gender and dob are OPTIONAL: users routinely skip them in onboarding and
+        //    saveOnboardingDetails persists NULL. They must NOT mark an otherwise
+        //    finished profile as incomplete — that trapped returning users in a
+        //    re-login onboarding loop (cold start even wiped their account).
+        //
+        //    The remaining checks only ever match placeholder rows:
+        //     - email signup: first_name="Pending", last_name="User", handle="user_xxxx"
+        //     - Google signup (trigger-made row before onboarding): first_name/last_name
+        //       NULL and handle NULL -> decoded as null / "user" via the Profile defaults
+        //    Step 1 of the onboarding UI gates on firstName+handle being non-blank, so a
+        //    legitimately completed profile can never fail these checks.
         val incomplete = profile == null ||
+                profile.firstName.isNullOrBlank() ||
                 profile.firstName == "Pending" ||
                 profile.lastName == "User" ||
-                profile.handle.startsWith("user_") ||
-                profile.gender.isNullOrBlank() ||
-                profile.dob.isNullOrBlank()
+                profile.handle.isBlank() ||
+                profile.handle == "user" ||
+                profile.handle.startsWith("user_")
 
         Log.d(
             "AuthDiagnostics",
@@ -1029,19 +1041,40 @@ class AuthViewModel : ViewModel() {
 
                     // ── STEP 2: set the real password while authenticated ───────
                     // Enables email/username + password sign-in (Issue 2), especially
-                    // for Google-registered accounts. updateUser throws on failure —
-                    // verified by reaching the log line below.
-                    supabaseClient.auth.updateUser {
-                        password = realPassword
-                        data = buildJsonObject {
-                            put("first_name", firstName)
-                            put("last_name", lastName)
-                            put("handle", cleanHandle)
-                            put("gender", gender)
-                            put("dob", dob)
+                    // for Google-registered accounts.
+                    //
+                    // `same_password` is BENIGN: a returning user re-entered the
+                    // password their account already has — the credential goal is
+                    // already met, so log the skip and continue instead of failing
+                    // onboarding and forcing them to invent a new password.
+                    try {
+                        supabaseClient.auth.updateUser {
+                            password = realPassword
+                            data = buildJsonObject {
+                                put("first_name", firstName)
+                                put("last_name", lastName)
+                                put("handle", cleanHandle)
+                                put("gender", gender)
+                                put("dob", dob)
+                            }
+                        }
+                        Log.d("AuthDiagnostics", "[onboardingSave] password set via auth.updateUser for user=$userId")
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        val isSamePassword =
+                            (e as? RestException)?.error == "same_password" ||
+                                e.message?.contains("same_password") == true
+                        if (isSamePassword) {
+                            Log.i(
+                                "AuthDiagnostics",
+                                "[onboardingSave] benign skip: entered password is already the account " +
+                                    "password for user=$userId (same_password) — continuing"
+                            )
+                        } else {
+                            // Any real failure rethrows -> outer catch -> onFailure flow.
+                            throw e
                         }
                     }
-                    Log.d("AuthDiagnostics", "[onboardingSave] password set via auth.updateUser for user=$userId")
 
                     // ── STEP 3 (best-effort): stamp password_changed_at ─────────
                     try {
