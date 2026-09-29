@@ -353,7 +353,13 @@ fun VideoTrimmerContent(
 
             // Frosted play badge springs in while paused — a clear hint that
             // tapping the video resumes playback.
-            AnimatedVisibility(
+            // K2 resolution: qualify the scope overload explicitly — there is
+            // no BoxScope.AnimatedVisibility, and the ColumnScope receiver
+            // cannot cross the BoxScope lambda boundary implicitly ("cannot
+            // be called in this context with an implicit receiver"). enter/
+            // exit are fully specified (fade + scale), so behavior is
+            // identical to the top-level overload.
+            this@Column.AnimatedVisibility(
                 visible = !isPlaying,
                 enter = fadeIn(tween(180)) + scaleIn(tween(220), initialScale = 0.6f),
                 exit = fadeOut(tween(120)) + scaleOut(tween(120), targetScale = 0.6f)
