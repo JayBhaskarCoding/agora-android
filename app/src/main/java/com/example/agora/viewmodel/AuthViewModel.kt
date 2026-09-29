@@ -156,6 +156,37 @@ class AuthViewModel : ViewModel() {
         }
     }
 
+    /**
+     * Single source of truth for "is this account still in an onboarding
+     * state?". Reads the row persisted by [saveOnboardingDetails] from the
+     * `profiles` table — auth user_metadata is NOT authoritative (database
+     * updates never touch it, and Google sign-ups create a trigger-made row
+     * with NULLs). Logs the full verdict so re-login loops can be diagnosed
+     * from Logcat alone (tag: AuthDiagnostics).
+     */
+    private fun isProfileIncomplete(userId: String, profile: Profile?, source: String): Boolean {
+        val incomplete = profile == null ||
+                profile.firstName == "Pending" ||
+                profile.lastName == "User" ||
+                profile.handle.startsWith("user_") ||
+                profile.gender.isNullOrBlank() ||
+                profile.dob.isNullOrBlank()
+
+        Log.d(
+            "AuthDiagnostics",
+            "[$source] currentUser.id=$userId | profiles row=" +
+                (if (profile == null) {
+                    "NULL (no row returned!)"
+                } else {
+                    "firstName=${profile.firstName} lastName=${profile.lastName} " +
+                        "handle=${profile.handle} gender=${profile.gender} dob=${profile.dob} " +
+                        "email=${if (profile.email.isNullOrBlank()) "NULL" else "present"}"
+                }) +
+                " | verdict=${if (incomplete) "INCOMPLETE -> onboarding" else "COMPLETE -> feed"}"
+        )
+        return incomplete
+    }
+
     private fun verifyProfileCompleteness(userId: String) {
         // Cold-start guard: If cold-start check has already completed, bypass to prevent race conditions during active registration
         if (hasCompletedColdStartCheck) {
@@ -173,6 +204,7 @@ class AuthViewModel : ViewModel() {
             try {
                 _isCheckingProfileCompleteness.value = true
                 hasCompletedColdStartCheck = true
+                Log.d("AuthDiagnostics", "[coldStart] querying profiles by id for currentUser.id=$userId")
 
                 val profile = withContext(Dispatchers.IO) {
                     supabaseClient.from("profiles")
@@ -180,15 +212,9 @@ class AuthViewModel : ViewModel() {
                         .decodeSingleOrNull<Profile>()
                 }
 
-                val isIncomplete = profile == null ||
-                        profile.firstName == "Pending" ||
-                        profile.lastName == "User" ||
-                        profile.handle.startsWith("user_") ||
-                        profile.gender.isNullOrBlank() ||
-                        profile.dob.isNullOrBlank()
-
-                if (isIncomplete) {
+                if (isProfileIncomplete(userId, profile, "coldStart")) {
                     // ABANDONMENT WIPE: Cold start detected an abandoned session from a previous run
+                    Log.w("AuthDiagnostics", "[coldStart] incomplete profile — wiping abandoned user=$userId")
                     try {
                         supabaseClient.postgrest.rpc("delete_abandoned_user")
                     } catch (_: Exception) {}
@@ -196,7 +222,13 @@ class AuthViewModel : ViewModel() {
                 } else {
                     _isOnboarding.value = false
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.e(
+                    "AuthDiagnostics",
+                    "[coldStart] profile check FAILED for user=$userId (network/RLS?) — signing out to be safe: ${e.localizedMessage}",
+                    e
+                )
                 signOut()
             } finally {
                 _isCheckingProfileCompleteness.value = false
@@ -535,23 +567,46 @@ class AuthViewModel : ViewModel() {
 
             var loginEmail = input
 
+            // 🌟 USERNAME → EMAIL RESOLUTION: Supabase signInWith(Email) requires an
+            //    email address. If the identifier is a username/handle, resolve the
+            //    account's email from public.profiles first (populated during
+            //    onboarding and by the handle_new_user trigger + backfill in
+            //    20990101000003_notifications_select_rls_and_profile_email.sql).
             if (!Patterns.EMAIL_ADDRESS.matcher(loginEmail).matches()) {
                 val handleToSearch = loginEmail.removePrefix("@")
+                Log.d("AuthViewModel", "signIn: '$handleToSearch' is not an email — resolving handle → email via profiles")
                 try {
                     val response = withContext(Dispatchers.IO) {
                         supabaseClient.from("profiles")
                             .select { filter { eq("handle", handleToSearch) } }
                             .decodeSingleOrNull<JsonObject>()
+                            ?: run {
+                                // Case-insensitive retry (handles are user-typed); wildcards
+                                // are escaped so '%'/'_' can't broaden the match.
+                                val escaped = handleToSearch
+                                    .replace("%", "\\%")
+                                    .replace("_", "\\_")
+                                supabaseClient.from("profiles")
+                                    .select { filter { ilike("handle", escaped) } }
+                                    .decodeSingleOrNull<JsonObject>()
+                            }
                     }
 
                     val foundEmail = response?.stringOrNull("email")
                     if (foundEmail != null) {
                         loginEmail = foundEmail
+                        Log.d("AuthViewModel", "signIn: resolved handle '$handleToSearch' → email on file; proceeding to password auth")
+                    } else if (response != null) {
+                        Log.w("AuthViewModel", "signIn: handle '$handleToSearch' found but profiles.email is NULL — cannot resolve login email")
+                        _errorMessage.value = "This account has no email on record yet. Please sign in with Google instead."
+                        return@launch
                     } else {
+                        Log.w("AuthViewModel", "signIn: no profile found with handle '$handleToSearch'")
                         _errorMessage.value = "Username not found."
                         return@launch
                     }
                 } catch (e: Exception) {
+                    Log.e("AuthViewModel", "signIn: handle → email lookup failed: ${e.localizedMessage}", e)
                     _errorMessage.value = handleAuthError(e)
                     return@launch
                 }
@@ -629,24 +684,34 @@ class AuthViewModel : ViewModel() {
                     val userId = currentUser?.id
                     if (userId != null) {
                         // 🌟 Differentiating Login vs Registration: Query profiles table
+                        //    (user_metadata is never consulted — DB inserts don't update it).
+                        var profileQueryFailed = false
                         val profile = withContext(Dispatchers.IO) {
                             try {
                                 supabaseClient.from("profiles")
                                     .select { filter { eq("id", userId) } }
                                     .decodeSingleOrNull<Profile>()
-                            } catch (_: Exception) {
+                            } catch (e: Exception) {
+                                if (e is CancellationException) throw e
+                                profileQueryFailed = true
+                                Log.e(
+                                    "AuthDiagnostics",
+                                    "[googleSignIn] profiles query FAILED for user=$userId: ${e.localizedMessage}",
+                                    e
+                                )
                                 null
                             }
                         }
 
-                        val isIncomplete = profile == null ||
-                                profile.firstName == "Pending" ||
-                                profile.lastName == "User" ||
-                                profile.handle.startsWith("user_") ||
-                                profile.gender.isNullOrBlank() ||
-                                profile.dob.isNullOrBlank()
-
-                        if (isIncomplete) {
+                        if (profileQueryFailed) {
+                            // Transient failure (network/RLS): do NOT force the user back
+                            // through onboarding — treat as an existing account. The cold-start
+                            // verifier and the next login will re-check completeness.
+                            Log.w("AuthDiagnostics", "[googleSignIn] treating user=$userId as existing (query failed, not incomplete)")
+                            _isOnboarding.value = false
+                            claimDeviceOnNextSession = true
+                            startDeviceSession(userId)
+                        } else if (isProfileIncomplete(userId, profile, "googleSignIn")) {
                             Log.d("GoogleAuth", "New Google user or incomplete profile. Directing to Onboarding...")
                             val metadata = currentUser.userMetadata
                             val fullName = metadata?.get("full_name")?.jsonPrimitive?.content
@@ -906,7 +971,8 @@ class AuthViewModel : ViewModel() {
         realPassword: String,
         avatarRemoteUrl: String? = null,
         avatarLocalUri: Uri? = null,
-        onSuccess: () -> Unit
+        onSuccess: () -> Unit,
+        onFailure: (String) -> Unit = {}
     ) {
         viewModelScope.launch {
             try {
@@ -914,6 +980,11 @@ class AuthViewModel : ViewModel() {
                 val currentUser = supabaseClient.auth.currentUserOrNull()
                 val userId = currentUser?.id ?: return@launch
                 val userEmail = currentUser.email
+                Log.d(
+                    "AuthDiagnostics",
+                    "[onboardingSave] start user=$userId handle=$handle genderBlank=${gender.isBlank()} " +
+                        "dobBlank=${dob.isBlank()} emailPresent=${userEmail != null} passwordLength=${realPassword.length}"
+                )
 
                 val cleanHandle = handle.trim().removePrefix("@")
 
@@ -933,17 +1004,12 @@ class AuthViewModel : ViewModel() {
                         }
                     }
 
-                    supabaseClient.auth.updateUser {
-                        password = realPassword
-                        data = buildJsonObject {
-                            put("first_name", firstName)
-                            put("last_name", lastName)
-                            put("handle", cleanHandle)
-                            put("gender", gender)
-                            put("dob", dob)
-                        }
-                    }
-
+                    // ── STEP 1 (must succeed): persist the profiles row ──────────
+                    // This row — NOT user_metadata — is what verifyProfileCompleteness
+                    // and signInWithGoogle read back on the next login to decide
+                    // onboarding vs feed. It used to run AFTER updateUser{password},
+                    // so any password failure silently skipped it and the account
+                    // looped back to onboarding forever.
                     supabaseClient.from("profiles").update(
                         {
                             set("first_name", firstName)
@@ -959,6 +1025,34 @@ class AuthViewModel : ViewModel() {
                     ) {
                         filter { eq("id", userId) }
                     }
+                    Log.d("AuthDiagnostics", "[onboardingSave] profiles row persisted for user=$userId")
+
+                    // ── STEP 2: set the real password while authenticated ───────
+                    // Enables email/username + password sign-in (Issue 2), especially
+                    // for Google-registered accounts. updateUser throws on failure —
+                    // verified by reaching the log line below.
+                    supabaseClient.auth.updateUser {
+                        password = realPassword
+                        data = buildJsonObject {
+                            put("first_name", firstName)
+                            put("last_name", lastName)
+                            put("handle", cleanHandle)
+                            put("gender", gender)
+                            put("dob", dob)
+                        }
+                    }
+                    Log.d("AuthDiagnostics", "[onboardingSave] password set via auth.updateUser for user=$userId")
+
+                    // ── STEP 3 (best-effort): stamp password_changed_at ─────────
+                    try {
+                        supabaseClient.from("profiles").update(
+                            mapOf("password_changed_at" to Instant.now().toString())
+                        ) {
+                            filter { eq("id", userId) }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("AuthViewModel", "password_changed_at stamp failed (non-fatal): ${e.localizedMessage}")
+                    }
                 }
 
                 // Registration finished on this device: claim the single-device session.
@@ -967,7 +1061,11 @@ class AuthViewModel : ViewModel() {
 
                 onSuccess()
             } catch (e: Exception) {
-                _errorMessage.value = handleAuthError(e)
+                if (e is CancellationException) throw e
+                val message = handleAuthError(e)
+                Log.e("AuthDiagnostics", "[onboardingSave] FAILED: ${e.localizedMessage}", e)
+                _errorMessage.value = message
+                onFailure(message)
             }
         }
     }

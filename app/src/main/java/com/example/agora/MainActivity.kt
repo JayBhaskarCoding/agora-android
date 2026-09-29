@@ -333,7 +333,7 @@ class MainActivity : ComponentActivity() {
                                             initialLastName = googleLastName,
                                             initialAvatarUrl = googleAvatarUrl,
                                             themeViewModel = themeViewModel,
-                                            onSaveData = { firstName, lastName, handle, gender, dob, password, avatarRemote, avatarLocal ->
+                                            onSaveData = { firstName, lastName, handle, gender, dob, password, avatarRemote, avatarLocal, onResult ->
                                                 authViewModel.saveOnboardingDetails(
                                                     context = context,
                                                     firstName = firstName,
@@ -343,8 +343,14 @@ class MainActivity : ComponentActivity() {
                                                     dob = dob,
                                                     realPassword = password,
                                                     avatarRemoteUrl = avatarRemote,
-                                                    avatarLocalUri = avatarLocal
-                                                ) { }
+                                                    avatarLocalUri = avatarLocal,
+                                                    // 🌟 The flow only advances to step 3 when the
+                                                    // profiles row AND the password update both
+                                                    // succeeded — a silent failure here is what
+                                                    // looped Google re-logins back to onboarding.
+                                                    onSuccess = { onResult(true, null) },
+                                                    onFailure = { message -> onResult(false, message) }
+                                                )
                                             },
                                             onFinish = {
                                                 authViewModel.finishOnboarding()

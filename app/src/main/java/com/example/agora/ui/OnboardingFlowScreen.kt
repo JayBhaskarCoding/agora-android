@@ -72,7 +72,8 @@ fun OnboardingFlowScreen(
         dob: String,
         password: String,
         avatarRemoteUrl: String?,
-        avatarLocalUri: Uri?
+        avatarLocalUri: Uri?,
+        onResult: (success: Boolean, message: String?) -> Unit
     ) -> Unit,
     onFinish: () -> Unit
 ) {
@@ -110,6 +111,8 @@ fun OnboardingFlowScreen(
 
     // Step 2: Password State
     var password by remember { mutableStateOf("") }
+    var isSavingProfile by remember { mutableStateOf(false) }
+    var saveError by remember { mutableStateOf<String?>(null) }
 
     // Step 3: Theme State
     val currentThemePref by themeViewModel.themePreference.collectAsState()
@@ -428,7 +431,13 @@ fun OnboardingFlowScreen(
 
                             Button(
                                 onClick = {
-                                    // Save all user details including avatar selection
+                                    // Save all user details including avatar selection.
+                                    // 🌟 Advance ONLY when the save actually succeeded:
+                                    // advancing unconditionally used to let a failed
+                                    // profiles/password update slip through, which looped
+                                    // the next login straight back into onboarding.
+                                    saveError = null
+                                    isSavingProfile = true
                                     onSaveData(
                                         firstName,
                                         lastName,
@@ -438,16 +447,44 @@ fun OnboardingFlowScreen(
                                         password,
                                         googleAvatar,
                                         selectedAvatarUri
-                                    )
-                                    currentStep = 3
+                                    ) { success, message ->
+                                        isSavingProfile = false
+                                        if (success) {
+                                            currentStep = 3
+                                        } else {
+                                            saveError = message
+                                                ?: "Couldn't save your profile. Check your connection and try again."
+                                        }
+                                    }
                                 },
-                                enabled = password.length >= 8,
+                                enabled = password.length >= 8 && !isSavingProfile,
                                 shape = RoundedCornerShape(16.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(54.dp)
                             ) {
-                                Text("Next: Theme Customization", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                if (isSavingProfile) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(22.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text("Saving…", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                } else {
+                                    Text("Next: Theme Customization", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+
+                            if (saveError != null) {
+                                Text(
+                                    text = saveError!!,
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 12.dp)
+                                )
                             }
                         }
                     }

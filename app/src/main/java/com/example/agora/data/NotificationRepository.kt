@@ -3,6 +3,7 @@ package com.example.agora.data
 import android.util.Log
 import com.example.agora.service.InAppNotification
 import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.realtime.PostgresAction
 import io.github.jan.supabase.realtime.RealtimeChannel
@@ -14,10 +15,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -31,10 +34,18 @@ import kotlinx.serialization.json.contentOrNull
  *
  * This repository owns a second, transport-independent delivery path: a
  * Supabase Realtime subscription to INSERT events on the `notifications`
- * table, filtered to `recipient_id = <current user>`. Every new row is
+ * table, filtered to `recipient_id = <current user>` (that is the schema's
+ * recipient column — see backend/supabase/migrations/20260928163754_remote_schema.sql;
+ * generic docs calling it "user_id" mean this column). Every new row is
  * mapped to an [InAppNotification] and published through [latestNotification]
  * (a [StateFlow]), which the in-app banner UI collects directly — no FCM,
  * no Edge Function, no Play Services involved.
+ *
+ * New posts are also covered: the backend fans them out to the FCM
+ * `new_posts` topic only (no per-recipient row), so a second INSERT
+ * subscription on `posts` (filtered `user_id = neq.<current user>`) mirrors
+ * the broadcast-post Edge Function's banner — byte-identical title/body so
+ * the FCM twin de-duplicates on Play-Services devices.
  *
  * Lifecycle: [startRealtimeNotifications] is called as soon as the session is
  * authenticated (idempotent per user) and [stopRealtimeNotifications] on
@@ -42,11 +53,13 @@ import kotlinx.serialization.json.contentOrNull
  * left intact as a redundant transport; the UI de-duplicates identical
  * notifications arriving through both paths within a short window.
  *
- * Server-side prerequisites (one-time, outside this app):
- *  - `notifications` must be in the `supabase_realtime` publication
- *    (ALTER PUBLICATION supabase_realtime ADD TABLE notifications;)
- *  - RLS must allow SELECT on a user's own rows (recipient_id = auth.uid()),
- *    otherwise Realtime silently delivers nothing.
+ * Server-side prerequisites (see migrations — apply with `supabase db push`):
+ *  - `ALTER PUBLICATION supabase_realtime ADD TABLE notifications;`
+ *    (already present in 20260928163754_remote_schema.sql)
+ *  - RLS SELECT on own notification rows — WITHOUT IT REALTIME SILENTLY
+ *    DELIVERS NOTHING (WALRUS enforces RLS even though the channel reports
+ *    SUBSCRIBED). Added by 20990101000003_notifications_select_rls_and_profile_email.sql.
+ *  - `posts` needs no extra work: it is in the publication and world-readable.
  */
 object NotificationRepository {
 
@@ -104,33 +117,65 @@ object NotificationRepository {
             val realtimeChannel = supabaseClient.realtime.channel(channelId)
             channel = realtimeChannel
 
-            // NOTE: must be created BEFORE subscribe() — the join payload
-            // carries the postgres_changes config registered here.
-            val insertFlow = realtimeChannel.postgresChangeFlow<PostgresAction.Insert>(
+            // NOTE: both flows must be created BEFORE subscribe() — the join
+            // payload carries the postgres_changes configs registered here.
+            val notificationInserts = realtimeChannel.postgresChangeFlow<PostgresAction.Insert>(
                 schema = "public"
             ) {
                 table = "notifications"
                 filter("recipient_id", FilterOperator.EQ, userId)
             }
 
+            // New posts: no per-recipient DB row exists (the backend broadcasts
+            // to the FCM `new_posts` topic), so listen to the posts table itself
+            // and mirror the broadcast-post Edge Function's banner.
+            val postInserts = realtimeChannel.postgresChangeFlow<PostgresAction.Insert>(
+                schema = "public"
+            ) {
+                table = "posts"
+                filter("user_id", FilterOperator.NEQ, userId)
+            }
+
             collectJob = scope.launch {
-                try {
-                    insertFlow.collect { insert ->
-                        // Per-record guard: one malformed row must never kill
-                        // the subscription stream.
-                        val notification = try {
-                            insert.record.toInAppNotification(userId)
+                coroutineScope {
+                    launch {
+                        try {
+                            notificationInserts.collect { insert ->
+                                // Per-record guard: one malformed row must never
+                                // kill the subscription stream.
+                                val notification = try {
+                                    insert.record.toInAppNotification(userId)
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Skipping unparseable notification record: ${e.message}")
+                                    null
+                                } ?: return@collect
+                                _latestNotification.value = notification
+                                Log.d(TAG, "Realtime notification INSERT -> in-app banner: ${notification.title}")
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
                         } catch (e: Exception) {
-                            Log.w(TAG, "Skipping unparseable notification record: ${e.message}")
-                            null
-                        } ?: return@collect
-                        _latestNotification.value = notification
-                        Log.d(TAG, "Realtime INSERT -> in-app notification: ${notification.title}")
+                            Log.e(TAG, "Realtime notifications stream failed: ${e.localizedMessage}", e)
+                        }
                     }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Log.e(TAG, "Realtime notification stream failed: ${e.localizedMessage}", e)
+                    launch {
+                        try {
+                            postInserts.collect { insert ->
+                                val notification = try {
+                                    insert.toNewPostNotification()
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Skipping unparseable post record: ${e.message}")
+                                    null
+                                } ?: return@collect
+                                _latestNotification.value = notification
+                                Log.d(TAG, "Realtime post INSERT -> in-app banner: ${notification.title}")
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Realtime posts stream failed: ${e.localizedMessage}", e)
+                        }
+                    }
                 }
             }
 
@@ -229,5 +274,45 @@ object NotificationRepository {
             postId = (data["post_id"] as? JsonPrimitive)?.contentOrNull,
             commentId = (data["comment_id"] as? JsonPrimitive)?.contentOrNull
         )
+    }
+
+    /**
+     * Maps a `posts` INSERT onto the exact banner the broadcast-post Edge
+     * Function sends to the FCM `new_posts` topic ("{author} just added a new
+     * post" + 40-char preview), so Play-Services devices receiving both
+     * transports de-duplicate to a single banner.
+     */
+    private suspend fun PostgresAction.Insert.toNewPostNotification(): InAppNotification? {
+        val postId = (record["id"] as? JsonPrimitive)?.contentOrNull ?: return null
+        val authorId = (record["user_id"] as? JsonPrimitive)?.contentOrNull ?: return null
+        val content = (record["content"] as? JsonPrimitive)?.contentOrNull ?: ""
+        val postText = content.ifBlank { "A new post was added!" }
+
+        val title = "${fetchAuthorName(authorId)} just added a new post"
+        val body = postText.take(40) + if (postText.length > 40) "..." else ""
+
+        return InAppNotification(
+            title = title,
+            body = body,
+            senderId = authorId,
+            postId = postId,
+            commentId = null
+        )
+    }
+
+    /** Same resolution as the Edge Function: `profiles.first_name || "A user"`. */
+    private suspend fun fetchAuthorName(authorId: String): String {
+        return try {
+            val row = supabaseClient.from("profiles")
+                .select { filter { eq("id", authorId) } }
+                .decodeSingleOrNull<JsonObject>()
+            val firstName = (row?.get("first_name") as? JsonPrimitive)
+                ?.takeIf { it !is JsonNull }
+                ?.contentOrNull
+            firstName?.takeIf { it.isNotBlank() } ?: "A user"
+        } catch (e: Exception) {
+            Log.w(TAG, "Author name lookup failed for $authorId: ${e.message}")
+            "A user"
+        }
     }
 }
