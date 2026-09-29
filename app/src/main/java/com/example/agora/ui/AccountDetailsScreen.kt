@@ -227,6 +227,7 @@ fun AccountDetailsScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .navigationBarsPadding()
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally

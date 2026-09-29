@@ -376,24 +376,45 @@ fun MainScreen(
             contentAlignment = Alignment.Center
         ) {
             // 1. Background Heavy Blur Layer
+            val isDarkTheme = LocalDarkTheme.current
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(0.85f)
-                    .height(62.dp)
+                    .fillMaxWidth(0.88f)
+                    .height(64.dp)
                     .hazeChild(state = hazeState, shape = CircleShape)
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.25f))
+                    .background(
+                        brush = Brush.verticalGradient(
+                            colors = if (isDarkTheme) {
+                                listOf(
+                                    Color(0xFF1E293B).copy(alpha = 0.65f),
+                                    Color(0xFF0F172A).copy(alpha = 0.75f)
+                                )
+                            } else {
+                                listOf(
+                                    Color.White.copy(alpha = 0.80f),
+                                    Color.White.copy(alpha = 0.60f)
+                                )
+                            }
+                        ),
+                        shape = CircleShape
+                    )
                     .border(
-                        1.dp,
-                        MaterialTheme.colorScheme.outline.copy(alpha = 0.25f),
-                        CircleShape
+                        width = 1.dp,
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                Color.White.copy(alpha = if (isDarkTheme) 0.35f else 0.75f),
+                                Color.White.copy(alpha = if (isDarkTheme) 0.08f else 0.20f)
+                            )
+                        ),
+                        shape = CircleShape
                     )
             )
 
             // 2. Foreground Crisp Icons Layer
             Row(
                 modifier = Modifier
-                    .fillMaxWidth(0.85f)
-                    .height(62.dp),
+                    .fillMaxWidth(0.88f)
+                    .height(64.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {

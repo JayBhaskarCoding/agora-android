@@ -742,68 +742,84 @@ fun PostCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // 🌟 Instagram-Style Reaction Like Button
-                    InstagramLikeButton(
-                        isLiked = post.isLikedByMe,
-                        initialEmoji = post.myReaction,
-                        onLikeChanged = { isLiked, emoji ->
-                            onLikeClicked(isLiked, emoji) // Triggers viewModel.setLikeStatus(post.id, isLiked, emoji)
-                        }
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = post.likes.toString(),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (post.isLikedByMe) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.clickable(enabled = post.likes > 0) {
-                            onShowReactorsClick()
-                        }
-                    )
+                // Glass pill grouping Like and Comment buttons
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
+                        // 🌟 Instagram-Style Reaction Like Button
+                        InstagramLikeButton(
+                            isLiked = post.isLikedByMe,
+                            initialEmoji = post.myReaction,
+                            onLikeChanged = { isLiked, emoji ->
+                                onLikeClicked(isLiked, emoji) // Triggers viewModel.setLikeStatus(post.id, isLiked, emoji)
+                            }
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = post.likes.toString(),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (post.isLikedByMe) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.clickable(enabled = post.likes > 0) {
+                                onShowReactorsClick()
+                            }
+                        )
 
-                    Spacer(modifier = Modifier.width(20.dp))
+                        Spacer(modifier = Modifier.width(16.dp))
 
-                    // Comment Button
+                        // Comment Button
+                        IconButton(
+                            onClick = { onCommentClicked() },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.ChatBubbleOutline,
+                                contentDescription = "Comment",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = post.comments.toString(),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                // Share Button Glass Pill
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                ) {
                     IconButton(
-                        onClick = { onCommentClicked() },
-                        modifier = Modifier.size(36.dp)
+                        onClick = {
+                            val shareUrl = "https://auth-agora.info/post/${post.id}"
+                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                putExtra(
+                                    Intent.EXTRA_TEXT,
+                                    "Hey check out this post I found on Agora:\n\n$shareUrl"
+                                )
+                                type = "text/plain"
+                            }
+                            context.startActivity(Intent.createChooser(sendIntent, "Share Post"))
+                        },
+                        modifier = Modifier.size(40.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Outlined.ChatBubbleOutline,
-                            contentDescription = "Comment",
+                            imageVector = Icons.Filled.Share,
+                            contentDescription = "Share",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = post.comments.toString(),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                // Share Button
-                IconButton(
-                    onClick = {
-                        val shareUrl = "https://auth-agora.info/post/${post.id}"
-                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                            putExtra(
-                                Intent.EXTRA_TEXT,
-                                "Hey check out this post I found on Agora:\n\n$shareUrl"
-                            )
-                            type = "text/plain"
-                        }
-                        context.startActivity(Intent.createChooser(sendIntent, "Share Post"))
-                    },
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Share,
-                        contentDescription = "Share",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             }
         }
