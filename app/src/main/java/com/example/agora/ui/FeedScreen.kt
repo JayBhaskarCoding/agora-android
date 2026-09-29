@@ -350,7 +350,7 @@ fun GlobalFeedScreen(
             }
         }
 
-        // 3. FLOATING FROSTED GLASS TOP BAR (iOS Blur Aesthetic)
+        // 3. FLOATING FROSTED GLASS TOP BAR (Seamless iOS Gradient Blur, zero hard borders)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -365,19 +365,22 @@ fun GlobalFeedScreen(
                     brush = Brush.verticalGradient(
                         colors = if (isDarkTheme) {
                             listOf(
-                                Color(0xFF0F172A).copy(alpha = 0.82f),
-                                Color(0xFF0F172A).copy(alpha = 0.65f),
-                                Color(0xFF0F172A).copy(alpha = 0.40f)
+                                Color(0xFF0F172A).copy(alpha = 0.88f),
+                                Color(0xFF0F172A).copy(alpha = 0.60f),
+                                Color(0xFF0F172A).copy(alpha = 0.25f),
+                                Color.Transparent
                             )
                         } else {
                             listOf(
-                                Color.White.copy(alpha = 0.88f),
-                                Color.White.copy(alpha = 0.75f),
-                                Color.White.copy(alpha = 0.50f)
+                                Color.White.copy(alpha = 0.92f),
+                                Color.White.copy(alpha = 0.70f),
+                                Color.White.copy(alpha = 0.30f),
+                                Color.Transparent
                             )
                         }
                     )
                 )
+                .padding(bottom = 12.dp)
         ) {
             // Foreground Content
             Row(
@@ -403,8 +406,8 @@ fun GlobalFeedScreen(
                 // Sleek circular glass button for search
                 Surface(
                     shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.20f)),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.50f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)),
                     modifier = Modifier.size(40.dp)
                 ) {
                     IconButton(
@@ -420,13 +423,6 @@ fun GlobalFeedScreen(
                     }
                 }
             }
-
-            // Glass Bottom Specular Border Edge
-            HorizontalDivider(
-                color = if (isDarkTheme) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.08f),
-                thickness = 1.dp,
-                modifier = Modifier.align(Alignment.BottomCenter)
-            )
         }
     }
 
@@ -823,18 +819,13 @@ fun PostCard(
                 )
             }
 
-            // Media (Multi-Media Carousel with Indicators & Frosted Video Overlays)
+            // Media (Multi-Media Carousel with Indicators)
             if (post.imageUrls.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(14.dp))
                 PostMediaCarousel(
                     mediaUrls = post.imageUrls,
                     onMediaClick = { url -> onImageClicked(url) },
-                    modifier = Modifier.fillMaxWidth(),
-                    post = post,
-                    onLikeClicked = onLikeClicked,
-                    onCommentClicked = onCommentClicked,
-                    onUserClicked = onUserClicked,
-                    onShowReactorsClick = onShowReactorsClick
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
 

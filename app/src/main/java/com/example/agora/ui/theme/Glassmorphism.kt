@@ -18,10 +18,15 @@ import dev.chrisbanes.haze.hazeEffect
 
 fun Modifier.hazeChild(
     state: HazeState,
-    shape: Shape
+    shape: Shape,
+    blurRadius: Dp = Dp.Unspecified
 ): Modifier = this
     .clip(shape)
-    .hazeEffect(state = state)
+    .hazeEffect(state = state) {
+        if (blurRadius != Dp.Unspecified) {
+            this.blurRadius = blurRadius
+        }
+    }
 
 /**
  * Standard Design Tokens for Glassmorphism across Agora.
