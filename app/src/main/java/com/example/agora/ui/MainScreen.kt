@@ -175,6 +175,9 @@ fun MainScreen(
     ModalNavigationDrawer(
         drawerState = drawerState,
         gesturesEnabled = drawerState.isOpen,
+        // ✦ Deep glass scrim — the content behind is already frosted by the
+        //    animated global blur, so the panel reads as real glassmorphism.
+        scrimColor = Color.Black.copy(alpha = 0.55f),
         drawerContent = {
             ModalDrawerSheet(
                 drawerContainerColor = Color.Transparent, // ✦ Noir panel paints its own surface
@@ -185,7 +188,9 @@ fun MainScreen(
                         .fillMaxHeight()
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(topEnd = 30.dp, bottomEnd = 30.dp))
-                        .background(colors.cardSurface.copy(alpha = 0.98f))
+                        // ✦ Translucent glass slab (was near-opaque 0.98f) — the blurred
+                        //    feed shimmers through while text stays perfectly legible.
+                        .background(colors.cardSurface.copy(alpha = 0.82f))
                         .border(
                             width = 1.dp,
                             color = colors.cardBorder,
@@ -239,10 +244,18 @@ fun MainScreen(
                         )
                     }
 
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 24.dp),
-                        thickness = 1.dp,
-                        color = colors.hairline
+                    // ✦ Seam, not a divider: hairline that fades to nothing at
+                    //    both ends — structure without any harsh lines.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp)
+                            .height(1.dp)
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(Color.Transparent, colors.hairline, Color.Transparent)
+                                )
+                            )
                     )
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -778,7 +791,9 @@ private fun DrawerNavItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 5.dp)
+            // ✦ 12dp outer + 12dp inner = icon chips start at 24dp — flush with
+            //    the identity header, so the whole panel shares one gutter.
+            .padding(horizontal = 12.dp, vertical = 5.dp)
             .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 11.dp),
