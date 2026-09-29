@@ -20,10 +20,22 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.os.SystemClock
+import com.example.agora.data.NotificationRepository
 import com.example.agora.service.InAppNotification
 import com.example.agora.service.NotificationRelay
 import kotlinx.coroutines.delay
 import kotlin.time.Duration.Companion.milliseconds
+
+/**
+ * Window in which an identical notification arriving over the second transport
+ * (Realtime StateFlow vs foreground FCM relay) is treated as a duplicate of the
+ * banner already on screen and suppressed.
+ */
+private const val DELIVERY_DEDUPE_WINDOW_MS = 6_000L
+
+/** Content key used to detect the same notification delivered twice. */
+private fun InAppNotification.dedupeKey(): String = "$title|$body|$postId|$commentId"
 
 @Composable
 fun InAppNotificationManager(
@@ -34,11 +46,45 @@ fun InAppNotificationManager(
     var activeNotification by remember { mutableStateOf<InAppNotification?>(null) }
     var isVisible by remember { mutableStateOf(false) }
 
-    // 🌟 Collect new notification events from relay
-    LaunchedEffect(Unit) {
-        NotificationRelay.events.collect { notification ->
+    // 🌟 TWO DELIVERY PATHS, ONE BANNER:
+    //    1. NotificationRelay — foreground FCM data messages (Play Services devices)
+    //    2. NotificationRepository.latestNotification — Supabase Realtime INSERTs
+    //       on the `notifications` table (works on EVERY device, no FCM needed)
+    //    The same database row can arrive through both transports within
+    //    seconds of each other; the first delivery wins and its twin is
+    //    suppressed via a short de-dupe window keyed on the visible content.
+    var lastShownKey by remember { mutableStateOf<String?>(null) }
+    var lastShownAt by remember { mutableLongStateOf(0L) }
+
+    val showBanner: (InAppNotification) -> Unit = { notification ->
+        val now = SystemClock.elapsedRealtime()
+        val key = notification.dedupeKey()
+        val isDuplicateTransportDelivery =
+            key == lastShownKey && (now - lastShownAt) < DELIVERY_DEDUPE_WINDOW_MS
+        if (!isDuplicateTransportDelivery) {
+            lastShownKey = key
+            lastShownAt = now
             activeNotification = notification
             isVisible = true
+        }
+    }
+
+    // 🌟 Collect new notification events from relay (foreground FCM path)
+    LaunchedEffect(Unit) {
+        NotificationRelay.events.collect { notification ->
+            showBanner(notification)
+        }
+    }
+
+    // 🌟 Collect Realtime-driven notifications (Play-Services-independent path)
+    LaunchedEffect(Unit) {
+        NotificationRepository.latestNotification.collect { notification ->
+            if (notification != null) {
+                showBanner(notification)
+                // Reset the StateFlow so the next insert — even an identical
+                // one — emits again instead of being conflated.
+                NotificationRepository.markLatestConsumed()
+            }
         }
     }
 

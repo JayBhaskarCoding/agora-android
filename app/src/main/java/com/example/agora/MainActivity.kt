@@ -33,6 +33,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.agora.data.NotificationRepository
 import com.example.agora.data.supabaseClient
 import com.example.agora.model.FcmTokenUpdate
 import com.example.agora.navigation.DeepLinkRouter
@@ -56,38 +57,79 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+/**
+ * Best-effort FCM registration: syncs the device token into `profiles.fcm_token`
+ * and subscribes to the `new_posts` topic.
+ *
+ * 🌟 PLAY-SERVICES RESILIENCY: on devices/emulators without Google Play
+ *    Services, FirebaseMessaging throws (e.g. MISSING_INSTANCEID_SERVICE).
+ *    FCM is treated as strictly optional here — every failure is logged and
+ *    swallowed so authentication and app initialization never crash. The
+ *    foreground in-app notification experience no longer depends on this
+ *    function at all: it is delivered independently via Supabase Realtime
+ *    (see [com.example.agora.data.NotificationRepository]).
+ */
 fun syncFcmTokenAndSubscribeTopics() {
-    val messaging = FirebaseMessaging.getInstance()
-
-    messaging.token.addOnCompleteListener { task ->
-        if (!task.isSuccessful) {
-            Log.e("FCM", "Fetching FCM registration token failed", task.exception)
-            return@addOnCompleteListener
-        }
-        val token = task.result ?: return@addOnCompleteListener
-        val currentUser = supabaseClient.auth.currentUserOrNull() ?: return@addOnCompleteListener
-
-
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                supabaseClient.from("profiles").update(
-                    FcmTokenUpdate(fcmToken = token)
-                ) {
-                    filter { eq("id", currentUser.id) }
-                }
-                Log.d("FCM", "Successfully updated FCM Token in Supabase for user: ${currentUser.id}")
-            } catch (e: Exception) {
-                Log.e("FCM", "Failed to update FCM token in Supabase: ${e.localizedMessage}", e)
-            }
-        }
+    val messaging = try {
+        FirebaseMessaging.getInstance()
+    } catch (e: Exception) {
+        Log.w(
+            "FCM",
+            "Firebase Messaging unavailable on this device (Google Play Services missing?). " +
+                "Skipping FCM sync — in-app notifications continue via Supabase Realtime. " +
+                "Cause: ${e.message}"
+        )
+        return
     }
 
-    messaging.subscribeToTopic("new_posts").addOnCompleteListener { task ->
-        if (task.isSuccessful) {
-            Log.d("FCM", "Successfully subscribed to topic: new_posts")
-        } else {
-            Log.e("FCM", "Failed to subscribe to topic: new_posts", task.exception)
+    try {
+        messaging.token.addOnCompleteListener { task ->
+            if (!task.isSuccessful) {
+                // Expected without Google Play Services: MISSING_INSTANCEID_SERVICE.
+                // Graceful log only — the auth/init flow continues untouched.
+                Log.w(
+                    "FCM",
+                    "Fetching FCM registration token failed (device likely lacks Google Play " +
+                        "Services): ${task.exception?.message}",
+                    task.exception
+                )
+                return@addOnCompleteListener
+            }
+            val token = task.result ?: return@addOnCompleteListener
+            val currentUser = supabaseClient.auth.currentUserOrNull() ?: return@addOnCompleteListener
+
+
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    supabaseClient.from("profiles").update(
+                        FcmTokenUpdate(fcmToken = token)
+                    ) {
+                        filter { eq("id", currentUser.id) }
+                    }
+                    Log.d("FCM", "Successfully updated FCM Token in Supabase for user: ${currentUser.id}")
+                } catch (e: Exception) {
+                    Log.e("FCM", "Failed to update FCM token in Supabase: ${e.localizedMessage}", e)
+                }
+            }
         }
+
+        messaging.subscribeToTopic("new_posts").addOnCompleteListener { task ->
+            if (task.isSuccessful) {
+                Log.d("FCM", "Successfully subscribed to topic: new_posts")
+            } else {
+                Log.w(
+                    "FCM",
+                    "Failed to subscribe to topic: new_posts (device likely lacks Google Play " +
+                        "Services): ${task.exception?.message}"
+                )
+            }
+        }
+    } catch (e: Exception) {
+        Log.w(
+            "FCM",
+            "FCM sync aborted gracefully — realtime in-app notifications are unaffected. " +
+                "Cause: ${e.message}"
+        )
     }
 }
 
@@ -186,6 +228,18 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(sessionStatus) {
                     if (sessionStatus !is SessionStatus.Initializing) {
                         keepSplashOnScreen = false
+                    }
+                }
+
+                // 🌟 SUPABASE REALTIME IN-APP NOTIFICATIONS: independent of FCM and
+                //    Google Play Services. Starts as soon as a session is authenticated
+                //    (regardless of POST_NOTIFICATIONS permission or FCM health) and is
+                //    torn down on logout / remote session loss. Idempotent per user.
+                LaunchedEffect(sessionStatus) {
+                    if (sessionStatus is SessionStatus.Authenticated) {
+                        NotificationRepository.startRealtimeNotifications()
+                    } else if (sessionStatus !is SessionStatus.Initializing) {
+                        NotificationRepository.stopRealtimeNotifications()
                     }
                 }
 
