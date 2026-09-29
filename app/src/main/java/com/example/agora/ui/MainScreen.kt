@@ -1,8 +1,8 @@
 package com.example.agora.ui
 
+import android.os.Build
 import androidx.compose.animation.*
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -29,15 +29,19 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.BlurEffect
+import androidx.compose.ui.graphics.BlurredEdgeTreatment
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -155,33 +159,48 @@ fun MainScreen(
     val uploadState by feedViewModel.uploadState.collectAsState()
 
     val hazeState = remember { HazeState() }
-    val showBottomBar = currentRoute != "account_details" && currentRoute?.startsWith("post/") != true
+
+    // ✦ VISIBILITY RULES: the pill lives on the top-level tabs ONLY (Feed and
+    //    your own Profile). Search, Account Details, other users' profiles and
+    //    post deep-dives go full-bleed — driven by currentBackStackEntryAsState.
+    val isOwnProfileTab = currentRoute?.startsWith("profile") == true &&
+        navBackStackEntry?.arguments?.getString("userId") == null
+    val showBottomBar = currentRoute == "feed" || isOwnProfileTab
 
     val isPostDetailOpen = currentRoute?.startsWith("post/") == true
-    val isDrawerOpen = drawerState.isOpen
 
-    val drawerBlurRadius by animateDpAsState(
-        targetValue = if (isDrawerOpen) 24.dp else 0.dp,
-        animationSpec = tween(durationMillis = 300),
-        label = "DrawerFrostedBlur"
-    )
-
-    val globalBlurRadius by animateDpAsState(
-        targetValue = if (isPostDetailOpen) 16.dp else drawerBlurRadius,
-        animationSpec = tween(durationMillis = 300),
-        label = "GlobalFrostedGlassBlur"
-    )
+    // ✦ DRAWER FROST, DRAG-FRACTION DRIVEN: no chained animateDpAsState, no
+    //    waiting for the settle animation. The sheet reports its true slide
+    //    position every drag frame (layout pass); the blur reads that fraction
+    //    in the DRAW phase via graphicsLayer — instant, zero recompositions,
+    //    zero CPU-blocking bitmap work. RenderEffect blur is API 31+; older
+    //    devices skip it entirely and lean on the deeper dark scrim instead.
+    val supportsBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    var drawerFraction by remember { mutableFloatStateOf(0f) }
+    val drawerScrimAlpha = if (supportsBlur) 0.45f else 0.60f
 
     ModalNavigationDrawer(
         drawerState = drawerState,
         gesturesEnabled = drawerState.isOpen,
-        // ✦ Deep glass scrim — the content behind is already frosted by the
-        //    animated global blur, so the panel reads as real glassmorphism.
-        scrimColor = Color.Black.copy(alpha = 0.55f),
+        // ✦ Deep glass scrim — on API 31+ the content behind is frosted by the
+        //    drag-fraction blur; older devices get the heavier scrim as the
+        //    sleek dark fallback.
+        scrimColor = Color.Black.copy(alpha = drawerScrimAlpha),
         drawerContent = {
             ModalDrawerSheet(
                 drawerContainerColor = Color.Transparent, // ✦ Noir panel paints its own surface
-                modifier = Modifier.width(292.dp)
+                modifier = Modifier
+                    .width(292.dp)
+                    // ✦ TRUE open fraction: the pane travels -width..0 while it
+                    //    slides/drags, so (x + w) / w is exact drag progress —
+                    //    written in the layout pass, read in the draw pass.
+                    .onGloballyPositioned { coords ->
+                        val w = coords.size.width.toFloat()
+                        if (w > 0f) {
+                            drawerFraction =
+                                ((coords.positionInWindow().x + w) / w).coerceIn(0f, 1f)
+                        }
+                    }
             ) {
                 Column(
                     modifier = Modifier
@@ -301,11 +320,22 @@ fun MainScreen(
         }
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            // 🌟 Perf: attach the expensive full-tree blur ONLY while a radius is active.
-            //    A permanently-attached blur node re-rasterizes the whole scaffold every
-            //    frame during the drawer/post transitions (major jank source on low-end GPUs).
-            val scaffoldModifier = if (globalBlurRadius > 0.dp) {
-                Modifier.blur(radius = globalBlurRadius)
+            // ✦ Hardware-accelerated frost: a RenderEffect blur applied in the
+            //    DRAW phase (graphicsLayer), driven directly by the drawer's
+            //    slide fraction — or a constant 16dp while a post detail dialog
+            //    is open. No animated-Dp chain lagging behind the gesture, no
+            //    blur-node attach/detach re-rasterization, and on API < 31 the
+            //    layer is skipped entirely (the dark scrim carries the look).
+            val scaffoldModifier = if (supportsBlur) {
+                Modifier.graphicsLayer {
+                    val radius = if (isPostDetailOpen) 16f else drawerFraction * 22f
+                    renderEffect = if (radius > 0.01f) {
+                        val px = radius.dp.toPx()
+                        BlurEffect(px, px, BlurredEdgeTreatment.Rectangle)
+                    } else {
+                        null
+                    }
+                }
             } else {
                 Modifier
             }
@@ -443,8 +473,18 @@ fun MainScreen(
                 }
             }
 
-            // ✦ FLOATING MORPHING NAVIGATION PILL
-            if (showBottomBar) {
+            // ✦ FLOATING MORPHING NAVIGATION PILL — slides and fades with route
+            //    changes instead of snapping in/out of existence.
+            AnimatedVisibility(
+                visible = showBottomBar,
+                enter = slideInVertically(
+                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+                ) { it } + fadeIn(tween(220)),
+                exit = slideOutVertically(
+                    animationSpec = tween(220)
+                ) { it } + fadeOut(tween(160)),
+                modifier = Modifier.align(Alignment.BottomCenter)
+            ) {
                 val isHome = currentRoute == "feed"
                 val isProfileTab = currentRoute?.startsWith("profile") == true &&
                     navBackStackEntry?.arguments?.getString("userId") == null
@@ -452,7 +492,6 @@ fun MainScreen(
 
                 Box(
                     modifier = Modifier
-                        .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                         .navigationBarsPadding()
                         .padding(bottom = 18.dp),
@@ -693,9 +732,11 @@ fun MainScreen(
 }
 
 /**
- * A bottom-nav rail item: a fixed 38dp icon well (so nothing jumps when the
- * selection glow appears) plus a label that springs open horizontally on
- * selection, morphing the whole pill.
+ * A bottom-nav rail item: a fixed 38dp icon well stacked in a CENTERED COLUMN
+ * so the selected label springs open directly BELOW the icon (classic bottom-nav
+ * stacking) instead of beside it. The item reserves its full height up front, so
+ * icons never jump vertically when selection moves; the pill still morphs
+ * horizontally as labels expand.
  */
 @Composable
 private fun NavRailItem(
@@ -712,23 +753,24 @@ private fun NavRailItem(
         label = "NavRailTint"
     )
 
-    Row(
+    Column(
         modifier = Modifier
-            .clip(CircleShape)
+            .height(54.dp)
+            .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Top
     ) {
         Box(
             modifier = Modifier.size(38.dp),
             contentAlignment = Alignment.Center
         ) {
-            // K2 resolution: the RowScope overload wins candidate selection but
-            // cannot borrow Row's implicit receiver across this BoxScope lambda
-            // boundary ("cannot be called with an implicit receiver"). Qualify it
-            // explicitly — enter/exit are fully specified (fade + scale, no
-            // expand), so behavior is identical to the top-level variant.
-            this@Row.AnimatedVisibility(
+            // K2 resolution: qualify the scope overload explicitly — the
+            // ColumnScope receiver cannot cross the BoxScope lambda boundary
+            // ("cannot be called with an implicit receiver"). enter/exit are
+            // fully specified (fade + scale), so behavior matches top-level.
+            this@Column.AnimatedVisibility(
                 visible = selected,
                 enter = fadeIn(tween(220)) + scaleIn(
                     animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
@@ -762,25 +804,27 @@ private fun NavRailItem(
             )
         }
 
+        // Label springs open BELOW the icon — direct child of the Column, so
+        // the ColumnScope overload resolves naturally (vertical expand).
         AnimatedVisibility(
             visible = selected,
-            enter = fadeIn(tween(220)) + expandHorizontally(
+            enter = fadeIn(tween(220)) + expandVertically(
                 animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                expandFrom = Alignment.Start
+                expandFrom = Alignment.Top
             ),
-            exit = fadeOut(tween(120)) + shrinkHorizontally(
+            exit = fadeOut(tween(120)) + shrinkVertically(
                 animationSpec = tween(160),
-                shrinkTowards = Alignment.Start
+                shrinkTowards = Alignment.Top
             )
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Spacer(modifier = Modifier.width(7.dp))
-                Text(
-                    text = label,
-                    style = AgoraType.NavLabel,
-                    color = tint
-                )
-            }
+            Text(
+                text = label,
+                style = AgoraType.NavLabel,
+                color = tint,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 1.dp)
+            )
         }
     }
 }

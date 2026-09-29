@@ -1,6 +1,5 @@
 package com.example.agora.ui
 
-import android.app.Activity
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -42,10 +41,7 @@ import com.example.agora.ui.theme.LocalDarkTheme
 import com.example.agora.ui.theme.rememberAgoraColors
 import com.example.agora.viewmodel.EditMediaItem
 import com.example.agora.viewmodel.FeedViewModel
-import com.yalantis.ucrop.UCrop
 import kotlinx.coroutines.launch
-import java.io.File
-import java.util.UUID
 
 @Composable
 fun EditPostDialog(
@@ -98,21 +94,9 @@ fun EditPostScreen(
     val coroutineScope = rememberCoroutineScope()
     val videoCompressorTrimmer = remember(context) { VideoCompressorTrimmer(context) }
 
-    // UCrop Launcher for Photo Cropping
-    val uCropLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            val croppedUri = UCrop.getOutput(result.data!!)
-            if (croppedUri != null && activeEditUri != null) {
-                val targetUri = activeEditUri!!
-                currentMediaItems = currentMediaItems.map { item ->
-                    if (item.localUri == targetUri) item.copy(localUri = croppedUri) else item
-                }
-                activeEditUri = null
-            }
-        }
-    }
+    // The item currently inside the Compose-native crop studio — its result
+    // swaps into the media list in place.
+    var cropSourceUri by remember { mutableStateOf<Uri?>(null) }
 
     // 🌟 Task 2: Multi-Media Picker Launcher for appending new items
     val multiMediaPickerLauncher = rememberLauncherForActivityResult(
@@ -222,15 +206,13 @@ fun EditPostScreen(
                                     .clip(RoundedCornerShape(20.dp))
                                     .border(1.dp, agora.cardBorder, RoundedCornerShape(20.dp))
                                     .clickable {
-                                        if (item.localUri != null) {
-                                            activeEditUri = item.localUri
-                                            if (!item.isVideo) {
-                                                // Launch UCrop for photo re-cropping (Noir chrome)
-                                                val destinationUri = Uri.fromFile(File(context.cacheDir, "crop_${UUID.randomUUID()}.jpg"))
-                                                val uCropIntent = UCrop.of(item.localUri, destinationUri)
-                                                    .withOptions(agoraCropOptions())
-                                                    .getIntent(context)
-                                                uCropLauncher.launch(uCropIntent)
+                                        val local = item.localUri
+                                        if (local != null) {
+                                            if (item.isVideo) {
+                                                activeEditUri = local
+                                            } else {
+                                                // Photos re-crop in the Compose-native studio.
+                                                cropSourceUri = local
                                             }
                                         }
                                     }
@@ -377,5 +359,20 @@ fun EditPostScreen(
                 onCancel = { activeEditUri = null }
             )
         }
+    }
+
+    // ✦ Compose-native crop studio — replaces the legacy uCrop activity hop
+    //    for photo re-cropping. Cache-file Uri out, swapped into the item.
+    cropSourceUri?.let { sourceUri ->
+        AgoraImageCropDialog(
+            sourceUri = sourceUri,
+            onDismiss = { cropSourceUri = null },
+            onCropped = { croppedUri ->
+                currentMediaItems = currentMediaItems.map { item ->
+                    if (item.localUri == sourceUri) item.copy(localUri = croppedUri) else item
+                }
+                cropSourceUri = null
+            }
+        )
     }
 }

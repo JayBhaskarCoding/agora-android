@@ -1,6 +1,5 @@
 package com.example.agora.ui
 
-import android.app.Activity
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -47,10 +46,7 @@ import com.example.agora.ui.theme.LocalDarkTheme
 import com.example.agora.ui.theme.rememberAgoraColors
 import com.example.agora.viewmodel.FeedViewModel
 import com.example.agora.viewmodel.ThemeViewModel
-import com.yalantis.ucrop.UCrop
 import kotlinx.coroutines.launch
-import java.io.File
-import java.util.UUID
 
 @Composable
 fun CreatePostDialog(
@@ -89,8 +85,9 @@ fun CreatePostScreen(
     // 🌟 Task 1: Multi-Selection List State & Active Edit URI State
     var selectedMedia by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var activeEditUri by remember { mutableStateOf<Uri?>(null) }
-    // The carousel image currently inside uCrop — its crop result swaps in place.
-    var activeCropSourceUri by remember { mutableStateOf<Uri?>(null) }
+    // The carousel image currently inside the Compose-native crop studio —
+    // its result swaps in place, preserving carousel order/count.
+    var cropSourceUri by remember { mutableStateOf<Uri?>(null) }
 
     var isCompressingVideo by remember { mutableStateOf(false) }
     var compressionProgress by remember { mutableFloatStateOf(0f) }
@@ -98,37 +95,11 @@ fun CreatePostScreen(
     val coroutineScope = rememberCoroutineScope()
     val videoCompressorTrimmer = remember(context) { VideoCompressorTrimmer(context) }
 
-    // UCrop Launcher for Photo Cropping — ON-DEMAND only (thumbnail Crop/Edit chip).
-    // The result REPLACES the source image in the carousel, preserving order/count.
-    val uCropLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val sourceUri = activeCropSourceUri
-        activeCropSourceUri = null
-        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            val croppedUri = UCrop.getOutput(result.data!!)
-            if (croppedUri != null && sourceUri != null) {
-                selectedMedia = selectedMedia.map { if (it == sourceUri) croppedUri else it }
-            }
-        }
-        // Cancel/back: source image stays in the carousel untouched.
-    }
-
-    // On-demand Noir-themed crop for one carousel image. Cropping math and the
-    // cache-file destination are unchanged from the stock uCrop pipeline.
-    val launchPhotoCrop: (Uri) -> Unit = { source ->
-        activeCropSourceUri = source
-        val destinationUri = Uri.fromFile(File(context.cacheDir, "crop_${UUID.randomUUID()}.jpg"))
-        uCropLauncher.launch(
-            UCrop.of(source, destinationUri)
-                .withOptions(agoraCropOptions())
-                .getIntent(context)
-        )
-    }
-
     // 🌟 UX FIX: every pick lands DIRECTLY in the media carousel — images and
     // videos alike. No forced sequential crop loop; editing is opt-in via the
-    // per-thumbnail Crop/Edit chip below.
+    // per-thumbnail Crop/Edit chip below, which opens AgoraImageCropDialog —
+    // a Compose-native studio (pinch/pan fluid, dark glass chrome) replacing
+    // the legacy uCrop activity hop entirely.
     val multiMediaPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 5)
     ) { uris ->
@@ -314,7 +285,7 @@ fun CreatePostScreen(
                                             .clip(CircleShape)
                                             .background(Color.Black.copy(alpha = 0.55f))
                                             .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
-                                            .clickable { launchPhotoCrop(uri) },
+                                            .clickable { cropSourceUri = uri },
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Icon(
@@ -460,5 +431,20 @@ fun CreatePostScreen(
                 }
             }
         }
+    }
+
+    // ✦ Compose-native crop studio — pinch/pan fluid, dark glass chrome. The
+    //    result is a cache-file Uri, exactly the contract the upload pipeline
+    //    already consumed from uCrop, so nothing downstream changes.
+    cropSourceUri?.let { sourceUri ->
+        AgoraImageCropDialog(
+            sourceUri = sourceUri,
+            onDismiss = { cropSourceUri = null },
+            onCropped = { croppedUri ->
+                // Swap in place: carousel position/order/count preserved.
+                selectedMedia = selectedMedia.map { if (it == sourceUri) croppedUri else it }
+                cropSourceUri = null
+            }
+        )
     }
 }

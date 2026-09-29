@@ -128,7 +128,6 @@ dependencies {
     implementation(libs.androidx.media3.ui)
     implementation(libs.androidx.media3.transformer)
     implementation(libs.androidx.media3.effect)
-    implementation(libs.ucrop)
     implementation(libs.coil.video)
     implementation(libs.androidx.credentials)
     implementation(libs.androidx.credentials.play.services)
