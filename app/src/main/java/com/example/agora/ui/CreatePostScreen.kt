@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.rounded.Crop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -47,7 +48,6 @@ import com.example.agora.ui.theme.rememberAgoraColors
 import com.example.agora.viewmodel.FeedViewModel
 import com.example.agora.viewmodel.ThemeViewModel
 import com.yalantis.ucrop.UCrop
-import com.yalantis.ucrop.model.AspectRatio
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
@@ -89,6 +89,8 @@ fun CreatePostScreen(
     // 🌟 Task 1: Multi-Selection List State & Active Edit URI State
     var selectedMedia by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var activeEditUri by remember { mutableStateOf<Uri?>(null) }
+    // The carousel image currently inside uCrop — its crop result swaps in place.
+    var activeCropSourceUri by remember { mutableStateOf<Uri?>(null) }
 
     var isCompressingVideo by remember { mutableStateOf(false) }
     var compressionProgress by remember { mutableFloatStateOf(0f) }
@@ -96,46 +98,45 @@ fun CreatePostScreen(
     val coroutineScope = rememberCoroutineScope()
     val videoCompressorTrimmer = remember(context) { VideoCompressorTrimmer(context) }
 
-    // UCrop Launcher for Photo Cropping
+    // UCrop Launcher for Photo Cropping — ON-DEMAND only (thumbnail Crop/Edit chip).
+    // The result REPLACES the source image in the carousel, preserving order/count.
     val uCropLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
+        val sourceUri = activeCropSourceUri
+        activeCropSourceUri = null
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
             val croppedUri = UCrop.getOutput(result.data!!)
-            if (croppedUri != null) {
-                selectedMedia = selectedMedia + croppedUri
+            if (croppedUri != null && sourceUri != null) {
+                selectedMedia = selectedMedia.map { if (it == sourceUri) croppedUri else it }
             }
         }
+        // Cancel/back: source image stays in the carousel untouched.
     }
 
-    // 🌟 Task 1: Multi-Media Picker Launcher (up to 5 items)
+    // On-demand Noir-themed crop for one carousel image. Cropping math and the
+    // cache-file destination are unchanged from the stock uCrop pipeline.
+    val launchPhotoCrop: (Uri) -> Unit = { source ->
+        activeCropSourceUri = source
+        val destinationUri = Uri.fromFile(File(context.cacheDir, "crop_${UUID.randomUUID()}.jpg"))
+        uCropLauncher.launch(
+            UCrop.of(source, destinationUri)
+                .withOptions(agoraCropOptions())
+                .getIntent(context)
+        )
+    }
+
+    // 🌟 UX FIX: every pick lands DIRECTLY in the media carousel — images and
+    // videos alike. No forced sequential crop loop; editing is opt-in via the
+    // per-thumbnail Crop/Edit chip below.
     val multiMediaPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 5)
     ) { uris ->
         if (uris.isNotEmpty()) {
             val newMediaList = selectedMedia.toMutableList()
             for (uri in uris) {
-                val mimeType = context.contentResolver.getType(uri)
-                if (mimeType?.startsWith("video") == true) {
-                    if (!newMediaList.contains(uri)) {
-                        newMediaList.add(uri)
-                    }
-                } else {
-                    val destinationUri = Uri.fromFile(File(context.cacheDir, "crop_${UUID.randomUUID()}.jpg"))
-                    val options = UCrop.Options().apply {
-                        setFreeStyleCropEnabled(true)
-                        setAspectRatioOptions(
-                            0,
-                            AspectRatio("Free", 0f, 0f),
-                            AspectRatio("1:1", 1f, 1f),
-                            AspectRatio("4:5", 4f, 5f),
-                            AspectRatio("16:9", 16f, 9f)
-                        )
-                    }
-                    val uCropIntent = UCrop.of(uri, destinationUri)
-                        .withOptions(options)
-                        .getIntent(context)
-                    uCropLauncher.launch(uCropIntent)
+                if (!newMediaList.contains(uri)) {
+                    newMediaList.add(uri)
                 }
             }
             selectedMedia = newMediaList
@@ -300,6 +301,29 @@ fun CreatePostScreen(
                                         tint = Color.White,
                                         modifier = Modifier.size(14.dp)
                                     )
+                                }
+
+                                // 🌟 On-demand Crop/Edit chip — small frosted pill that
+                                // mirrors the close button; videos keep tap-to-trim instead.
+                                if (!isVideo) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .padding(6.dp)
+                                            .size(26.dp)
+                                            .clip(CircleShape)
+                                            .background(Color.Black.copy(alpha = 0.55f))
+                                            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
+                                            .clickable { launchPhotoCrop(uri) },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Crop,
+                                            contentDescription = "Crop / Edit",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
                                 }
                             }
                         }

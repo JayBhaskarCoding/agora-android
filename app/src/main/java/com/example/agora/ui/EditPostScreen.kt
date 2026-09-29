@@ -43,7 +43,6 @@ import com.example.agora.ui.theme.rememberAgoraColors
 import com.example.agora.viewmodel.EditMediaItem
 import com.example.agora.viewmodel.FeedViewModel
 import com.yalantis.ucrop.UCrop
-import com.yalantis.ucrop.model.AspectRatio
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
@@ -226,20 +225,10 @@ fun EditPostScreen(
                                         if (item.localUri != null) {
                                             activeEditUri = item.localUri
                                             if (!item.isVideo) {
-                                                // Launch UCrop for photo re-cropping
+                                                // Launch UCrop for photo re-cropping (Noir chrome)
                                                 val destinationUri = Uri.fromFile(File(context.cacheDir, "crop_${UUID.randomUUID()}.jpg"))
-                                                val options = UCrop.Options().apply {
-                                                    setFreeStyleCropEnabled(true)
-                                                    setAspectRatioOptions(
-                                                        0,
-                                                        AspectRatio("Free", 0f, 0f),
-                                                        AspectRatio("1:1", 1f, 1f),
-                                                        AspectRatio("4:5", 4f, 5f),
-                                                        AspectRatio("16:9", 16f, 9f)
-                                                    )
-                                                }
                                                 val uCropIntent = UCrop.of(item.localUri, destinationUri)
-                                                    .withOptions(options)
+                                                    .withOptions(agoraCropOptions())
                                                     .getIntent(context)
                                                 uCropLauncher.launch(uCropIntent)
                                             }
