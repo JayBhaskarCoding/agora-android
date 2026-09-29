@@ -306,14 +306,22 @@ fun AgoraImageCropDialog(
                             .fillMaxSize()
                             .clipToBounds()
                             .pointerInput(bmp) {
-                                val handleTouch = 26.dp.toPx()
+                                // Corners get a generous 36dp grab zone (checked
+                                // first); edges a slimmer 20dp band.
+                                val cornerTouch = 36.dp.toPx()
+                                val edgeTouch = 20.dp.toPx()
                                 val minWin = 96.dp.toPx()
                                 forEachGesture {
                                     awaitPointerEventScope {
                                         val down = awaitFirstDown(requireUnconsumed = false)
                                         var handle = NO_HANDLE
                                         if (geometry.value.isReady) {
-                                            handle = handleAt(down.position, winRect, handleTouch)
+                                            handle = handleAt(
+                                                p = down.position,
+                                                r = winRect,
+                                                cornerTouch = cornerTouch,
+                                                edgeTouch = edgeTouch
+                                            )
                                         }
                                         var prev = down.position
                                         var prevCentroid = down.position
@@ -582,22 +590,30 @@ private fun centeredWindowFor(ratio: Float, g: CropGeometry): Rect {
     )
 }
 
-/** Which handle (if any) sits under the touch point. */
-private fun handleAt(p: Offset, r: Rect, t: Float): Int {
-    val nearL = abs(p.x - r.left) <= t
-    val nearR = abs(p.x - r.right) <= t
-    val nearT = abs(p.y - r.top) <= t
-    val nearB = abs(p.y - r.bottom) <= t
-    val inX = p.x >= r.left - t && p.x <= r.right + t
-    val inY = p.y >= r.top - t && p.y <= r.bottom + t
+/**
+ * Which handle (if any) sits under the touch point. Corners use a larger
+ * radius than edges and are tested first, so grabbing a knob always drags
+ * BOTH adjacent bounds at once (TL moves left+top, BR moves right+bottom…).
+ */
+private fun handleAt(p: Offset, r: Rect, cornerTouch: Float, edgeTouch: Float): Int {
+    val nearL = abs(p.x - r.left) <= edgeTouch
+    val nearR = abs(p.x - r.right) <= edgeTouch
+    val nearT = abs(p.y - r.top) <= edgeTouch
+    val nearB = abs(p.y - r.bottom) <= edgeTouch
+    val cornerL = abs(p.x - r.left) <= cornerTouch
+    val cornerR = abs(p.x - r.right) <= cornerTouch
+    val cornerT = abs(p.y - r.top) <= cornerTouch
+    val cornerB = abs(p.y - r.bottom) <= cornerTouch
+    val inX = p.x >= r.left - edgeTouch && p.x <= r.right + edgeTouch
+    val inY = p.y >= r.top - edgeTouch && p.y <= r.bottom + edgeTouch
     return when {
-        nearL && nearT -> 0
+        cornerL && cornerT -> 0
         nearT && inX -> 1
-        nearR && nearT -> 2
+        cornerR && cornerT -> 2
         nearR && inY -> 3
-        nearR && nearB -> 4
+        cornerR && cornerB -> 4
         nearB && inX -> 5
-        nearL && nearB -> 6
+        cornerL && cornerB -> 6
         nearL && inY -> 7
         else -> NO_HANDLE
     }

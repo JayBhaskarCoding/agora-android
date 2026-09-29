@@ -368,8 +368,8 @@ fun CreatePostScreen(
                         .fillMaxWidth(0.94f)
                         .wrapContentHeight(),
                     shape = RoundedCornerShape(28.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 6.dp
+                    color = Color(0xFF12141D).copy(alpha = 0.96f),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.09f))
                 ) {
                     VideoTrimmerContent(
                         videoUri = editingUri,
