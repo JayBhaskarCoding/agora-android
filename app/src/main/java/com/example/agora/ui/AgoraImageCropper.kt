@@ -7,15 +7,13 @@ import android.media.ExifInterface
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.forEachGesture
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -47,7 +45,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -68,27 +68,26 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
 /*
- * ✦ AGORA CROP STUDIO — the Compose-native replacement for the legacy uCrop
- * activity flow. One immersive full-screen dialog:
+ * ✦ AGORA CROP STUDIO v2 — Compose-native replacement for the legacy uCrop flow.
  *
- *  - fluid pinch-to-zoom + pan (detectTransformGestures), the image always
- *    covers the crop window (Instagram-style clamping),
- *  - instant aspect pills at the bottom (Original / 1:1 / 4:5 / 16:9) — the
- *    window morphs on a spring while zoom/pan are preserved and re-clamped,
- *  - dark glassmorphic chrome: near-black canvas, translucent #12141D toolbars
- *    with hairline seams, accent-lit confirm (same Noir palette the uCrop
- *    theming used, so the editor stays dark in both light and dark mode),
- *  - EXIF-orientation-aware decode, downsampled to ≤2160px for a smooth
- *    preview; the final crop runs on that bitmap and saves a JPEG into the
- *    cache dir — the exact file contract the upload pipeline already consumes
- *    (a plain file Uri, like uCrop's output).
- *
- * All crop math is plain, deterministic mapping from window-space to bitmap
- * pixels (see [saveCrop]) — no third-party activity, no result-contract hops.
+ *  - FREE-FORM CROP WINDOW: drag the four corner knobs or the four edge handles
+ *    to resize the crop region to anything you want (clamped to the stage and a
+ *    sane minimum). Picking a ratio pill (1:1 / 4:5 / 16:9) locks resizing to
+ *    that aspect; "Free" releases the lock.
+ *  - FLUID IMAGE CONTROL: one-finger drag pans, two-finger pinch zooms around
+ *    the pinch centroid; the image is always clamped so it keeps COVERING the
+ *    crop window, and the stage clips hard so nothing ever escapes the layout.
+ *  - Deep dim (0.80) outside the window so the crop region reads instantly.
+ *  - Dark glassmorphic chrome: near-black canvas, translucent #12141D toolbars
+ *    with fade-seam hairlines, accent-lit confirm.
+ *  - EXIF-aware decode downsampled to ≤2160px; deterministic window→bitmap
+ *    mapping saves JPEG 92 to a cache file Uri — the same contract the upload
+ *    pipeline consumed from uCrop.
  */
 
 /** Fixed Noir chrome for the always-dark immersive editor. */
@@ -100,21 +99,23 @@ private val CropTextPrimary = Color(0xFFF4F5FA)
 private val CropTextSecondary = Color(0xFFA9AEC0)
 private val CropHairline = Color.White.copy(alpha = 0.10f)
 
-/** Stage geometry shared by the draw pass, the gesture handler and the saver. */
+/** Stage facts shared by the draw pass, the gesture handler and the saver. */
 private data class CropGeometry(
     val stageW: Float = 0f,
     val stageH: Float = 0f,
-    val winW: Float = 0f,
-    val winH: Float = 0f,
-    /** Display pixels per source-bitmap pixel at zoom == 1 (covers window). */
-    val base: Float = 0f,
+    /** Stage px per source-bitmap px at zoom == 1 (bitmap FITS the stage). */
+    val fitScale: Float = 0f,
     val bmpW: Int = 0,
     val bmpH: Int = 0
 ) {
-    val isReady: Boolean get() = base > 0f && bmpW > 0 && bmpH > 0
+    val isReady: Boolean get() = fitScale > 0f && bmpW > 0 && bmpH > 0
+    val stageRect: Rect get() = Rect(0f, 0f, stageW, stageH)
 }
 
-private val CropRatioLabels = listOf("Original", "1:1", "4:5", "16:9")
+private val CropRatioLabels = listOf("Free", "1:1", "4:5", "16:9")
+
+/** Handle ids: 0 TL, 1 T, 2 TR, 3 R, 4 BR, 5 B, 6 BL, 7 L. */
+private const val NO_HANDLE = -1
 
 @Composable
 fun AgoraImageCropDialog(
@@ -132,9 +133,8 @@ fun AgoraImageCropDialog(
     var ratioIndex by remember { mutableIntStateOf(0) }
     var zoom by remember { mutableFloatStateOf(1f) }
     var panOffset by remember { mutableStateOf(Offset.Zero) }
+    var winRect by remember { mutableStateOf(Rect.Zero) }
 
-    // Geometry lives in a state holder so the gesture coroutine and the draw
-    // pass always read the CURRENT values without restarting pointerInput.
     val geometry = remember { mutableStateOf(CropGeometry()) }
 
     LaunchedEffect(sourceUri) {
@@ -165,9 +165,7 @@ fun AgoraImageCropDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(
-                        Brush.verticalGradient(listOf(CropToolbarTop, CropToolbarBottom))
-                    )
+                    .background(Brush.verticalGradient(listOf(CropToolbarTop, CropToolbarBottom)))
             ) {
                 Row(
                     modifier = Modifier
@@ -203,7 +201,6 @@ fun AgoraImageCropDialog(
                         color = CropTextPrimary
                     )
 
-                    // Confirm — accent chip; morphs into a spinner while saving.
                     val canConfirm = bitmap != null && !isSaving
                     val confirmBg by animateColorAsState(
                         targetValue = if (canConfirm) CropAccent else Color.White.copy(alpha = 0.07f),
@@ -228,6 +225,7 @@ fun AgoraImageCropDialog(
                                         context = context,
                                         source = bmp,
                                         g = geometry.value,
+                                        window = winRect,
                                         zoom = zoom,
                                         offset = panOffset
                                     )
@@ -259,7 +257,6 @@ fun AgoraImageCropDialog(
                     }
                 }
 
-                // Hairline seam that fades at both ends — no harsh divider.
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -293,71 +290,117 @@ fun AgoraImageCropDialog(
                 } else {
                     val stageW = constraints.maxWidth.toFloat()
                     val stageH = constraints.maxHeight.toFloat()
+                    val fitScale = minOf(stageW / bmp.width, stageH / bmp.height)
+                    geometry.value = CropGeometry(stageW, stageH, fitScale, bmp.width, bmp.height)
+                    val g = geometry.value
 
-                    val targetRatio = when (ratioIndex) {
-                        1 -> 1f
-                        2 -> 4f / 5f
-                        3 -> 16f / 9f
-                        else -> bmp.width.toFloat() / bmp.height.toFloat()
+                    // First layout: seed the window with the source aspect, centered.
+                    if (winRect == Rect.Zero && g.isReady) {
+                        winRect = centeredWindowFor(bmp.width.toFloat() / bmp.height, g)
                     }
-                    // The window morphs on a spring — instantly responsive pills.
-                    val animatedRatio by animateFloatAsState(
-                        targetValue = targetRatio,
-                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                        label = "CropRatioMorph"
-                    )
-
-                    var winW = stageW
-                    var winH = winW / animatedRatio
-                    if (winH > stageH) {
-                        winH = stageH
-                        winW = winH * animatedRatio
-                    }
-                    // zoom == 1 means the image exactly COVERS the window.
-                    val base = max(winW / bmp.width.toFloat(), winH / bmp.height.toFloat())
-
-                    geometry.value = CropGeometry(
-                        stageW = stageW,
-                        stageH = stageH,
-                        winW = winW,
-                        winH = winH,
-                        base = base,
-                        bmpW = bmp.width,
-                        bmpH = bmp.height
-                    )
 
                     val imageBitmap = remember(bmp) { bmp.asImageBitmap() }
 
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
+                            .clipToBounds()
                             .pointerInput(bmp) {
-                                detectTransformGestures { _, pan, gestureZoom, _ ->
-                                    val g = geometry.value
-                                    if (!g.isReady) return@detectTransformGestures
-                                    val newZoom = (zoom * gestureZoom).coerceIn(1f, 6f)
-                                    val maxX = clampX(g, newZoom)
-                                    val maxY = clampY(g, newZoom)
-                                    zoom = newZoom
-                                    panOffset = Offset(
-                                        x = (panOffset.x + pan.x).coerceIn(-maxX, maxX),
-                                        y = (panOffset.y + pan.y).coerceIn(-maxY, maxY)
-                                    )
+                                val handleTouch = 26.dp.toPx()
+                                val minWin = 96.dp.toPx()
+                                forEachGesture {
+                                    awaitPointerEventScope {
+                                        val down = awaitFirstDown(requireUnconsumed = false)
+                                        var handle = NO_HANDLE
+                                        if (geometry.value.isReady) {
+                                            handle = handleAt(down.position, winRect, handleTouch)
+                                        }
+                                        var prev = down.position
+                                        var prevCentroid = down.position
+                                        var prevDist = 0f
+
+                                        loop@ while (true) {
+                                            val event = awaitPointerEvent()
+                                            val pressed = event.changes.filter { it.pressed }
+                                            if (pressed.isEmpty()) break@loop
+                                            val geo = geometry.value
+                                            if (!geo.isReady) break@loop
+
+                                            if (pressed.size >= 2) {
+                                                // Pinch zoom around centroid + two-finger pan.
+                                                val a = pressed[0].position
+                                                val b = pressed[1].position
+                                                val dist = (a - b).getDistance()
+                                                val centroid = Offset((a.x + b.x) / 2f, (a.y + b.y) / 2f)
+                                                if (prevDist > 0f) {
+                                                    applyZoomPan(
+                                                        geo = geo,
+                                                        win = winRect,
+                                                        zoomNow = zoom,
+                                                        zoomTarget = zoom * dist / prevDist,
+                                                        panNow = panOffset,
+                                                        centroid = centroid,
+                                                        panDelta = centroid - prevCentroid,
+                                                        setZoom = { zoom = it },
+                                                        setPan = { panOffset = it }
+                                                    )
+                                                }
+                                                prevDist = dist
+                                                prevCentroid = centroid
+                                                // Keep single-finger `prev` fresh so
+                                                // returning from pinch to pan can't jump.
+                                                prev = pressed[0].position
+                                                handle = NO_HANDLE
+                                            } else if (handle != NO_HANDLE) {
+                                                // Drag a corner/edge handle: resize the window.
+                                                val ratio = ratioLock(ratioIndex, geo)
+                                                winRect = resizeWindow(
+                                                    current = winRect,
+                                                    handle = handle,
+                                                    pointer = pressed[0].position,
+                                                    ratio = ratio,
+                                                    stage = geo.stageRect,
+                                                    min = minWin
+                                                )
+                                                coverAndClamp(
+                                                    geo = geo,
+                                                    win = winRect,
+                                                    zoomNow = zoom,
+                                                    panNow = panOffset,
+                                                    setZoom = { zoom = it },
+                                                    setPan = { panOffset = it }
+                                                )
+                                            } else {
+                                                // One-finger pan of the image.
+                                                val delta = pressed[0].position - prev
+                                                prev = pressed[0].position
+                                                panOffset = clampOffset(
+                                                    geo = geo,
+                                                    win = winRect,
+                                                    zoomNow = zoom,
+                                                    candidate = panOffset + delta
+                                                )
+                                            }
+                                            event.changes.forEach { it.consume() }
+                                        }
+                                    }
                                 }
                             }
                     ) {
                         Canvas(modifier = Modifier.fillMaxSize()) {
-                            val g = geometry.value
-                            if (!g.isReady) return@Canvas
+                            val geo = geometry.value
+                            val win = winRect
+                            if (!geo.isReady || win == Rect.Zero) return@Canvas
 
-                            val imgW = g.bmpW * g.base * zoom
-                            val imgH = g.bmpH * g.base * zoom
-                            val ox = panOffset.x.coerceIn(-clampX(g, zoom), clampX(g, zoom))
-                            val oy = panOffset.y.coerceIn(-clampY(g, zoom), clampY(g, zoom))
-                            val imgLeft = (size.width - imgW) / 2f + ox
-                            val imgTop = (size.height - imgH) / 2f + oy
+                            val s = geo.fitScale * zoom
+                            val imgW = geo.bmpW * s
+                            val imgH = geo.bmpH * s
+                            val cx = size.width / 2f
+                            val cy = size.height / 2f
+                            val off = clampOffset(geo, win, zoom, panOffset)
+                            val imgLeft = cx + off.x - imgW / 2f
+                            val imgTop = cy + off.y - imgH / 2f
 
-                            // The image itself (scaled draw = smooth preview).
                             drawImage(
                                 image = imageBitmap,
                                 dstOffset = IntOffset(imgLeft.roundToInt(), imgTop.roundToInt()),
@@ -367,23 +410,25 @@ fun AgoraImageCropDialog(
                                 )
                             )
 
-                            // Dim everything outside the crop window.
-                            val wl = (size.width - g.winW) / 2f
-                            val wt = (size.height - g.winH) / 2f
-                            val dim = Color.Black.copy(alpha = 0.72f)
-                            drawRect(dim, topLeft = Offset(0f, 0f), size = size.copy(height = wt))
+                            // Deep dim outside the crop window.
+                            val dim = Color.Black.copy(alpha = 0.80f)
+                            drawRect(dim, topLeft = Offset(0f, 0f), size = size.copy(height = win.top))
                             drawRect(
                                 dim,
-                                topLeft = Offset(0f, wt + g.winH),
-                                size = size.copy(height = (size.height - wt - g.winH).coerceAtLeast(0f))
+                                topLeft = Offset(0f, win.bottom),
+                                size = size.copy(height = (size.height - win.bottom).coerceAtLeast(0f))
                             )
-                            drawRect(dim, topLeft = Offset(0f, wt), size = size.copy(width = wl, height = g.winH))
                             drawRect(
                                 dim,
-                                topLeft = Offset(wl + g.winW, wt),
+                                topLeft = Offset(0f, win.top),
+                                size = size.copy(width = win.left, height = win.height)
+                            )
+                            drawRect(
+                                dim,
+                                topLeft = Offset(win.right, win.top),
                                 size = size.copy(
-                                    width = (size.width - wl - g.winW).coerceAtLeast(0f),
-                                    height = g.winH
+                                    width = (size.width - win.right).coerceAtLeast(0f),
+                                    height = win.height
                                 )
                             )
 
@@ -391,46 +436,51 @@ fun AgoraImageCropDialog(
                             val grid = Color.White.copy(alpha = 0.12f)
                             val gridStroke = 1.dp.toPx()
                             for (i in 1..2) {
-                                val gx = wl + g.winW * i / 3f
-                                drawLine(grid, Offset(gx, wt), Offset(gx, wt + g.winH), gridStroke)
-                                val gy = wt + g.winH * i / 3f
-                                drawLine(grid, Offset(wl, gy), Offset(wl + g.winW, gy), gridStroke)
+                                val gx = win.left + win.width * i / 3f
+                                drawLine(grid, Offset(gx, win.top), Offset(gx, win.bottom), gridStroke)
+                                val gy = win.top + win.height * i / 3f
+                                drawLine(grid, Offset(win.left, gy), Offset(win.right, gy), gridStroke)
                             }
 
-                            // Hairline frame + L-shaped corner accents.
+                            // Hairline frame.
                             drawRect(
                                 color = Color.White.copy(alpha = 0.35f),
-                                topLeft = Offset(wl, wt),
-                                size = size.copy(width = g.winW, height = g.winH),
+                                topLeft = Offset(win.left, win.top),
+                                size = size.copy(width = win.width, height = win.height),
                                 style = Stroke(width = 1.5.dp.toPx())
                             )
-                            val arm = 18.dp.toPx()
-                            val accentWidth = 3.dp.toPx()
-                            val accent = Color.White.copy(alpha = 0.60f)
-                            // top-left
-                            drawLine(accent, Offset(wl, wt), Offset(wl + arm, wt), accentWidth, StrokeCap.Round)
-                            drawLine(accent, Offset(wl, wt), Offset(wl, wt + arm), accentWidth, StrokeCap.Round)
-                            // top-right
-                            drawLine(accent, Offset(wl + g.winW, wt), Offset(wl + g.winW - arm, wt), accentWidth, StrokeCap.Round)
-                            drawLine(accent, Offset(wl + g.winW, wt), Offset(wl + g.winW, wt + arm), accentWidth, StrokeCap.Round)
-                            // bottom-left
-                            drawLine(accent, Offset(wl, wt + g.winH), Offset(wl + arm, wt + g.winH), accentWidth, StrokeCap.Round)
-                            drawLine(accent, Offset(wl, wt + g.winH), Offset(wl, wt + g.winH - arm), accentWidth, StrokeCap.Round)
-                            // bottom-right
-                            drawLine(accent, Offset(wl + g.winW, wt + g.winH), Offset(wl + g.winW - arm, wt + g.winH), accentWidth, StrokeCap.Round)
-                            drawLine(accent, Offset(wl + g.winW, wt + g.winH), Offset(wl + g.winW, wt + g.winH - arm), accentWidth, StrokeCap.Round)
+
+                            // Edge handles: slim grab bars at edge midpoints.
+                            val bar = Color.White.copy(alpha = 0.55f)
+                            val barLong = 16.dp.toPx()
+                            val barThick = 2.5.dp.toPx()
+                            val mx = win.left + win.width / 2f
+                            val my = win.top + win.height / 2f
+                            drawRect(bar, topLeft = Offset(mx - barLong / 2f, win.top - barThick / 2f), size = size.copy(width = barLong, height = barThick))
+                            drawRect(bar, topLeft = Offset(mx - barLong / 2f, win.bottom - barThick / 2f), size = size.copy(width = barLong, height = barThick))
+                            drawRect(bar, topLeft = Offset(win.left - barThick / 2f, my - barLong / 2f), size = size.copy(width = barThick, height = barLong))
+                            drawRect(bar, topLeft = Offset(win.right - barThick / 2f, my - barLong / 2f), size = size.copy(width = barThick, height = barLong))
+
+                            // Corner knobs — the free-crop handles.
+                            val knob = 5.5.dp.toPx()
+                            drawCircle(Color.Black.copy(alpha = 0.45f), radius = knob + 1.5.dp.toPx(), center = Offset(win.left, win.top))
+                            drawCircle(Color.Black.copy(alpha = 0.45f), radius = knob + 1.5.dp.toPx(), center = Offset(win.right, win.top))
+                            drawCircle(Color.Black.copy(alpha = 0.45f), radius = knob + 1.5.dp.toPx(), center = Offset(win.left, win.bottom))
+                            drawCircle(Color.Black.copy(alpha = 0.45f), radius = knob + 1.5.dp.toPx(), center = Offset(win.right, win.bottom))
+                            drawCircle(Color.White, radius = knob, center = Offset(win.left, win.top))
+                            drawCircle(Color.White, radius = knob, center = Offset(win.right, win.top))
+                            drawCircle(Color.White, radius = knob, center = Offset(win.left, win.bottom))
+                            drawCircle(Color.White, radius = knob, center = Offset(win.right, win.bottom))
                         }
                     }
                 }
             }
 
-            // ── Bottom glass bar: aspect pills ──────────────────────────
+            // ── Bottom glass bar: ratio pills ───────────────────────────
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(
-                        Brush.verticalGradient(listOf(CropToolbarBottom, CropToolbarTop))
-                    )
+                    .background(Brush.verticalGradient(listOf(CropToolbarBottom, CropToolbarTop)))
             ) {
                 Box(
                     modifier = Modifier
@@ -472,7 +522,21 @@ fun AgoraImageCropDialog(
                                     if (active) Color.White.copy(alpha = 0.25f) else CropHairline,
                                     CircleShape
                                 )
-                                .clickable { ratioIndex = index }
+                                .clickable {
+                                    ratioIndex = index
+                                    val geo = geometry.value
+                                    if (geo.isReady) {
+                                        winRect = centeredWindowFor(ratioValue(index, geo), geo)
+                                        coverAndClamp(
+                                            geo = geo,
+                                            win = winRect,
+                                            zoomNow = zoom,
+                                            panNow = panOffset,
+                                            setZoom = { zoom = it },
+                                            setPan = { panOffset = it }
+                                        )
+                                    }
+                                }
                                 .padding(horizontal = 18.dp, vertical = 9.dp)
                         ) {
                             Text(
@@ -490,43 +554,244 @@ fun AgoraImageCropDialog(
     }
 }
 
-/** How far the image center may travel on X at a given zoom (window stays covered). */
-private fun clampX(g: CropGeometry, zoom: Float): Float =
-    ((g.bmpW * g.base * zoom - g.winW) / 2f).coerceAtLeast(0f)
+/* ───────────────────────── crop math ───────────────────────── */
 
-/** How far the image center may travel on Y at a given zoom (window stays covered). */
-private fun clampY(g: CropGeometry, zoom: Float): Float =
-    ((g.bmpH * g.base * zoom - g.winH) / 2f).coerceAtLeast(0f)
+private fun ratioValue(index: Int, g: CropGeometry): Float = when (index) {
+    1 -> 1f
+    2 -> 4f / 5f
+    3 -> 16f / 9f
+    else -> g.bmpW.toFloat() / g.bmpH.toFloat()
+}
+
+/** null = free-form resize; otherwise resizing stays locked to the aspect. */
+private fun ratioLock(index: Int, g: CropGeometry): Float? =
+    if (index == 0) null else ratioValue(index, g)
+
+private fun centeredWindowFor(ratio: Float, g: CropGeometry): Rect {
+    var w = g.stageW
+    var h = w / ratio
+    if (h > g.stageH) {
+        h = g.stageH
+        w = h * ratio
+    }
+    return Rect(
+        left = (g.stageW - w) / 2f,
+        top = (g.stageH - h) / 2f,
+        right = (g.stageW + w) / 2f,
+        bottom = (g.stageH + h) / 2f
+    )
+}
+
+/** Which handle (if any) sits under the touch point. */
+private fun handleAt(p: Offset, r: Rect, t: Float): Int {
+    val nearL = abs(p.x - r.left) <= t
+    val nearR = abs(p.x - r.right) <= t
+    val nearT = abs(p.y - r.top) <= t
+    val nearB = abs(p.y - r.bottom) <= t
+    val inX = p.x >= r.left - t && p.x <= r.right + t
+    val inY = p.y >= r.top - t && p.y <= r.bottom + t
+    return when {
+        nearL && nearT -> 0
+        nearT && inX -> 1
+        nearR && nearT -> 2
+        nearR && inY -> 3
+        nearR && nearB -> 4
+        nearB && inX -> 5
+        nearL && nearB -> 6
+        nearL && inY -> 7
+        else -> NO_HANDLE
+    }
+}
+
+/** Resize the window by dragging [handle] to [pointer], ratio-locked if asked. */
+private fun resizeWindow(
+    current: Rect,
+    handle: Int,
+    pointer: Offset,
+    ratio: Float?,
+    stage: Rect,
+    min: Float
+): Rect {
+    var l = current.left
+    var t = current.top
+    var r = current.right
+    var b = current.bottom
+
+    when (handle) {
+        0 -> { l = pointer.x; t = pointer.y }
+        1 -> { t = pointer.y }
+        2 -> { r = pointer.x; t = pointer.y }
+        3 -> { r = pointer.x }
+        4 -> { r = pointer.x; b = pointer.y }
+        5 -> { b = pointer.y }
+        6 -> { l = pointer.x; b = pointer.y }
+        7 -> { l = pointer.x }
+    }
+
+    // Clamp against stage + minimum size.
+    l = l.coerceIn(stage.left, r - min)
+    r = r.coerceIn(l + min, stage.right)
+    t = t.coerceIn(stage.top, b - min)
+    b = b.coerceIn(t + min, stage.bottom)
+
+    if (ratio != null) {
+        var w = r - l
+        var h = b - t
+        when (handle) {
+            // Corners: anchor the opposite corner.
+            0, 2 -> {
+                h = w / ratio
+                t = (b - h).coerceAtLeast(stage.top)
+                h = b - t
+                w = h * ratio
+                if (handle == 0) l = r - w else r = l + w
+                l = l.coerceAtLeast(stage.left)
+                if (handle == 0) w = r - l else w = r - l
+                h = w / ratio
+                t = b - h
+            }
+            4, 6 -> {
+                h = w / ratio
+                b = (t + h).coerceAtMost(stage.bottom)
+                h = b - t
+                w = h * ratio
+                if (handle == 6) l = r - w else r = l + w
+                l = l.coerceAtLeast(stage.left)
+                w = r - l
+                h = w / ratio
+                b = t + h
+            }
+            // Top/bottom edges: keep horizontal center.
+            1, 5 -> {
+                w = h * ratio
+                val cx = (l + r) / 2f
+                l = (cx - w / 2f).coerceAtLeast(stage.left)
+                r = (cx + w / 2f).coerceAtMost(stage.right)
+                w = r - l
+                h = w / ratio
+                if (handle == 1) t = b - h else b = t + h
+            }
+            // Left/right edges: keep vertical center.
+            3, 7 -> {
+                h = w / ratio
+                val cy = (t + b) / 2f
+                t = (cy - h / 2f).coerceAtLeast(stage.top)
+                b = (cy + h / 2f).coerceAtMost(stage.bottom)
+                h = b - t
+                w = h * ratio
+                if (handle == 7) l = r - w else r = l + w
+            }
+        }
+        // Final safety clamp: stage bounds always win over the ratio at extremes.
+        l = l.coerceIn(stage.left, stage.right - min)
+        r = r.coerceIn(l + min, stage.right)
+        t = t.coerceIn(stage.top, stage.bottom - min)
+        b = b.coerceIn(t + min, stage.bottom)
+    }
+    return Rect(l, t, r, b)
+}
+
+/** Clamp a candidate pan offset so the image keeps covering the window. */
+private fun clampOffset(
+    geo: CropGeometry,
+    win: Rect,
+    zoomNow: Float,
+    candidate: Offset
+): Offset {
+    val imgW = geo.bmpW * geo.fitScale * zoomNow
+    val imgH = geo.bmpH * geo.fitScale * zoomNow
+    val cx = geo.stageW / 2f
+    val cy = geo.stageH / 2f
+    val oxMin = win.right - cx - imgW / 2f
+    val oxMax = win.left - cx + imgW / 2f
+    val oyMin = win.bottom - cy - imgH / 2f
+    val oyMax = win.top - cy + imgH / 2f
+    return Offset(
+        x = if (oxMin <= oxMax) candidate.x.coerceIn(oxMin, oxMax) else 0f,
+        y = if (oyMin <= oyMax) candidate.y.coerceIn(oyMin, oyMax) else 0f
+    )
+}
+
+/** Raise zoom until the image covers the (possibly resized) window, then clamp pan. */
+private fun coverAndClamp(
+    geo: CropGeometry,
+    win: Rect,
+    zoomNow: Float,
+    panNow: Offset,
+    setZoom: (Float) -> Unit,
+    setPan: (Offset) -> Unit
+) {
+    val zoomMin = max(
+        win.width / (geo.bmpW * geo.fitScale),
+        win.height / (geo.bmpH * geo.fitScale)
+    )
+    val z = zoomNow.coerceAtLeast(zoomMin).coerceAtMost(8f)
+    setZoom(z)
+    setPan(clampOffset(geo, win, z, panNow))
+}
+
+/** Pinch: zoom around the centroid, plus two-finger pan. */
+private fun applyZoomPan(
+    geo: CropGeometry,
+    win: Rect,
+    zoomNow: Float,
+    zoomTarget: Float,
+    panNow: Offset,
+    centroid: Offset,
+    panDelta: Offset,
+    setZoom: (Float) -> Unit,
+    setPan: (Offset) -> Unit
+) {
+    val zoomMin = max(
+        win.width / (geo.bmpW * geo.fitScale),
+        win.height / (geo.bmpH * geo.fitScale)
+    )
+    val z = zoomTarget.coerceIn(zoomMin, 8f)
+    val sOld = geo.fitScale * zoomNow
+    val sNew = geo.fitScale * z
+    val cx = geo.stageW / 2f
+    val cy = geo.stageH / 2f
+    // Keep the image point under the pinch centroid pinned while scaling.
+    val cur = clampOffset(geo, win, zoomNow, panNow)
+    val imgX = (centroid.x - cx - cur.x) / sOld
+    val imgY = (centroid.y - cy - cur.y) / sOld
+    val pinned = Offset(
+        x = centroid.x - cx - imgX * sNew,
+        y = centroid.y - cy - imgY * sNew
+    )
+    setZoom(z)
+    setPan(clampOffset(geo, win, z, pinned + panDelta))
+}
+
+/* ───────────────────────── decode + save ───────────────────────── */
 
 /**
- * Maps the on-screen crop window back to source-bitmap pixels and saves the
- * result as a JPEG in the cache dir — the same file-Uri contract uCrop used,
- * so the Supabase upload pipeline consumes it unchanged.
+ * Maps the crop window back to source-bitmap pixels and saves the result as a
+ * JPEG in the cache dir — the same file-Uri contract uCrop used, so the
+ * Supabase upload pipeline consumes it unchanged.
  */
 private suspend fun saveCrop(
     context: android.content.Context,
     source: Bitmap,
     g: CropGeometry,
+    window: Rect,
     zoom: Float,
     offset: Offset
 ): Uri? = withContext(Dispatchers.Default) {
     try {
-        if (!g.isReady) return@withContext null
+        if (!g.isReady || window == Rect.Zero) return@withContext null
 
-        val imgW = g.bmpW * g.base * zoom
-        val imgH = g.bmpH * g.base * zoom
-        val ox = offset.x.coerceIn(-clampX(g, zoom), clampX(g, zoom))
-        val oy = offset.y.coerceIn(-clampY(g, zoom), clampY(g, zoom))
-        val imgLeft = (g.stageW - imgW) / 2f + ox
-        val imgTop = (g.stageH - imgH) / 2f + oy
-        val winLeft = (g.stageW - g.winW) / 2f
-        val winTop = (g.stageH - g.winH) / 2f
+        val s = g.fitScale * zoom
+        val imgW = g.bmpW * s
+        val imgH = g.bmpH * s
+        val off = clampOffset(g, window, zoom, offset)
+        val imgLeft = g.stageW / 2f + off.x - imgW / 2f
+        val imgTop = g.stageH / 2f + off.y - imgH / 2f
 
-        val pxPerSrc = g.base * zoom
-        val x = ((winLeft - imgLeft) / pxPerSrc).roundToInt().coerceIn(0, source.width - 1)
-        val y = ((winTop - imgTop) / pxPerSrc).roundToInt().coerceIn(0, source.height - 1)
-        val w = (g.winW / pxPerSrc).roundToInt().coerceIn(1, source.width - x)
-        val h = (g.winH / pxPerSrc).roundToInt().coerceIn(1, source.height - y)
+        val x = ((window.left - imgLeft) / s).roundToInt().coerceIn(0, source.width - 1)
+        val y = ((window.top - imgTop) / s).roundToInt().coerceIn(0, source.height - 1)
+        val w = (window.width / s).roundToInt().coerceIn(1, source.width - x)
+        val h = (window.height / s).roundToInt().coerceIn(1, source.height - y)
 
         val cropped = Bitmap.createBitmap(source, x, y, w, h)
         val file = File(context.cacheDir, "crop_${UUID.randomUUID()}.jpg")
@@ -544,8 +809,7 @@ private suspend fun saveCrop(
 
 /**
  * Decodes the picked image off the main thread, downsampled so the longest
- * edge is ≤ 2160px (smooth gesture preview, plenty for feed upload), and
- * applies the EXIF orientation so phone photos are never sideways.
+ * edge is ≤ 2160px, and applies EXIF orientation so phone photos aren't sideways.
  */
 private suspend fun decodeOrientedBitmap(
     context: android.content.Context,

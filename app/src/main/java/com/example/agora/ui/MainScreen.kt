@@ -734,11 +734,11 @@ fun MainScreen(
 }
 
 /**
- * A bottom-nav rail item: a fixed 38dp icon well stacked in a CENTERED COLUMN
- * so the selected label springs open directly BELOW the icon (classic bottom-nav
- * stacking) instead of beside it. The item reserves its full height up front, so
- * icons never jump vertically when selection moves; the pill still morphs
- * horizontally as labels expand.
+ * A bottom-nav rail item: a fixed 38dp icon well plus a 4dp selection dot that
+ * springs in BELOW the icon. The dot's slot is always reserved, so the pill
+ * keeps its original 68dp height, shape and compact feel — no label-driven
+ * stretch, no vertical icon jump — while the active tab still reads clearly
+ * (dot + accent tint + glow).
  */
 @Composable
 private fun NavRailItem(
@@ -754,11 +754,16 @@ private fun NavRailItem(
         animationSpec = tween(durationMillis = 220),
         label = "NavRailTint"
     )
+    val dotProgress by animateFloatAsState(
+        targetValue = if (selected) 1f else 0f,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "NavRailDot"
+    )
 
     Column(
         modifier = Modifier
-            .height(54.dp)
-            .clip(RoundedCornerShape(18.dp))
+            .height(46.dp)
+            .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -806,28 +811,19 @@ private fun NavRailItem(
             )
         }
 
-        // Label springs open BELOW the icon — direct child of the Column, so
-        // the ColumnScope overload resolves naturally (vertical expand).
-        AnimatedVisibility(
-            visible = selected,
-            enter = fadeIn(tween(220)) + expandVertically(
-                animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                expandFrom = Alignment.Top
-            ),
-            exit = fadeOut(tween(120)) + shrinkVertically(
-                animationSpec = tween(160),
-                shrinkTowards = Alignment.Top
-            )
-        ) {
-            Text(
-                text = label,
-                style = AgoraType.NavLabel,
-                color = tint,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 1.dp)
-            )
-        }
+        // Selection dot — scales/fades in within its reserved slot, so the
+        // pill geometry never changes and nothing jumps.
+        Spacer(modifier = Modifier.height(3.dp))
+        Box(
+            modifier = Modifier
+                .size(4.dp)
+                .graphicsLayer {
+                    scaleX = dotProgress
+                    scaleY = dotProgress
+                    alpha = dotProgress
+                }
+                .background(colors.accent, CircleShape)
+        )
     }
 }
 
