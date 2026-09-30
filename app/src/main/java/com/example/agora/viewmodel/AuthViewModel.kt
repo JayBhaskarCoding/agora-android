@@ -1,12 +1,12 @@
 package com.example.agora.viewmodel
 
-import android.app.Activity
 import android.content.Context
 import android.util.Log
 import android.util.Patterns
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.NoCredentialException
 import androidx.lifecycle.ViewModel
@@ -823,7 +823,7 @@ class AuthViewModel : ViewModel() {
             } catch (e: GetCredentialException) {
                 if (e is NoCredentialException) {
                     _errorMessage.value = "No Google accounts available on device"
-                } else if (e.status.statusCode == Activity.RESULT_CANCELED) {
+                } else if (e is GetCredentialCancellationException) {
                     // User backed out of the account picker — not an alarming error.
                     _errorMessage.value = "Google Sign-In was canceled."
                 } else {
