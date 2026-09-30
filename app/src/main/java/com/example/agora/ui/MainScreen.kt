@@ -530,10 +530,12 @@ fun MainScreen(
                 ) {
                     Row(
                         modifier = Modifier
-                            // ✦ Floating glass dock: full width inside the 16dp side
-                            //    margins, a chunkier premium 72dp tall, three controls
-                            //    evenly spaced — home | create | profile. No labels.
-                            .fillMaxWidth()
+                            // ✦ Floating glass dock: compressed horizontal footprint —
+                            //    80% of the width inside the 16dp side margins, so the
+                            //    pill reads tighter without touching its vertical glass
+                            //    styling. The weighted rail cells keep home | create |
+                            //    profile evenly distributed (SpaceEvenly equivalent).
+                            .fillMaxWidth(0.8f)
                             .height(72.dp)
                             .shadow(
                                 elevation = 22.dp,
