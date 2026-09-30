@@ -660,95 +660,109 @@ private fun FeedTopBar(
     )
     val barShape = RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp)
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(
-                // 🌟 Perf: attach the haze blur only while the scrim is materialized.
-                if (hazeState != null && scrimAlpha > 0.02f) {
-                    Modifier.hazeChild(state = hazeState, shape = barShape, blurRadius = 26.dp)
-                } else {
-                    Modifier.clip(barShape)
-                }
-            )
-            .background(
-                brush = Brush.verticalGradient(
-                    colorStops = arrayOf(
-                        0.0f to colors.canvasTop.copy(alpha = 0.94f * scrimAlpha),
-                        0.68f to colors.canvasTop.copy(alpha = 0.86f * scrimAlpha),
-                        1.0f to Color.Transparent
-                    )
-                )
-            )
-    ) {
-        Row(
+    // 🌟 Two-zone header, zero hard edges:
+    //    Zone 1 (blur/frost) covers ONLY the wordmark row and its gradient
+    //    stays highly opaque (≥0.82α) all the way down — the haze clip
+    //    boundary is therefore buried under solid scrim and can never read
+    //    as a horizontal line.
+    //    Zone 2 (feather) is a 60dp gradient-only spacer with explicit stops:
+    //    it holds near the seam, drops steeply, then eases into full
+    //    transparency so the header melts into the feed.
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .statusBarsPadding()
-                .height(64.dp)
-                .padding(horizontal = 20.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // ✦ Gradient wordmark with an accent period — the only branding the
-            //    feed needs.
-            Text(
-                text = buildAnnotatedString {
-                    withStyle(
-                        SpanStyle(
-                            brush = Brush.linearGradient(
-                                colors = listOf(
-                                    colors.textPrimary,
-                                    colors.textPrimary.copy(alpha = 0.66f)
-                                )
-                            ),
-                            fontWeight = FontWeight.Black
-                        )
-                    ) {
-                        append("agora")
+                .then(
+                    // 🌟 Perf: attach the haze blur only while the scrim is materialized.
+                    if (hazeState != null && scrimAlpha > 0.02f) {
+                        Modifier.hazeChild(state = hazeState, shape = barShape, blurRadius = 26.dp)
+                    } else {
+                        Modifier.clip(barShape)
                     }
-                    withStyle(
-                        SpanStyle(
-                            color = colors.accent,
-                            fontWeight = FontWeight.Black
-                        )
-                    ) {
-                        append(".")
-                    }
-                },
-                style = AgoraType.Wordmark
-            )
-
-            Spacer(modifier = Modifier.weight(1f))
-
-            // Hairline search chip
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(CircleShape)
-                    .background(colors.insetSurface.copy(alpha = 0.75f))
-                    .border(width = 1.dp, color = colors.hairline, shape = CircleShape)
-                    .clickable(onClick = onSearchClick),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Search,
-                    contentDescription = "Search Users",
-                    tint = colors.textSecondary,
-                    modifier = Modifier.size(18.dp)
                 )
-            }
-        }
-
-        // ✦ Seamless edge: no hard divider line — separation comes purely from
-        //    the frosted blur and a last whisper of scrim that fades to air.
-        Spacer(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(12.dp)
                 .background(
                     brush = Brush.verticalGradient(
                         colorStops = arrayOf(
-                            0.0f to colors.canvasTop.copy(alpha = 0.30f * scrimAlpha),
+                            // Top 60% stays solid/opaque — no early, muddy fade.
+                            0.0f to colors.canvasTop.copy(alpha = 0.94f * scrimAlpha),
+                            0.6f to colors.canvasTop.copy(alpha = 0.90f * scrimAlpha),
+                            1.0f to colors.canvasTop.copy(alpha = 0.82f * scrimAlpha)
+                        )
+                    )
+                )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .height(64.dp)
+                    .padding(horizontal = 20.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // ✦ Gradient wordmark with an accent period — the only branding the
+                //    feed needs.
+                Text(
+                    text = buildAnnotatedString {
+                        withStyle(
+                            SpanStyle(
+                                brush = Brush.linearGradient(
+                                    colors = listOf(
+                                        colors.textPrimary,
+                                        colors.textPrimary.copy(alpha = 0.66f)
+                                    )
+                                ),
+                                fontWeight = FontWeight.Black
+                            )
+                        ) {
+                            append("agora")
+                        }
+                        withStyle(
+                            SpanStyle(
+                                color = colors.accent,
+                                fontWeight = FontWeight.Black
+                            )
+                        ) {
+                            append(".")
+                        }
+                    },
+                    style = AgoraType.Wordmark
+                )
+
+                Spacer(modifier = Modifier.weight(1f))
+
+                // Hairline search chip
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(colors.insetSurface.copy(alpha = 0.75f))
+                        .border(width = 1.dp, color = colors.hairline, shape = CircleShape)
+                        .clickable(onClick = onSearchClick),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Search,
+                        contentDescription = "Search Users",
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }        }
+
+
+        // ✦ Feather zone — gradient only: no blur, no clip, nothing to cut a
+        //    hard edge. 60dp of physical space (was 12dp) lets the scrim fall
+        //    off completely: holds 0.82α at the blur seam, drops steeply to
+        //    0.32α by 45%, then eases smoothly to air at the bottom.
+        Spacer(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(60.dp)
+                .background(
+                    brush = Brush.verticalGradient(
+                        colorStops = arrayOf(
+                            0.0f to colors.canvasTop.copy(alpha = 0.82f * scrimAlpha),
+                            0.45f to colors.canvasTop.copy(alpha = 0.32f * scrimAlpha),
                             1.0f to Color.Transparent
                         )
                     )
