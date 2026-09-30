@@ -1,7 +1,6 @@
 package com.example.agora.ui
 
 import android.net.Uri
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
@@ -31,6 +30,7 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -89,6 +89,7 @@ fun ProfileScreen(
     val colors = rememberAgoraColors()
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     val currentLoggedInUserId = supabaseClient.auth.currentUserOrNull()?.id
     val targetUserId = userId ?: currentLoggedInUserId
@@ -156,6 +157,23 @@ fun ProfileScreen(
                 profileFullName = "User"
                 handle = "@user"
             }
+        }
+    }
+
+    // 🌟 Centralized error presentation: auth-side errors surface once as a
+    //    snackbar, then are cleared so they never reappear on recomposition.
+    val authErrorMessage by authViewModel.errorMessage.collectAsState()
+    LaunchedEffect(authErrorMessage) {
+        authErrorMessage?.let { error ->
+            snackbarHostState.showSnackbar(error)
+            authViewModel.clearError()
+        }
+    }
+
+    // Event-style feed action failures (delete/report) — no stale replays.
+    LaunchedEffect(Unit) {
+        feedViewModel.uiMessages.collect { message ->
+            snackbarHostState.showSnackbar(message)
         }
     }
 
@@ -229,7 +247,7 @@ fun ProfileScreen(
             confirmButton = {
                 TextButton(onClick = {
                     feedViewModel.deletePost(targetDelete.id)
-                    Toast.makeText(context, "Post deleted", Toast.LENGTH_SHORT).show()
+                    coroutineScope.launch { snackbarHostState.showSnackbar("Post deleted") }
                     postToDelete = null
                 }) { Text("Delete", color = colors.danger, fontWeight = FontWeight.Bold) }
             },
@@ -257,7 +275,7 @@ fun ProfileScreen(
                         Button(
                             onClick = {
                                 feedViewModel.editPost(context, targetEdit.id, editPostText, keptUrls, newlyAddedUris)
-                                Toast.makeText(context, "Updating post...", Toast.LENGTH_SHORT).show()
+                                coroutineScope.launch { snackbarHostState.showSnackbar("Updating post...") }
                                 postToEdit = null
                             },
                             enabled = editPostText.isNotBlank(),
@@ -376,7 +394,7 @@ fun ProfileScreen(
                 Button(
                     onClick = {
                         feedViewModel.reportPost(targetReport.id, reportReason)
-                        Toast.makeText(context, "Report submitted. Thank you.", Toast.LENGTH_SHORT).show()
+                        coroutineScope.launch { snackbarHostState.showSnackbar("Report submitted. Thank you.") }
                         postToReport = null
                     },
                     shape = CircleShape,
@@ -855,6 +873,16 @@ fun ProfileScreen(
                 }
             }
         }
+
+        // 🌟 Single presentation surface for errors + confirmations (replaces
+        //    Toasts). Declared last so snackbars always draw above the content.
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = 96.dp)
+        )
     }
 }
 
