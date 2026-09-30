@@ -9,6 +9,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -50,6 +51,7 @@ import com.example.agora.ui.theme.LocalDarkTheme
 import com.example.agora.ui.theme.rememberAgoraColors
 import com.example.agora.viewmodel.FeedViewModel
 import com.example.agora.viewmodel.ThemeViewModel
+import com.example.agora.viewmodel.UploadState
 import kotlinx.coroutines.launch
 
 @Composable
@@ -58,8 +60,15 @@ fun CreatePostDialog(
     themeViewModel: ThemeViewModel = viewModel(),
     onDismiss: () -> Unit
 ) {
+    // 🌟 Task 1: while a post is uploading, back-press / outside-tap must NOT
+    // tear the composer down mid-flight — dismissal is locked until Supabase
+    // confirms (success clears + closes via onSuccess) or the attempt fails.
+    val isUploading by feedViewModel.isUploading.collectAsState()
+    val guardedDismiss: () -> Unit = {
+        if (!isUploading) onDismiss()
+    }
     Dialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = guardedDismiss,
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
             decorFitsSystemWindows = false
@@ -68,7 +77,7 @@ fun CreatePostDialog(
         CreatePostScreen(
             feedViewModel = feedViewModel,
             themeViewModel = themeViewModel,
-            onDismiss = onDismiss
+            onDismiss = guardedDismiss
         )
     }
 }
@@ -95,6 +104,18 @@ fun CreatePostScreen(
 
     var isCompressingVideo by remember { mutableStateOf(false) }
     var compressionProgress by remember { mutableFloatStateOf(0f) }
+
+    // 🌟 Task 1: upload lock + error surface. Draft and media stay untouched
+    // while Supabase works; a failure shows a Snackbar, never a blank screen.
+    val isUploading by feedViewModel.isUploading.collectAsState()
+    val uploadState by feedViewModel.uploadState.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(uploadState) {
+        if (uploadState is UploadState.Error) {
+            snackbarHostState.showSnackbar((uploadState as UploadState.Error).message)
+        }
+    }
 
     val coroutineScope = rememberCoroutineScope()
     val videoCompressorTrimmer = remember(context) { VideoCompressorTrimmer(context) }
@@ -131,6 +152,7 @@ fun CreatePostScreen(
         Scaffold(
             containerColor = Color.Transparent,
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
                 Row(
                     modifier = Modifier
@@ -141,11 +163,14 @@ fun CreatePostScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = {
-                        postText = ""
-                        selectedMedia = emptyList()
-                        onDismiss()
-                    }) {
+                    TextButton(
+                        enabled = !isUploading,
+                        onClick = {
+                            postText = ""
+                            selectedMedia = emptyList()
+                            onDismiss()
+                        }
+                    ) {
                         Text(
                             text = "Cancel",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -158,18 +183,24 @@ fun CreatePostScreen(
                         onClick = {
                             val cleanText = postText.trim()
                             if (canPost) {
-                                // 🌟 Pass full selectedMedia list directly to ViewModel without dropping videos via firstOrNull()
+                                // 🌟 Task 1: fire the upload and KEEP everything on
+                                // screen — state is cleared and the dialog dismissed
+                                // ONLY from onSuccess, i.e. after the Supabase media
+                                // upload AND the posts insert confirmed. A failure
+                                // leaves the draft intact for an immediate retry.
                                 feedViewModel.createPost(
                                     context = context,
                                     content = cleanText,
                                     mediaUris = selectedMedia,
-                                    onSuccess = onDismiss
+                                    onSuccess = {
+                                        postText = ""
+                                        selectedMedia = emptyList()
+                                        onDismiss()
+                                    }
                                 )
-                                postText = ""
-                                selectedMedia = emptyList()
                             }
                         },
-                        enabled = canPost && !isCompressingVideo,
+                        enabled = canPost && !isCompressingVideo && !isUploading,
                         shape = CircleShape,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primary,
@@ -188,135 +219,151 @@ fun CreatePostScreen(
                     .padding(innerPadding)
                     .imePadding()
             ) {
-                // 🌟 Scrollable caption + media region: when the keyboard
-                //    opens, the media scrolls out of the way naturally instead
-                //    of being pushed over (or squashing) the text field. The
-                //    Add Media bar stays pinned below, lifted by the root
-                //    imePadding so it never hides the caption.
-                Column(
+                // 🌟 Task 2 layout: caption + carousel share ONE weighted
+                //    region, so the Add Media bar sits flush under the content
+                //    (and flush to the keyboard via the root imePadding). With
+                //    media attached the block bottom-aligns — the carousel hugs
+                //    the bar instead of stranding a slab of dead space below it;
+                //    caption-only drafts stay top-aligned. The region still
+                //    scrolls when the IME squeezes it.
+                val regionScroll = rememberScrollState()
+                Box(
                     modifier = Modifier
+                        .fillMaxWidth()
                         .weight(1f)
-                        .verticalScroll(rememberScrollState())
                 ) {
-                    TextField(
-                        value = postText,
-                        onValueChange = { postText = it },
-                        placeholder = {
-                            Text(
-                                text = "What's on your mind?",
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Normal,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                            )
-                        },
+                    Column(
                         modifier = Modifier
+                            .align(
+                                if (selectedMedia.isNotEmpty()) Alignment.BottomCenter
+                                else Alignment.TopCenter
+                            )
                             .fillMaxWidth()
-                            .heightIn(min = 180.dp)
-                            .focusRequester(focusRequester)
-                            .padding(horizontal = 20.dp, vertical = 12.dp),
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            disabledContainerColor = Color.Transparent,
-                            focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent
-                        ),
-                        textStyle = LocalTextStyle.current.copy(
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Normal,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                    )
-
-                    // 🌟 Task 2: Media Preview Gallery (LazyRow with Click-to-Enlarge/Re-Trim)
-                    if (selectedMedia.isNotEmpty()) {
-                        LazyRow(
+                            .verticalScroll(regionScroll)
+                    ) {
+                        TextField(
+                            value = postText,
+                            onValueChange = { postText = it },
+                            placeholder = {
+                                Text(
+                                    text = "What's on your mind?",
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Normal,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                )
+                            },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            items(selectedMedia, key = { uri -> uri.toString() }) { uri ->
-                                val isVideo = context.contentResolver.getType(uri)?.startsWith("video") == true || uri.toString().contains(".mp4")
+                                .heightIn(min = 180.dp)
+                                .focusRequester(focusRequester)
+                                .padding(horizontal = 20.dp, vertical = 12.dp),
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
+                                disabledContainerColor = Color.Transparent,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent
+                            ),
+                            textStyle = LocalTextStyle.current.copy(
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Normal,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                        )
 
-                                Box(
-                                    modifier = Modifier
-                                        // 🌟 Feed-sized cards: 80% of the carousel width at a
-                                        // 4:5 portrait ratio — exactly how media reads in the feed.
-                                        .fillParentMaxWidth(0.8f)
-                                        .aspectRatio(4f / 5f)
-                                        .clip(RoundedCornerShape(20.dp))
-                                        .border(1.dp, agora.cardBorder, RoundedCornerShape(20.dp))
-                                        .clickable {
-                                            // 🌟 The whole card is the edit button: videos open the
-                                            // trim studio overlay, images open the crop studio directly.
-                                            if (isVideo) activeEditUri = uri else cropSourceUri = uri
-                                        }
-                                ) {
-                                    if (isVideo) {
-                                        VideoThumbnail(
-                                            videoUri = uri,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                        Box(
-                                            modifier = Modifier
-                                                .align(Alignment.Center)
-                                                .size(32.dp)
-                                                .clip(CircleShape)
-                                                .background(Color.Black.copy(alpha = 0.6f)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.PlayArrow,
-                                                contentDescription = "Play Video",
-                                                tint = Color.White,
-                                                modifier = Modifier.size(20.dp)
+                        // 🌟 Task 2: Media Preview Gallery (LazyRow with Click-to-Enlarge/Re-Trim)
+                        if (selectedMedia.isNotEmpty()) {
+                            LazyRow(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    // 🌟 Task 2: wrap the content exactly — no fixed
+                                    // height, no weight; the cards define the strip.
+                                    .wrapContentHeight()
+                                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                items(selectedMedia, key = { uri -> uri.toString() }) { uri ->
+                                    val isVideo = context.contentResolver.getType(uri)?.startsWith("video") == true || uri.toString().contains(".mp4")
+
+                                    Box(
+                                        modifier = Modifier
+                                            // 🌟 Feed-sized cards: 80% of the carousel width at a
+                                            // 4:5 portrait ratio — exactly how media reads in the feed.
+                                            .fillParentMaxWidth(0.8f)
+                                            .aspectRatio(4f / 5f)
+                                            .clip(RoundedCornerShape(20.dp))
+                                            .border(1.dp, agora.cardBorder, RoundedCornerShape(20.dp))
+                                            .clickable {
+                                                // 🌟 The whole card is the edit button: videos open the
+                                                // trim studio overlay, images open the crop studio directly.
+                                                if (isVideo) activeEditUri = uri else cropSourceUri = uri
+                                            }
+                                    ) {
+                                        if (isVideo) {
+                                            VideoThumbnail(
+                                                videoUri = uri,
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .align(Alignment.Center)
+                                                    .size(32.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color.Black.copy(alpha = 0.6f)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.PlayArrow,
+                                                    contentDescription = "Play Video",
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        } else {
+                                            AsyncImage(
+                                                model = uri,
+                                                contentDescription = "Selected Media Preview",
+                                                modifier = Modifier.fillMaxSize(),
+                                                contentScale = ContentScale.Crop
                                             )
                                         }
-                                    } else {
-                                        AsyncImage(
-                                            model = uri,
-                                            contentDescription = "Selected Media Preview",
-                                            modifier = Modifier.fillMaxSize(),
-                                            contentScale = ContentScale.Crop
-                                        )
-                                    }
 
-                                    IconButton(
-                                        onClick = { selectedMedia = selectedMedia - uri },
-                                        modifier = Modifier
-                                            .align(Alignment.TopEnd)
-                                            .padding(6.dp)
-                                            .background(Color.Black.copy(alpha = 0.55f), CircleShape)
-                                            .size(24.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Close,
-                                            contentDescription = "Remove Media",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                    }
-
-                                    // 🌟 Decorative edit badge — the entire card already
-                                    // routes taps to the crop studio; this just hints at it.
-                                    if (!isVideo) {
-                                        Box(
+                                        IconButton(
+                                            onClick = { selectedMedia = selectedMedia - uri },
                                             modifier = Modifier
-                                                .align(Alignment.BottomEnd)
+                                                .align(Alignment.TopEnd)
                                                 .padding(6.dp)
-                                                .size(26.dp)
-                                                .clip(CircleShape)
-                                                .background(Color.Black.copy(alpha = 0.55f))
-                                                .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape),
-                                            contentAlignment = Alignment.Center
+                                                .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                                                .size(24.dp)
                                         ) {
                                             Icon(
-                                                imageVector = Icons.Rounded.Crop,
-                                                contentDescription = "Crop / Edit",
+                                                imageVector = Icons.Default.Close,
+                                                contentDescription = "Remove Media",
                                                 tint = Color.White,
                                                 modifier = Modifier.size(14.dp)
                                             )
+                                        }
+
+                                        // 🌟 Decorative edit badge — the entire card already
+                                        // routes taps to the crop studio; this just hints at it.
+                                        if (!isVideo) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .align(Alignment.BottomEnd)
+                                                    .padding(6.dp)
+                                                    .size(26.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color.Black.copy(alpha = 0.55f))
+                                                    .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.Crop,
+                                                    contentDescription = "Crop / Edit",
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -371,6 +418,52 @@ fun CreatePostScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                    }
+                }
+            }
+        }
+
+        // 🌟 Task 1: full-screen upload lock — scrim + glass spinner pill above
+        // the composer. Taps are swallowed so nothing can double-submit or wipe
+        // the draft mid-flight; the dialog's own dismissal is guarded too.
+        if (isUploading) {
+            val uploadMessage =
+                (uploadState as? UploadState.Uploading)?.message ?: "Posting…"
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = if (isDarkTheme) 0.55f else 0.35f))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { /* swallow taps while uploading */ },
+                contentAlignment = Alignment.Center
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(28.dp),
+                    color = if (isDarkTheme) Color.White.copy(alpha = 0.08f) else Color.White.copy(alpha = 0.78f),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isDarkTheme) Color.White.copy(alpha = 0.16f) else Color.Black.copy(alpha = 0.06f)
+                    ),
+                    shadowElevation = 16.dp
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 34.dp, vertical = 26.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(38.dp),
+                            color = if (isDarkTheme) Color.White else MaterialTheme.colorScheme.primary,
+                            strokeWidth = 3.dp
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Text(
+                            text = uploadMessage,
+                            color = if (isDarkTheme) Color.White else Color(0xFF1C1C1E),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
                 }
             }

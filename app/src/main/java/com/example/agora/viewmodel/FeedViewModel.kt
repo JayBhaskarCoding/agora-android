@@ -230,6 +230,11 @@ class FeedViewModel : ViewModel() {
     private val _uploadState = MutableStateFlow<UploadState>(UploadState.Idle)
     val uploadState: StateFlow<UploadState> = _uploadState.asStateFlow()
 
+    // 🌟 Task 1: explicit composer lock — true from the Post tap until Supabase
+    // confirms (released just before onSuccess) or the attempt fails (finally).
+    private val _isUploading = MutableStateFlow(false)
+    val isUploading: StateFlow<Boolean> = _isUploading.asStateFlow()
+
     private val _searchResults = MutableStateFlow<List<Profile>>(emptyList())
     val searchResults: StateFlow<List<Profile>> = _searchResults.asStateFlow()
 
@@ -679,6 +684,7 @@ class FeedViewModel : ViewModel() {
     ) {
         viewModelScope.launch {
             try {
+                _isUploading.value = true
                 _uploadState.value = UploadState.Uploading(0.1f, "Preparing post...")
                 val appContext = context.applicationContext
 
@@ -730,7 +736,15 @@ class FeedViewModel : ViewModel() {
                 }
 
                 _uploadState.value = UploadState.Uploading(0.85f, "Saving post to database...")
-                val userId = currentUserId ?: return@launch
+                val userId = currentUserId
+                if (userId == null) {
+                    // A silent return here used to strand the upload banner forever.
+                    _uploadState.value =
+                        UploadState.Error("Your session expired — please sign in again to post.")
+                    delay(3000.milliseconds)
+                    _uploadState.value = UploadState.Idle
+                    return@launch
+                }
 
                 val insertedPosts = withContext(Dispatchers.IO) {
                     val newPost = PostInsertRequest(
@@ -756,6 +770,9 @@ class FeedViewModel : ViewModel() {
                 fetchPostsFromCloud()
 
                 _uploadState.value = UploadState.Success("Posted successfully!")
+                // Upload + insert confirmed — release the composer lock BEFORE
+                // onSuccess so the dialog's guarded clear-and-dismiss actually runs.
+                _isUploading.value = false
                 withContext(Dispatchers.Main) {
                     onSuccess()
                 }
@@ -767,6 +784,9 @@ class FeedViewModel : ViewModel() {
                 _uploadState.value = UploadState.Error(handleAppError(e))
                 delay(3000.milliseconds)
                 _uploadState.value = UploadState.Idle
+            } finally {
+                // Failure path lands here too: composer unlocks, draft stays intact.
+                _isUploading.value = false
             }
         }
     }
