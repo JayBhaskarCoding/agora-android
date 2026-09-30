@@ -901,7 +901,7 @@ class AuthViewModel : ViewModel() {
         _userState.value = null
         _isOnboarding.value = false
         _awaitingOtp.value = false
-        _otpEmail.value = 
+        _otpEmail.value = ""
         _passwordResetStep.value = null
         _errorMessage.value = null
         _remoteLogoutEvent.value = false
