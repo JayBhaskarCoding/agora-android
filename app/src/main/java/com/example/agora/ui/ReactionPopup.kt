@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -228,16 +229,30 @@ private fun PopupEmojiItem(
         }
     }
 
+    // ✦ Stagger without spring(delayMillis = …) — that parameter does not exist
+    //   in Compose animation-core (only tween/keyframes accept one). Each emoji
+    //   flips its own visibility after an index-based delay instead, so every
+    //   item still bounces in on its full MediumBouncy spring, cascading left
+    //   to right.
+    var itemVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(contentVisible) {
+        if (contentVisible) {
+            delay(enterDelayMs.toLong())
+            itemVisible = true
+        } else {
+            itemVisible = false
+        }
+    }
+
     AnimatedVisibility(
-        visible = contentVisible,
+        visible = itemVisible,
         enter = scaleIn(
             initialScale = 0.2f,
             animationSpec = spring(
                 dampingRatio = Spring.DampingRatioMediumBouncy,
-                stiffness = Spring.StiffnessMedium,
-                delayMillis = enterDelayMs
+                stiffness = Spring.StiffnessMedium
             )
-        ) + fadeIn(tween(200, delayMillis = enterDelayMs)),
+        ) + fadeIn(tween(200)),
         exit = fadeOut(tween(120))
     ) {
         Box(
