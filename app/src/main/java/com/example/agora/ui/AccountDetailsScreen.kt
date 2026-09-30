@@ -93,7 +93,8 @@ fun AccountDetailsScreen(
     viewModel: AuthViewModel,
     themeViewModel: ThemeViewModel = viewModel(),
     onBack: () -> Unit,
-    onNavigateToPendingDeletion: () -> Unit = {}
+    onNavigateToPendingDeletion: () -> Unit = {},
+    onNavigateToDeletionOtp: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -112,7 +113,6 @@ fun AccountDetailsScreen(
     //    local one-shot fetch seeds the fallback.
     val liveProfile by viewModel.profileState.collectAsState()
     val deletionFlowActive by viewModel.deletionFlowActive.collectAsState()
-    val deletionLinkSentEmail by viewModel.deletionLinkSentEmail.collectAsState()
     val deletionScheduledAt = liveProfile?.deletionScheduledAt ?: profile?.deletionScheduledAt
 
     var firstName by remember { mutableStateOf("") }
@@ -173,20 +173,14 @@ fun AccountDetailsScreen(
         }
     }
 
-    LaunchedEffect(deletionLinkSentEmail) {
-        deletionLinkSentEmail?.let { email ->
-            snackbarHostState.showSnackbar(
-                "Confirmation link sent to $email — open it to schedule deletion."
-            )
-        }
-    }
-
-    // 🌟 After the verified deep link schedules the deletion, route to the
-    //    pending-deletion screen exactly once.
-    LaunchedEffect(deletionScheduledAt, deletionFlowActive) {
-        if (!deletionScheduledAt.isNullOrBlank() && deletionFlowActive) {
+    // 🌟 The moment the reauthentication code is on its way, route to the
+    //    shared OTP card exactly once. The flag is consumed immediately, so
+    //    backing out of the OTP screen returns here cleanly (no re-routing
+    //    loop) and Resend on the card never re-triggers navigation.
+    LaunchedEffect(deletionFlowActive) {
+        if (deletionFlowActive) {
             viewModel.consumeDeletionFlow()
-            onNavigateToPendingDeletion()
+            onNavigateToDeletionOtp()
         }
     }
 
@@ -594,7 +588,7 @@ fun AccountDetailsScreen(
                     .padding(bottom = 10.dp, start = 6.dp)
             )
 
-            // 🌟 Delete Account — magic-link verified, 3-day grace, fully revertible.
+            // 🌟 Delete Account — reauthentication-OTP verified, 3-day grace, fully revertible.
             //    If a deletion is already scheduled, this becomes the entry point
             //    to the PendingDeletionScreen instead of re-sending a link.
             OutlinedButton(

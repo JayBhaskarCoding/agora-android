@@ -33,21 +33,28 @@ import androidx.compose.ui.unit.sp
 import com.example.agora.viewmodel.AuthViewModel
 
 /**
- * ✦ THE OTP GATE — shared by both registration paths:
- *  - manual email registration (embedded inside [RegisterScreen]'s card), and
- *  - brand-new Google identities (rendered at MainActivity level while the
- *    authenticated session is held pending email-code verification).
+ * ✦ THE SHARED OTP CARD — one implementation for every 6-digit context:
+ *  - manual email registration (embedded inside [RegisterScreen]'s card; the
+ *    defaults verify through [AuthViewModel.verifyOtpCode] / resendOtp, which
+ *    flips `awaitingOtp` off and `isOnboarding` on → enter-details screen), and
+ *  - account-deletion reauthentication (hosted by [DeletionOtpScreen] with a
+ *    custom title/subtitle/button and [AuthViewModel.verifyDeletionOtp] as the
+ *    submission callback).
  *
- * On success [AuthViewModel.verifyOtpCode] flips `awaitingOtp` off and
- * `isOnboarding` on, which advances the UI to the enter-details screen. The
- * gate is a state-driven branch (not a back-stack destination), so once it
- * unmounts there is nothing to navigate back to — no popUpTo needed.
+ * Context is injected purely through parameters — the card itself is agnostic
+ * to which flow it serves. Registration's gate remains a state-driven branch
+ * (no back-stack destination), so nothing changes there.
  */
 @Composable
 fun OtpVerificationScreen(
     viewModel: AuthViewModel,
     email: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    title: String = "Verify Email",
+    subtitle: String = "We sent a 6-digit verification code to $email",
+    buttonLabel: String = "Verify & Continue",
+    onSubmit: (String) -> Unit = { viewModel.verifyOtpCode(it) },
+    onResend: () -> Unit = { viewModel.resendOtp() }
 ) {
     var otpCode by remember { mutableStateOf("") }
 
@@ -56,7 +63,7 @@ fun OtpVerificationScreen(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            text = "Verify Email",
+            text = title,
             fontSize = 22.sp,
             fontWeight = FontWeight.Black,
             letterSpacing = (-0.5).sp,
@@ -66,7 +73,7 @@ fun OtpVerificationScreen(
                 .padding(bottom = 6.dp)
         )
         Text(
-            text = "We sent a 6-digit verification code to $email",
+            text = subtitle,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontSize = 14.sp,
             modifier = Modifier
@@ -125,7 +132,7 @@ fun OtpVerificationScreen(
         Spacer(modifier = Modifier.height(28.dp))
 
         Button(
-            onClick = { viewModel.verifyOtpCode(otpCode) },
+            onClick = { onSubmit(otpCode) },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(54.dp),
@@ -133,14 +140,14 @@ fun OtpVerificationScreen(
             enabled = otpCode.length == 6
         ) {
             Text(
-                text = "Verify & Continue",
+                text = buttonLabel,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold
             )
         }
 
         TextButton(
-            onClick = { viewModel.resendOtp() },
+            onClick = { onResend() },
             modifier = Modifier.padding(top = 16.dp)
         ) {
             Text(

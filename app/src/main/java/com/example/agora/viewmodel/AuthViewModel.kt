@@ -21,7 +21,6 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.providers.Google
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.auth.providers.builtin.IDToken
-import io.github.jan.supabase.auth.providers.builtin.OTP
 import kotlinx.coroutines.CancellationException
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.auth.user.UserInfo
@@ -52,7 +51,9 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.put
 import java.time.Instant
 import java.util.UUID
@@ -890,47 +891,45 @@ class AuthViewModel : ViewModel() {
     }
 
     // =====================================================================================
-    // 🌟 ACCOUNT DELETION — 3-DAY GRACE PERIOD
+    // 🌟 ACCOUNT DELETION — 3-DAY GRACE PERIOD (REAUTHENTICATION OTP)
     //
-    // Confirmation is an inbox-ownership check via magic link: startAccountDeletion()
-    // asks GoTrue for a login OTP/magic link addressed to the registered email with
-    // redirect_to = agora://auth-callback?flow=delete-account. The browser verifies the
-    // token and deep-links back; supabaseClient.handleDeeplinks() (already wired in
-    // MainActivity) re-imports the session, and MainActivity then calls
-    // completeVerifiedDeletionRequest() — which stamps profiles.deletion_scheduled_at =
-    // now() + 3 days through the SECURITY DEFINER RPC. A daily pg_cron → process-deletions
-    // Edge Function permanently erases due accounts (storage media + auth.admin.deleteUser,
-    // FK-cascading profiles/posts/comments/likes/notifications/reports) even if the user
-    // logs out during the window. cancelAccountDeletion() is the "Revert Changes" path.
+    // Identity proof uses Supabase's native reauthentication flow:
+    // startAccountDeletion() calls auth.reauthenticate(), which emails the registered
+    // address the Reauthentication template's 6-digit code. The user types it into the
+    // shared OTP card (DeletionOtpScreen); verifyDeletionOtp() posts the code to the
+    // SECURITY DEFINER verify_deletion_otp() RPC, which recomputes GoTrue's
+    // hex(sha224(email || otp)) hash, enforces the 1-hour OTP window and — only on a
+    // match — stamps profiles.deletion_scheduled_at = now() + 3 days. The UI then routes
+    // to PendingDeletionScreen. (GoTrue's /verify endpoint accepts no reauthentication
+    // type and PUT /user consumes the nonce only during password updates — forbidding it
+    // entirely for SSO users — hence the DB-side verifier in migration …000005.) A daily
+    // pg_cron → process-deletions Edge Function permanently erases due accounts (storage
+    // media + auth.admin.deleteUser, FK cascades) even if the user logs out meanwhile.
+    // cancelAccountDeletion() is the "Revert Changes" path.
     // =====================================================================================
-    private val deletionRedirectUrl = "agora://auth-callback?flow=delete-account"
-
     private val _deletionFlowActive = MutableStateFlow(false)
     val deletionFlowActive: StateFlow<Boolean> = _deletionFlowActive.asStateFlow()
 
-    private val _deletionLinkSentEmail = MutableStateFlow<String?>(null)
-    val deletionLinkSentEmail: StateFlow<String?> = _deletionLinkSentEmail.asStateFlow()
+    // Email the reauthentication code was dispatched to (OTP card subtitle).
+    private val _deletionOtpEmail = MutableStateFlow("")
+    val deletionOtpEmail: StateFlow<String> = _deletionOtpEmail.asStateFlow()
 
-    /** Step 1 — send the magic-link confirmation to the registered email. */
+    /** Step 1 — fire the native reauthentication email (6-digit code). */
     fun startAccountDeletion() {
-        val email = supabaseClient.auth.currentUserOrNull()?.email
-            ?: _profileState.value?.email
-        if (email.isNullOrBlank()) {
-            _errorMessage.value = "This account has no email address, so deletion cannot be verified."
-            return
-        }
         viewModelScope.launch {
             try {
                 clearError()
-                withContext(Dispatchers.IO) {
-                    supabaseClient.auth.signInWith(OTP, redirectUrl = deletionRedirectUrl) {
-                        this.email = email
-                        // Never provision a fresh identity from a deletion check.
-                        createUser = false
-                    }
+                val email = supabaseClient.auth.currentUserOrNull()?.email
+                    ?: _profileState.value?.email
+                if (email.isNullOrBlank()) {
+                    _errorMessage.value = "This account has no email address, so deletion cannot be verified."
+                    return@launch
                 }
+                withContext(Dispatchers.IO) {
+                    supabaseClient.auth.reauthenticate()
+                }
+                _deletionOtpEmail.value = email
                 _deletionFlowActive.value = true
-                _deletionLinkSentEmail.value = email
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 _errorMessage.value = handleAuthError(e)
@@ -938,19 +937,51 @@ class AuthViewModel : ViewModel() {
         }
     }
 
-    /** Step 2 — the verified deep link came back: stamp the 3-day deadline. */
-    fun completeVerifiedDeletionRequest() {
+    /** Resend from the OTP card — same native call, no routing side effects. */
+    fun resendDeletionOtp() {
         viewModelScope.launch {
             try {
                 clearError()
                 withContext(Dispatchers.IO) {
-                    supabaseClient.postgrest.rpc("request_account_deletion")
+                    supabaseClient.auth.reauthenticate()
                 }
-                _deletionLinkSentEmail.value = null
-                refreshProfile()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _deletionFlowActive.value = false
+                _errorMessage.value = handleAuthError(e)
+            }
+        }
+    }
+
+    /** Step 2 — verify the 6-digit code; on success the RPC has already stamped
+     *  the 3-day deadline, so route to the pending-deletion screen. A wrong or
+     *  expired code surfaces a clear error and keeps the card up. */
+    fun verifyDeletionOtp(rawCode: String, onSuccess: () -> Unit) {
+        val cleanCode = rawCode.trim()
+        if (cleanCode.isBlank()) {
+            _errorMessage.value = "Please enter the verification code."
+            return
+        }
+        viewModelScope.launch {
+            try {
+                clearError()
+                val verified = withContext(Dispatchers.IO) {
+                    supabaseClient.postgrest
+                        .rpc(
+                            "verify_deletion_otp",
+                            buildJsonObject { put("p_otp", cleanCode) }
+                        )
+                        .decodeAs<Boolean>()
+                }
+                if (verified) {
+                    _deletionFlowActive.value = false
+                    _deletionOtpEmail.value = ""
+                    refreshProfile()
+                    onSuccess()
+                } else {
+                    _errorMessage.value = "Incorrect or expired code. Please try again."
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _errorMessage.value = handleAuthError(e)
             }
         }
@@ -974,10 +1005,9 @@ class AuthViewModel : ViewModel() {
         }
     }
 
-    /** One-shot consumption of the "route me to PendingDeletion" trigger. */
+    /** One-shot consumption of the "route me to the deletion OTP card" trigger. */
     fun consumeDeletionFlow() {
         _deletionFlowActive.value = false
-        _deletionLinkSentEmail.value = null
     }
 
     fun signOut() {
@@ -997,7 +1027,7 @@ class AuthViewModel : ViewModel() {
         // Deletion UI state resets, but a stamped deletion_scheduled_at stays in
         // the database on purpose — the cron job runs even after logout.
         _deletionFlowActive.value = false
-        _deletionLinkSentEmail.value = null
+        _deletionOtpEmail.value = ""
         _passwordResetStep.value = null
         _errorMessage.value = null
         _remoteLogoutEvent.value = false
