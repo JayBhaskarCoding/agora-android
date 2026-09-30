@@ -199,16 +199,20 @@ fun RegisterScreen(
                         }
                     }
 
-                    TextButton(
-                        onClick = { viewModel.clearError(); onNavigateToLogin() },
-                        modifier = Modifier.padding(top = 22.dp)
-                    ) {
-                        Text(
-                            text = "Already have an account? Log In",
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 15.sp
-                        )
+                    // 🌟 Hidden during the OTP step — the code boxes and the
+                    //    Verify & Continue button are the sole focus there.
+                    if (!awaitingOtp) {
+                        TextButton(
+                            onClick = { viewModel.clearError(); onNavigateToLogin() },
+                            modifier = Modifier.padding(top = 22.dp)
+                        ) {
+                            Text(
+                                text = "Already have an account? Log In",
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 15.sp
+                            )
+                        }
                     }
                 }
             }
