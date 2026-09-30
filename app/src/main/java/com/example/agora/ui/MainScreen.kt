@@ -66,7 +66,6 @@ import com.example.agora.navigation.DeepLinkRouter
 import com.example.agora.ui.theme.AgoraAccentGradient
 import com.example.agora.ui.theme.AgoraRingGradient
 import com.example.agora.ui.theme.AgoraType
-import com.example.agora.ui.theme.hazeChild
 import com.example.agora.ui.theme.rememberAgoraColors
 import com.example.agora.viewmodel.AuthViewModel
 import com.example.agora.viewmodel.FeedViewModel
@@ -74,6 +73,7 @@ import com.example.agora.viewmodel.PostDetailViewModel
 import com.example.agora.viewmodel.ThemeViewModel
 import com.example.agora.viewmodel.UploadState
 import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.hazeSource
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
@@ -543,7 +543,19 @@ fun MainScreen(
                                 spotColor = Color.Black.copy(alpha = if (colors.isDark) 0.55f else 0.20f),
                                 ambientColor = Color.Black.copy(alpha = 0.12f)
                             )
-                            .hazeChild(state = hazeState, shape = pillShape, blurRadius = 40.dp)
+                            .clip(pillShape)
+                            // ✦ True frosted glass: Haze replays the feed behind the
+                            //    pill through a RenderEffect blur (API 31+; scrim
+                            //    fallback below). The default style tints are cleared
+                            //    so nothing washes the blur out — our own gradients
+                            //    supply the colour, icons/border stay razor sharp,
+                            //    and pre-31 devices keep the fallbackTint legibility.
+                            .hazeEffect(state = hazeState) {
+                                blurEnabled = true
+                                blurRadius = 40.dp
+                                backgroundColor = Color.Transparent
+                                tints = emptyList()
+                            }
                             // ✦ Theme-aware frosted glass slab — one vertical gradient
                             //    carries base + convex tint. Dark: highly translucent
                             //    noir (0.42→0.60) so the feed shimmers through the bar.
@@ -805,8 +817,9 @@ fun MainScreen(
 
 /**
  * A bottom-nav rail item — strictly icon-only, filling an even share of the
- * floating glass dock (full-height tap target). Per the reference design the
- * active tab reads through the filled glyph in accent tint (no glow bloom);
+ * floating glass dock. The touch target is a tight 48dp circle clipped
+ * around the glyph, so the ripple is a small circular splash (no half-bar
+ * highlight). The active tab reads through the filled glyph in accent tint;
  * idle tabs sit in a lighter neutral tint. `label` remains as the
  * accessibility content description.
  */
@@ -827,22 +840,30 @@ private fun NavRailItem(
     )
 
     Column(
-        modifier = modifier
-            .fillMaxHeight()
-            .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick),
+        modifier = modifier.fillMaxHeight(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        // Reference design: no glow bloom — the active tab reads purely
-        // through the filled glyph in accent tint against the light idle tint.
-        // Glyph proportions matched to the reference dock (24dp in 72dp).
-        Icon(
-            imageVector = if (selected) selectedIcon else icon,
-            contentDescription = label,
-            tint = tint,
-            modifier = Modifier.size(24.dp)
-        )
+        // ✦ Tightly bounded touch target: the clickable lives on a 48dp circle
+        //    clipped around the glyph, so the Material ripple is a small
+        //    circular splash directly behind the icon — never a half-bar flash.
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center
+        ) {
+            // Reference design: no glow bloom — the active tab reads purely
+            // through the filled glyph in accent tint against the light idle tint.
+            // Glyph proportions matched to the reference dock (24dp in 72dp).
+            Icon(
+                imageVector = if (selected) selectedIcon else icon,
+                contentDescription = label,
+                tint = tint,
+                modifier = Modifier.size(24.dp)
+            )
+        }
     }
 }
 
