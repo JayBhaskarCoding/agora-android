@@ -18,6 +18,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -339,7 +341,15 @@ class MainActivity : ComponentActivity() {
                                         //    so back can never return to the OTP gate.
                                         OtpVerificationScreen(
                                             viewModel = authViewModel,
-                                            email = otpEmail
+                                            email = otpEmail,
+                                            // 🌟 Standalone host: this Surface applies no window
+                                            //    insets, so the gate pads itself clear of the
+                                            //    status bar and centers vertically — the title
+                                            //    never sits under the battery/wifi icons again.
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .statusBarsPadding()
+                                                .wrapContentSize(Alignment.Center)
                                         )
                                     } else if (isOnboarding) {
                                         OnboardingFlowScreen(

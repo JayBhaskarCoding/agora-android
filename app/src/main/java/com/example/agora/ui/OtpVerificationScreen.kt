@@ -46,12 +46,13 @@ import com.example.agora.viewmodel.AuthViewModel
 @Composable
 fun OtpVerificationScreen(
     viewModel: AuthViewModel,
-    email: String
+    email: String,
+    modifier: Modifier = Modifier
 ) {
     var otpCode by remember { mutableStateOf("") }
 
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
