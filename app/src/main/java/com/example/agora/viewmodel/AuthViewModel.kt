@@ -21,6 +21,7 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.providers.Google
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.auth.providers.builtin.IDToken
+import io.github.jan.supabase.auth.providers.builtin.OTP
 import kotlinx.coroutines.CancellationException
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.auth.user.UserInfo
@@ -298,6 +299,44 @@ class AuthViewModel : ViewModel() {
         }
     }
 
+    /** True once a Google-gate login OTP has been dispatched at least once. */
+    var googleOtpDispatched: Boolean = false
+        private set
+
+    /**
+     * 🌟 Dispatches a passwordless LOGIN OTP (/otp) to [injectedEmail] (or the
+     *    pending email). Unlike the signup confirmation the manual flow uses,
+     *    /otp works for already-confirmed OAuth identities — no password, no
+     *    new-user state required. verifyEmailOtp accepts the resulting token
+     *    via [OtpType.Email.EMAIL], which covers both magiclink and signup
+     *    types. Failures surface through [errorMessage] (RegisterScreen shows
+     *    it as a snackbar, so the user is never left guessing).
+     */
+    fun sendGoogleOtp(injectedEmail: String? = null) {
+        val target = injectedEmail?.takeIf { it.isNotBlank() }
+            ?: pendingEmail.takeIf { it.isNotBlank() }
+            ?: _otpEmail.value.takeIf { it.isNotBlank() }
+        if (target == null) {
+            _errorMessage.value = "No email available to send a verification code."
+            return
+        }
+        pendingEmail = target
+        _otpEmail.value = target
+
+        viewModelScope.launch {
+            try {
+                clearError()
+                withContext(Dispatchers.IO) {
+                    supabaseClient.auth.signInWith(OTP) { email = target }
+                }
+                googleOtpDispatched = true
+            } catch (e: Exception) {
+                googleOtpDispatched = false
+                _errorMessage.value = handleAuthError(e)
+            }
+        }
+    }
+
     fun resendOtp() {
         val now = System.currentTimeMillis()
         val thirtyMinsInMillis = 30 * 60 * 1000L
@@ -318,10 +357,19 @@ class AuthViewModel : ViewModel() {
             try {
                 clearError()
 
-                supabaseClient.auth.resendEmail(
-                    type = OtpType.Email.SIGNUP,
-                    email = pendingEmail
-                )
+                if (googleOtpDispatched) {
+                    // 🌟 Confirmed OAuth identity: there is no signup token to
+                    //    resend — re-dispatch the passwordless login OTP (/otp),
+                    //    the exact same call that generated the first code.
+                    withContext(Dispatchers.IO) {
+                        supabaseClient.auth.signInWith(OTP) { email = pendingEmail }
+                    }
+                } else {
+                    supabaseClient.auth.resendEmail(
+                        type = OtpType.Email.SIGNUP,
+                        email = pendingEmail
+                    )
+                }
 
                 resendTimestamps.add(now)
                 _errorMessage.value = "Verification code resent!"
@@ -792,6 +840,9 @@ class AuthViewModel : ViewModel() {
                             _otpEmail.value = googleEmail
                             _awaitingOtp.value = true
                             _isOnboarding.value = false
+                            // 🌟 Dispatch the code immediately — the gate screen
+                            //    mounts with a fresh inbox, not an empty one.
+                            sendGoogleOtp(googleEmail)
                         } else {
                             Log.d("GoogleAuth", "Existing Google user with complete profile. Proceeding to Feed...")
                             _isOnboarding.value = false
@@ -876,8 +927,10 @@ class AuthViewModel : ViewModel() {
                 _isOnboarding.value = true
 
                 withContext(Dispatchers.IO) {
+                    // 🌟 EMAIL covers both signup (manual flow) and magiclink
+                    //    (/otp login, Google flow) tokens per supabase-kt docs.
                     supabaseClient.auth.verifyEmailOtp(
-                        type = OtpType.Email.SIGNUP,
+                        type = OtpType.Email.EMAIL,
                         email = pendingEmail,
                         token = cleanCode
                     )
@@ -904,6 +957,7 @@ class AuthViewModel : ViewModel() {
         _isOnboarding.value = false
         _awaitingOtp.value = false
         _otpEmail.value = ""
+        googleOtpDispatched = false
         _passwordResetStep.value = null
         _errorMessage.value = null
         _remoteLogoutEvent.value = false
