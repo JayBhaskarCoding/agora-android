@@ -531,10 +531,10 @@ fun MainScreen(
                     Row(
                         modifier = Modifier
                             // ✦ Floating glass dock: full width inside the 16dp side
-                            //    margins, slim 60dp tall, three controls evenly spaced —
-                            //    home | create | profile. No text labels anywhere.
+                            //    margins, a chunkier premium 72dp tall, three controls
+                            //    evenly spaced — home | create | profile. No labels.
                             .fillMaxWidth()
-                            .height(60.dp)
+                            .height(72.dp)
                             .shadow(
                                 elevation = 22.dp,
                                 shape = pillShape,
@@ -545,15 +545,26 @@ fun MainScreen(
                             // ✦ Dark translucent glass slab — the hazeChild above
                             //    frosts the feed behind it on capable devices.
                             .background(colors.cardSurface.copy(alpha = if (colors.isDark) 0.80f else 0.90f))
-                            // ✦ 3D top-lit glass edge: vertical gradient hairline —
-                            //    subtle highlight up top fading to near-transparent below.
+                            // ✦ 3D convex glass sheen: vertical gradient — lighter and
+                            //    more translucent near the top edge, darker/matte below.
+                            .background(
+                                Brush.verticalGradient(
+                                    colorStops = arrayOf(
+                                        0f to Color.White.copy(alpha = 0.16f),
+                                        0.45f to Color.White.copy(alpha = 0.03f),
+                                        1f to Color.Black.copy(alpha = 0.30f)
+                                    )
+                                )
+                            )
+                            // ✦ Top-lit inner stroke: bright hairline at the top edge
+                            //    fading to FULLY transparent at the bottom of the pill.
                             .border(
                                 width = 1.dp,
                                 brush = Brush.verticalGradient(
-                                    colors = listOf(
-                                        Color.White.copy(alpha = 0.30f),
-                                        Color.White.copy(alpha = 0.10f),
-                                        Color.White.copy(alpha = 0.02f)
+                                    colorStops = arrayOf(
+                                        0f to Color.White.copy(alpha = 0.45f),
+                                        0.5f to Color.White.copy(alpha = 0.10f),
+                                        1f to Color.Transparent
                                     )
                                 ),
                                 shape = pillShape
@@ -578,7 +589,7 @@ fun MainScreen(
                             }
                         )
 
-                        // ── Gradient create FAB with halo ───────────────
+                        // ── Gradient create FAB — inset inside the dock ──
                         var fabPressed by remember { mutableStateOf(false) }
                         val fabScale by animateFloatAsState(
                             targetValue = if (fabPressed) 0.90f else 1f,
@@ -594,10 +605,12 @@ fun MainScreen(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(50.dp)
+                                    // ✦ Fits entirely inside the 72dp dock bounds —
+                                    //    14dp of vertical breathing room per side.
+                                    .size(44.dp)
                                     .scale(fabScale)
                                     .shadow(
-                                        elevation = 10.dp,
+                                        elevation = 8.dp,
                                         shape = CircleShape,
                                         spotColor = Color(0xFF6366F1).copy(alpha = 0.45f),
                                         ambientColor = Color(0xFF8B5CF6).copy(alpha = 0.20f)
@@ -622,7 +635,7 @@ fun MainScreen(
                                     imageVector = Icons.Rounded.Add,
                                     contentDescription = "Create post",
                                     tint = Color.White,
-                                    modifier = Modifier.size(24.dp)
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
                         }
@@ -801,12 +814,12 @@ private fun NavRailItem(
     ) {
         // Reference design: no glow bloom — the active tab reads purely
         // through the filled glyph in accent tint against the light idle tint.
-        // Compact original glyph size — sits perfectly in the slim dock.
+        // Glyph proportions matched to the reference dock (24dp in 72dp).
         Icon(
             imageVector = if (selected) selectedIcon else icon,
             contentDescription = label,
             tint = tint,
-            modifier = Modifier.size(22.dp)
+            modifier = Modifier.size(24.dp)
         )
     }
 }
