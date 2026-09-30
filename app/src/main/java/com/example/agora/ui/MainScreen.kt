@@ -817,11 +817,11 @@ fun MainScreen(
 
 /**
  * A bottom-nav rail item — strictly icon-only, filling an even share of the
- * floating glass dock. The touch target is a tight 48dp circle clipped
- * around the glyph, so the ripple is a small circular splash (no half-bar
- * highlight). The active tab reads through the filled glyph in accent tint;
- * idle tabs sit in a lighter neutral tint. `label` remains as the
- * accessibility content description.
+ * floating glass dock. The touch target is a 48dp IconButton wrapping just
+ * the glyph — Material's ripple spec draws a tight circular splash, never a
+ * half-bar highlight. The active tab reads through the filled glyph in
+ * accent tint; idle tabs sit in a lighter neutral tint. `label` remains as
+ * the accessibility content description.
  */
 @Composable
 private fun NavRailItem(
@@ -844,15 +844,14 @@ private fun NavRailItem(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        // ✦ Tightly bounded touch target: the clickable lives on a 48dp circle
-        //    clipped around the glyph, so the Material ripple is a small
-        //    circular splash directly behind the icon — never a half-bar flash.
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(CircleShape)
-                .clickable(onClick = onClick),
-            contentAlignment = Alignment.Center
+        // ✦ Strictly bounded touch target: an IconButton wraps just the glyph,
+        //    so Material's own ripple spec applies — a tight circular splash
+        //    (~48dp) directly behind the icon. No parent container (Column /
+        //    weighted cell) carries a clickable anymore, so the highlight can
+        //    never fill a half-bar rectangle again.
+        IconButton(
+            onClick = onClick,
+            modifier = Modifier.size(48.dp)
         ) {
             // Reference design: no glow bloom — the active tab reads purely
             // through the filled glyph in accent tint against the light idle tint.
