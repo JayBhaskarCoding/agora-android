@@ -1,6 +1,7 @@
 package com.example.agora.ui
 
 import android.os.Build
+import android.util.Log
 import androidx.compose.animation.*
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.animateColorAsState
@@ -39,6 +40,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -59,9 +61,10 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import coil.request.listener
 import com.example.agora.data.supabaseClient
 import com.example.agora.model.Post
-import com.example.agora.model.Profile
 import com.example.agora.navigation.DeepLinkRouter
 import com.example.agora.ui.theme.AgoraAccentGradient
 import com.example.agora.ui.theme.AgoraRingGradient
@@ -77,10 +80,8 @@ import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.hazeSource
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * ✦ AGORA NOIR — APP SHELL
@@ -102,6 +103,7 @@ fun MainScreen(
     feedViewModel: FeedViewModel = viewModel(key = supabaseClient.auth.currentUserOrNull()?.id)
 ) {
     val colors = rememberAgoraColors()
+    val context = LocalContext.current
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
@@ -139,31 +141,18 @@ fun MainScreen(
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val coroutineScope = rememberCoroutineScope()
-    val currentUser = supabaseClient.auth.currentUserOrNull()
-    var userHandle by remember { mutableStateOf("@user") }
-    // 🌟 Drawer avatar source — reactive: refetched whenever the route
-    //    settles, so a fresh avatar uploaded in Account Details shows up the
-    //    moment the user navigates back. Null on fetch failure → the header
-    //    gracefully falls back to the initial badge.
-    var userAvatarUrl by remember { mutableStateOf<String?>(null) }
+    // 🌟 Drawer identity flows from AuthViewModel.profileState — the VM owns
+    //    the Supabase fetch (single source of truth) and the UI just collects
+    //    it. Refresh re-fires on every route change, so an avatar edited in
+    //    Account Details appears the moment the user navigates back.
+    val drawerProfile by authViewModel.profileState.collectAsState()
+    val userHandle = drawerProfile?.handle?.let { "@$it" } ?: "@user"
+    // Strict normalization: a blank avatar URL counts as "no avatar", so the
+    // initial-fallback logic stays honest.
+    val userAvatarUrl = drawerProfile?.avatarUrl?.takeIf { it.isNotBlank() }
 
-    LaunchedEffect(currentUser, currentRoute) {
-        if (currentUser != null) {
-            try {
-                val profile = withContext(Dispatchers.IO) {
-                    supabaseClient.from("profiles")
-                        .select { filter { eq("id", currentUser.id) } }
-                        .decodeSingle<Profile>()
-                }
-                userHandle = "@${profile.handle}"
-                // Strict normalization: a blank avatar URL counts as "no
-                // avatar", so the initial-fallback logic stays honest.
-                userAvatarUrl = profile.avatarUrl?.takeIf { it.isNotBlank() }
-            } catch (_: Exception) {
-                userHandle = "@user"
-                userAvatarUrl = null
-            }
-        }
+    LaunchedEffect(currentRoute) {
+        authViewModel.refreshProfile()
     }
 
     var showComposeScreen by remember { mutableStateOf(false) }
@@ -252,9 +241,10 @@ fun MainScreen(
                                 // picture, read from the fetched Profile state. The
                                 // initial badge stays painted UNDERNEATH as the strict
                                 // fallback — it only remains visible when the remote URL
-                                // is null/empty or the load fails. Coil decodes async, so
-                                // a slow network simply keeps the initial on screen until
-                                // the photo arrives — no spinner, no crash path.
+                                // is null/empty or Coil reports an error (failures are
+                                // logged to Logcat under "AgoraDrawerAvatar"). Coil
+                                // decodes async, so a slow network simply keeps the
+                                // initial on screen until the photo crossfades in.
                                 Text(
                                     text = userHandle.trimStart('@').take(1).uppercase(),
                                     fontSize = 22.sp,
@@ -263,7 +253,20 @@ fun MainScreen(
                                 )
                                 if (!userAvatarUrl.isNullOrBlank()) {
                                     AsyncImage(
-                                        model = userAvatarUrl,
+                                        model = ImageRequest.Builder(context)
+                                            .data(userAvatarUrl)
+                                            .crossfade(true)
+                                            // 🌟 Diagnostics: if the photo ever fails to
+                                            //    decode/fetch, the reason lands in Logcat
+                                            //    and the initial underlay stays visible.
+                                            .listener(onError = { _, result ->
+                                                Log.e(
+                                                    "AgoraDrawerAvatar",
+                                                    "Coil avatar load failed",
+                                                    result.throwable
+                                                )
+                                            })
+                                            .build(),
                                         contentDescription = "Your profile picture",
                                         modifier = Modifier
                                             .fillMaxSize()
