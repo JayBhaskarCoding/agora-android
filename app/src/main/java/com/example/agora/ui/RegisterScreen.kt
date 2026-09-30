@@ -32,9 +32,12 @@ import kotlinx.coroutines.launch
 @Composable
 fun RegisterScreen(
     viewModel: AuthViewModel,
-    onNavigateToLogin: () -> Unit
+    onNavigateToLogin: () -> Unit,
+    /** Non-null → Google OTP gate mode: skip the email/signup form entirely
+     *  and show the verification card immediately, addressed to this email. */
+    initialOtpEmail: String? = null
 ) {
-    var email by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf(initialOtpEmail.orEmpty()) }
 
     val awaitingOtp by viewModel.awaitingOtp.collectAsState()
     val rawErrorMessage by viewModel.errorMessage.collectAsState()
