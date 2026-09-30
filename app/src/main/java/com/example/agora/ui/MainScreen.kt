@@ -544,17 +544,37 @@ fun MainScreen(
                                 ambientColor = Color.Black.copy(alpha = 0.12f)
                             )
                             .hazeChild(state = hazeState, shape = pillShape, blurRadius = 40.dp)
-                            // ✦ Dark translucent glass slab — the hazeChild above
-                            //    frosts the feed behind it on capable devices.
-                            .background(colors.cardSurface.copy(alpha = if (colors.isDark) 0.80f else 0.90f))
-                            // ✦ 3D convex glass sheen: vertical gradient — lighter and
-                            //    more translucent near the top edge, darker/matte below.
+                            // ✦ Theme-aware frosted glass slab — one vertical gradient
+                            //    carries base + convex tint. Dark: highly translucent
+                            //    noir (0.42→0.60) so the feed shimmers through the bar.
+                            //    Light: clean frosted white glass (0.70→0.40) with zero
+                            //    black stops — no more solid-white-plus-black-smudge.
                             .background(
                                 Brush.verticalGradient(
-                                    colorStops = arrayOf(
-                                        0f to Color.White.copy(alpha = 0.16f),
+                                    colorStops = if (colors.isDark) arrayOf(
+                                        0f to Color(0xFF2B2F40).copy(alpha = 0.42f),
+                                        0.5f to Color(0xFF1B1E2A).copy(alpha = 0.50f),
+                                        1f to Color(0xFF10121B).copy(alpha = 0.60f)
+                                    ) else arrayOf(
+                                        0f to Color.White.copy(alpha = 0.70f),
+                                        0.55f to Color.White.copy(alpha = 0.55f),
+                                        1f to Color.White.copy(alpha = 0.40f)
+                                    )
+                                )
+                            )
+                            // ✦ Top-lit convex sheen. Dark keeps the subtle white→black
+                            //    curvature; light gets a pure white highlight that fades
+                            //    to nothing (the blackish falloff is removed entirely).
+                            .background(
+                                Brush.verticalGradient(
+                                    colorStops = if (colors.isDark) arrayOf(
+                                        0f to Color.White.copy(alpha = 0.14f),
                                         0.45f to Color.White.copy(alpha = 0.03f),
-                                        1f to Color.Black.copy(alpha = 0.30f)
+                                        1f to Color.Black.copy(alpha = 0.22f)
+                                    ) else arrayOf(
+                                        0f to Color.White.copy(alpha = 0.35f),
+                                        0.5f to Color.White.copy(alpha = 0.08f),
+                                        1f to Color.White.copy(alpha = 0f)
                                     )
                                 )
                             )
