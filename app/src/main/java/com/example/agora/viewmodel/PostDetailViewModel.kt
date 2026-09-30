@@ -9,6 +9,7 @@ import com.example.agora.model.Comment
 import com.example.agora.model.Post
 import com.example.agora.model.PostLike
 import com.example.agora.model.Profile
+import com.example.agora.utils.handleAppError
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.query.Columns
@@ -111,7 +112,7 @@ class PostDetailViewModel(
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 e.printStackTrace()
-                _uiState.value = PostDetailUiState.Error("Failed to load post")
+                _uiState.value = PostDetailUiState.Error(handleAppError(e))
             }
         }
     }

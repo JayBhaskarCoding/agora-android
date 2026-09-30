@@ -1,5 +1,6 @@
 package com.example.agora.viewmodel
 
+import android.app.Activity
 import android.content.Context
 import android.util.Log
 import android.util.Patterns
@@ -38,6 +39,7 @@ import io.github.jan.supabase.realtime.realtime
 import io.github.jan.supabase.storage.storage
 import android.net.Uri
 import com.example.agora.utils.ImageUtils
+import com.example.agora.utils.handleAppError
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -286,22 +288,11 @@ class AuthViewModel : ViewModel() {
         }
     }
 
-    private fun handleAuthError(e: Throwable): String {
-        return when (e) {
-            is RestException -> {
-                when (e.error) {
-                    "invalid_credentials", "invalid_grant" -> "Invalid email or password."
-                    "user_already_exists" -> "An account with this email already exists."
-                    "over_email_send_rate_limit" -> "Too many requests. Please wait a moment before trying again."
-                    else -> (e.description ?: "").ifBlank { e.error }
-                }
-            }
-            is io.ktor.client.plugins.HttpRequestTimeoutException,
-            is java.net.UnknownHostException,
-            is java.net.ConnectException -> "Network error: Please check your internet connection."
-            else -> e.localizedMessage ?: "An unexpected error occurred."
-        }
-    }
+    /** All user-facing failure copy comes from the centralized mapper in
+     *  utils/ErrorHelper.kt (typed AuthErrorCodes, real HTTP statuses, SQLSTATEs
+     *  — never raw backend text). Kept as a private delegate so the ~15 existing
+     *  call sites and their state flows remain untouched. */
+    private fun handleAuthError(e: Throwable): String = handleAppError(e)
 
     fun resendOtp() {
         val now = System.currentTimeMillis()
@@ -832,13 +823,16 @@ class AuthViewModel : ViewModel() {
             } catch (e: GetCredentialException) {
                 if (e is NoCredentialException) {
                     _errorMessage.value = "No Google accounts available on device"
+                } else if (e.status.statusCode == Activity.RESULT_CANCELED) {
+                    // User backed out of the account picker — not an alarming error.
+                    _errorMessage.value = "Google Sign-In was canceled."
                 } else {
-                    _errorMessage.value = e.localizedMessage ?: "Google Sign-In canceled or failed"
+                    _errorMessage.value = handleAppError(e)
                 }
                 Log.e("GoogleAuth", "CredentialManager error: ${e.localizedMessage}", e)
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _errorMessage.value = e.localizedMessage ?: "Failed to sign in with Google"
+                _errorMessage.value = handleAppError(e)
                 Log.e("GoogleAuth", "Google sign-in error: ${e.localizedMessage}", e)
             }
         }
@@ -1410,7 +1404,10 @@ class AuthViewModel : ViewModel() {
                 if (e is CancellationException) throw e
                 val message = handleAuthError(e)
                 Log.e("AuthDiagnostics", "[onboardingSave] FAILED: ${e.localizedMessage}", e)
-                _errorMessage.value = message
+                // 🌟 NOT mirrored into _errorMessage: OnboardingFlowScreen presents
+                //    this failure inline via the onResult callback and does not
+                //    collect the global error flow — mirroring used to leak a stale
+                //    error onto the first post-onboarding screen that DID collect it.
                 onFailure(message)
             }
         }

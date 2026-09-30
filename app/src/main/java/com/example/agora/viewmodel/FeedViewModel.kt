@@ -33,6 +33,7 @@ import com.example.agora.model.Post
 import com.example.agora.model.PostLike
 import com.example.agora.model.Profile
 import com.example.agora.model.ReactorDetails
+import com.example.agora.utils.handleAppError
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import io.github.jan.supabase.auth.auth
@@ -52,8 +53,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -142,6 +146,12 @@ class FeedViewModel : ViewModel() {
      *  (with a retry) instead of masquerading a failure as "no reactions". */
     private val _reactorsError = MutableStateFlow<String?>(null)
     val reactorsError: StateFlow<String?> = _reactorsError.asStateFlow()
+
+    /** 🌟 Event-style UI messages (post-action failures). A SharedFlow with no
+     *  replay: undelivered events are dropped instead of replaying stale onto
+     *  the next screen that collects — no clearError dance needed. */
+    private val _uiMessages = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val uiMessages: SharedFlow<String> = _uiMessages.asSharedFlow()
 
     var selectedPostIdForReactors by mutableStateOf<String?>(null)
 
@@ -753,8 +763,8 @@ class FeedViewModel : ViewModel() {
                 _uploadState.value = UploadState.Idle
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                e.printStackTrace()
-                _uploadState.value = UploadState.Error("Failed to upload post")
+                Log.e("FeedViewModel", "createPost failed: ${e.localizedMessage}", e)
+                _uploadState.value = UploadState.Error(handleAppError(e))
                 delay(3000.milliseconds)
                 _uploadState.value = UploadState.Idle
             }
@@ -798,7 +808,8 @@ class FeedViewModel : ViewModel() {
                 fetchPostsFromCloud()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                e.printStackTrace()
+                Log.e("FeedViewModel", "deletePost failed: ${e.localizedMessage}", e)
+                _uiMessages.tryEmit(handleAppError(e))
             }
         }
     }
@@ -862,8 +873,8 @@ class FeedViewModel : ViewModel() {
                 _uploadState.value = UploadState.Idle
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                e.printStackTrace()
-                _uploadState.value = UploadState.Error("Failed to update post")
+                Log.e("FeedViewModel", "post update failed: ${e.localizedMessage}", e)
+                _uploadState.value = UploadState.Error(handleAppError(e))
                 delay(3000)
                 _uploadState.value = UploadState.Idle
             }
@@ -955,8 +966,8 @@ class FeedViewModel : ViewModel() {
                 _uploadState.value = UploadState.Idle
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                e.printStackTrace()
-                _uploadState.value = UploadState.Error("Failed to update post")
+                Log.e("FeedViewModel", "post update failed: ${e.localizedMessage}", e)
+                _uploadState.value = UploadState.Error(handleAppError(e))
                 delay(3000)
                 _uploadState.value = UploadState.Idle
             }
@@ -979,7 +990,8 @@ class FeedViewModel : ViewModel() {
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                e.printStackTrace()
+                Log.e("FeedViewModel", "reportPost failed: ${e.localizedMessage}", e)
+                _uiMessages.tryEmit(handleAppError(e))
             }
         }
     }

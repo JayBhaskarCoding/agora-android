@@ -4,8 +4,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.agora.data.supabaseClient
 import com.example.agora.model.Profile
+import com.example.agora.utils.handleAppError
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -98,7 +100,8 @@ class ResetPasswordViewModel : ViewModel() {
                 _currentStep.value = ResetPasswordState.VERIFY_OTP
                 onSuccess()
             } catch (e: Exception) {
-                _errorMessage.value = e.message ?: "Failed to send OTP."
+                if (e is CancellationException) throw e
+                _errorMessage.value = handleAppError(e)
             } finally {
                 _isLoading.value = false
             }
@@ -119,7 +122,8 @@ class ResetPasswordViewModel : ViewModel() {
                 _currentStep.value = ResetPasswordState.NEW_PASSWORD
                 onSuccess()
             } catch (e: Exception) {
-                _errorMessage.value = e.message ?: "Invalid security code."
+                if (e is CancellationException) throw e
+                _errorMessage.value = handleAppError(e)
             } finally {
                 _isLoading.value = false
             }
@@ -146,7 +150,8 @@ class ResetPasswordViewModel : ViewModel() {
                 _currentStep.value = ResetPasswordState.REQUEST_OTP
                 onSuccess()
             } catch (e: Exception) {
-                _errorMessage.value = e.message ?: "Failed to update password."
+                if (e is CancellationException) throw e
+                _errorMessage.value = handleAppError(e)
             } finally {
                 _isLoading.value = false
             }
