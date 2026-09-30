@@ -116,6 +116,11 @@ class AuthViewModel : ViewModel() {
     private val _awaitingOtp = MutableStateFlow(false)
     val awaitingOtp: StateFlow<Boolean> = _awaitingOtp.asStateFlow()
 
+    // 🌟 Email the pending OTP was sent to — displayed by the OTP gate and
+    //    kept in sync with [pendingEmail] for both registration paths.
+    private val _otpEmail = MutableStateFlow("")
+    val otpEmail: StateFlow<String> = _otpEmail.asStateFlow()
+
     private var pendingEmail: String = ""
 
     private val _passwordResetStep = MutableStateFlow<PasswordResetStep?>(null)
@@ -774,7 +779,19 @@ class AuthViewModel : ViewModel() {
                                 ?: metadata?.get("avatar_url")?.jsonPrimitive?.content
                             _googleAvatarUrl.value = avatarUrl?.ifBlank { null }
 
-                            _isOnboarding.value = true
+                            // 🌟 THE OTP GATE: Supabase emails a one-time code to the
+                            //    new Google identity — hold the fresh session at the
+                            //    verification screen (the same gate manual registration
+                            //    uses) instead of dropping straight into onboarding.
+                            //    The parsed Google name/avatar stay cached to prefill
+                            //    the enter-details screen after verification.
+                            val googleEmail = currentUser.email
+                                ?: metadata?.get("email")?.jsonPrimitive?.content
+                                ?: ""
+                            pendingEmail = googleEmail
+                            _otpEmail.value = googleEmail
+                            _awaitingOtp.value = true
+                            _isOnboarding.value = false
                         } else {
                             Log.d("GoogleAuth", "Existing Google user with complete profile. Proceeding to Feed...")
                             _isOnboarding.value = false
@@ -837,6 +854,7 @@ class AuthViewModel : ViewModel() {
                 }
 
                 pendingEmail = cleanEmail
+                _otpEmail.value = cleanEmail
                 _awaitingOtp.value = true
 
             } catch (e: Exception) {
@@ -885,6 +903,7 @@ class AuthViewModel : ViewModel() {
         _userState.value = null
         _isOnboarding.value = false
         _awaitingOtp.value = false
+        _otpEmail.value = ""
         _passwordResetStep.value = null
         _errorMessage.value = null
         _remoteLogoutEvent.value = false
