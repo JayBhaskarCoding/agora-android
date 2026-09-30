@@ -15,6 +15,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Person
@@ -36,6 +38,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -128,6 +132,15 @@ fun AccountDetailsScreen(
     //    reauthentication email is ever sent.
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
 
+    // 🌟 Change Username — two-step glass dialog: 0 = local email gate,
+    //    1 = new-handle prompt. Errors stay inline; RPC errors (e.g. "Username
+    //    already taken") surface through the screen's errorMessage snackbar.
+    var showUsernameDialog by remember { mutableStateOf(false) }
+    var usernameStep by remember { mutableStateOf(0) }
+    var verifyEmailInput by remember { mutableStateOf("") }
+    var newUsernameInput by remember { mutableStateOf("") }
+    var usernameDialogError by remember { mutableStateOf<String?>(null) }
+
     val hasChanges = profile != null && (
             firstName != profile?.firstName ||
                     lastName != (profile?.lastName ?: "") ||
@@ -186,6 +199,125 @@ fun AccountDetailsScreen(
             viewModel.consumeDeletionFlow()
             onNavigateToDeletionOtp()
         }
+    }
+
+    // 🌟 Change Username — glassmorphic two-step dialog: a purely LOCAL email
+    //    gate (typed email must exactly match the session's cached email), then
+    //    the new-handle prompt with live normalization and validation.
+    if (showUsernameDialog) {
+        val usernameValid = newUsernameInput.matches(Regex("^[a-z0-9_]{3,20}$"))
+        AlertDialog(
+            onDismissRequest = { showUsernameDialog = false },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            title = {
+                Text(
+                    text = if (usernameStep == 0) "Verify Your Identity" else "Choose a New Username",
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column {
+                    if (usernameStep == 0) {
+                        Text(
+                            "To change your username, type the email address registered " +
+                                "on this account. This check runs right on your device."
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+                        OutlinedTextField(
+                            value = verifyEmailInput,
+                            onValueChange = {
+                                verifyEmailInput = it
+                                usernameDialogError = null
+                            },
+                            singleLine = true,
+                            isError = usernameDialogError != null,
+                            placeholder = { Text("you@example.com") },
+                            supportingText = usernameDialogError?.let { err ->
+                                { Text(err, color = MaterialTheme.colorScheme.error) }
+                            },
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Email,
+                                imeAction = ImeAction.Done
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else {
+                        Text(
+                            "Your posts, likes and comments stay linked — the new " +
+                                "@handle appears everywhere instantly."
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+                        OutlinedTextField(
+                            value = newUsernameInput,
+                            onValueChange = { raw ->
+                                // Live normalization: lowercase, allowed charset, max 20.
+                                newUsernameInput = raw.lowercase()
+                                    .filter { c -> c.isLetterOrDigit() || c == '_' }
+                                    .take(20)
+                                usernameDialogError = null
+                            },
+                            singleLine = true,
+                            isError = usernameDialogError != null,
+                            prefix = { Text("@") },
+                            placeholder = { Text("new_username") },
+                            supportingText = {
+                                Text(
+                                    usernameDialogError
+                                        ?: "3-20 characters — lowercase letters, numbers, underscore."
+                                )
+                            },
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Ascii,
+                                imeAction = ImeAction.Done
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = if (usernameStep == 0) verifyEmailInput.isNotBlank() else usernameValid,
+                    onClick = {
+                        if (usernameStep == 0) {
+                            // 🌟 Purely LOCAL — compares against the session's cached
+                            //    email; never a network call.
+                            if (viewModel.isEmailVerifiedForUsernameChange(verifyEmailInput)) {
+                                usernameStep = 1
+                                usernameDialogError = null
+                            } else {
+                                usernameDialogError =
+                                    "That email doesn't match the one registered on this account."
+                            }
+                        } else {
+                            viewModel.updateUsername(newUsernameInput) {
+                                showUsernameDialog = false
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("Username updated to @$newUsernameInput")
+                                }
+                            }
+                        }
+                    }
+                ) {
+                    Text(
+                        text = if (usernameStep == 0) "Verify" else "Update Username",
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUsernameDialog = false }) {
+                    Text(
+                        "Cancel",
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        )
     }
 
     // 🌟 "Are you sure?" gate styled to match the glassmorphic surfaces.
@@ -383,8 +515,34 @@ fun AccountDetailsScreen(
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 3.dp, bottom = 24.dp)
+                modifier = Modifier.padding(top = 3.dp, bottom = 14.dp)
             )
+
+            // 🌟 Change Username — opens the local email-verification gate.
+            OutlinedButton(
+                onClick = {
+                    verifyEmailInput = ""
+                    newUsernameInput = profile?.handle.orEmpty()
+                    usernameStep = 0
+                    usernameDialogError = null
+                    showUsernameDialog = true
+                },
+                modifier = Modifier.height(38.dp),
+                shape = CircleShape,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
+                contentPadding = PaddingValues(horizontal = 18.dp)
+            ) {
+                Icon(
+                    Icons.Default.Edit,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Change Username", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
 
             // 🌟 2. PERSONAL INFORMATION GROUPED CARD
             Text(
