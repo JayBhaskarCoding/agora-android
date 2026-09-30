@@ -42,6 +42,7 @@ import com.example.agora.ui.InAppNotificationManager
 import com.example.agora.ui.LoginScreen
 import com.example.agora.ui.MainScreen
 import com.example.agora.ui.OnboardingFlowScreen
+import com.example.agora.ui.OtpVerificationScreen
 import com.example.agora.ui.PasswordResetScreen
 import com.example.agora.ui.RegisterScreen
 import com.example.agora.ui.theme.AgoraTheme
@@ -211,6 +212,8 @@ class MainActivity : ComponentActivity() {
 
                 val isSigningUpState = remember { mutableStateOf(false) }
                 val isOnboarding by authViewModel.isOnboarding.collectAsState()
+                val awaitingOtp by authViewModel.awaitingOtp.collectAsState()
+                val otpEmail by authViewModel.otpEmail.collectAsState()
                 val googleFirstName by authViewModel.googleFirstName.collectAsState()
                 val googleLastName by authViewModel.googleLastName.collectAsState()
                 val googleAvatarUrl by authViewModel.googleAvatarUrl.collectAsState()
@@ -243,8 +246,8 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                LaunchedEffect(sessionStatus, isOnboarding) {
-                    if (sessionStatus is SessionStatus.Authenticated && !isOnboarding) {
+                LaunchedEffect(sessionStatus, isOnboarding, awaitingOtp) {
+                    if (sessionStatus is SessionStatus.Authenticated && !isOnboarding && !awaitingOtp) {
                         isSigningUpState.value = false
 
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -327,6 +330,17 @@ class MainActivity : ComponentActivity() {
                                         ) {
                                             CircularProgressIndicator()
                                         }
+                                    } else if (awaitingOtp) {
+                                        // 🌟 OTP gate for authenticated-but-unverified sessions
+                                        //    (brand-new Google identities). verifyOtpCode flips
+                                        //    awaitingOtp→false / isOnboarding→true on success, so
+                                        //    this branch unmounts and the enter-details screen
+                                        //    takes over — a state switch, not a back-stack hop,
+                                        //    so back can never return to the OTP gate.
+                                        OtpVerificationScreen(
+                                            viewModel = authViewModel,
+                                            email = otpEmail
+                                        )
                                     } else if (isOnboarding) {
                                         OnboardingFlowScreen(
                                             initialFirstName = googleFirstName,

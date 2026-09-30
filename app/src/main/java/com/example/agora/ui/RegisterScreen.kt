@@ -35,7 +35,6 @@ fun RegisterScreen(
     onNavigateToLogin: () -> Unit
 ) {
     var email by remember { mutableStateOf("") }
-    var otpCode by remember { mutableStateOf("") }
 
     val awaitingOtp by viewModel.awaitingOtp.collectAsState()
     val rawErrorMessage by viewModel.errorMessage.collectAsState()
@@ -129,100 +128,13 @@ fun RegisterScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         if (awaitingOtp) {
-                            Text(
-                                text = "Verify Email",
-                                fontSize = 22.sp,
-                                fontWeight = FontWeight.Black,
-                                letterSpacing = (-0.5).sp,
-                                color = MaterialTheme.colorScheme.onBackground,
-                                modifier = Modifier
-                                    .align(Alignment.Start)
-                                    .padding(bottom = 6.dp)
-                            )
-                            Text(
-                                text = "We sent a 6-digit verification code to $email",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 14.sp,
-                                modifier = Modifier
-                                    .align(Alignment.Start)
-                                    .padding(bottom = 24.dp)
+                            // 🌟 Shared OTP gate (same composable the Google flow
+                            //    shows at MainActivity level).
+                            OtpVerificationScreen(
+                                viewModel = viewModel,
+                                email = email
                             )
 
-                            // 🌟 6-Box OTP UI with translucent background
-                            BasicTextField(
-                                value = otpCode,
-                                onValueChange = { newValue ->
-                                    if (newValue.length <= 6 && newValue.all { it.isDigit() }) {
-                                        otpCode = newValue
-                                    }
-                                },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                                decorationBox = {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceEvenly
-                                    ) {
-                                        repeat(6) { index ->
-                                            val char = when {
-                                                index >= otpCode.length -> ""
-                                                else -> otpCode[index].toString()
-                                            }
-
-                                            val isFocused = otpCode.length == index || (otpCode.length == 6 && index == 5)
-
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(46.dp)
-                                                    .border(
-                                                        width = if (isFocused) 2.dp else 1.dp,
-                                                        color = if (isFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                                                        shape = RoundedCornerShape(16.dp)
-                                                    )
-                                                    .background(
-                                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                                                        shape = RoundedCornerShape(16.dp)
-                                                    ),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Text(
-                                                    text = char,
-                                                    fontSize = 20.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = MaterialTheme.colorScheme.onSurface
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            )
-
-                            Spacer(modifier = Modifier.height(28.dp))
-
-                            Button(
-                                onClick = { viewModel.verifyOtpCode(otpCode) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(54.dp),
-                                shape = CircleShape,
-                                enabled = otpCode.length == 6
-                            ) {
-                                Text(
-                                    text = "Verify & Continue",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-
-                            TextButton(
-                                onClick = { viewModel.resendOtp() },
-                                modifier = Modifier.padding(top = 16.dp)
-                            ) {
-                                Text(
-                                    text = "Didn't get the code? Resend OTP",
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
                         } else {
                             Text(
                                 text = "Get Started",
