@@ -425,7 +425,24 @@ fun MainScreen(
                             viewModel = authViewModel,
                             themeViewModel = themeViewModel,
                             onBack = { navController.popBackStack() },
-                            onNavigateToPendingDeletion = { navController.navigate("pending_deletion") }
+                            onNavigateToPendingDeletion = { navController.navigate("pending_deletion") },
+                            onNavigateToDeletionOtp = { navController.navigate("verify_deletion") }
+                        )
+                    }
+
+                    // 🌟 Reauthentication OTP for account deletion — the shared
+                    //    OTP card in its deletion context. On success it swaps to
+                    //    the pending screen, dropping itself from the backstack
+                    //    so Back lands on Account Details, never on the code entry.
+                    composable("verify_deletion") {
+                        DeletionOtpScreen(
+                            viewModel = authViewModel,
+                            onBack = { navController.popBackStack() },
+                            onVerified = {
+                                navController.navigate("pending_deletion") {
+                                    popUpTo("account_details")
+                                }
+                            }
                         )
                     }
 
