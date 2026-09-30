@@ -143,6 +143,18 @@ class MainActivity : ComponentActivity() {
     @Volatile
     private var keepSplashOnScreen = true
 
+    // 🌟 Incremented whenever an agora://auth-callback?flow=delete-account deep
+    //    link arrives (cold start or warm onNewIntent). Observed inside setContent:
+    //    once the session is Authenticated, the verified-deletion RPC is fired.
+    private val deletionCallbackTick = mutableStateOf(0)
+
+    private fun isDeletionCallback(intent: Intent?): Boolean {
+        val data = intent?.data ?: return false
+        return data.scheme == "agora" &&
+            data.host == "auth-callback" &&
+            data.getQueryParameter("flow") == "delete-account"
+    }
+
     // 🌟 INTENT INJECTION: Extract FCM notification extras / deep link URI, publish
     //    them to the DeepLinkRouter (single source of truth for post navigation) and
     //    forge intent.data so the NavHost's native navDeepLink path can also match.
@@ -192,6 +204,7 @@ class MainActivity : ComponentActivity() {
         //    detects the duplicate and stands down).
         injectDeepLink(intent)
 
+        if (isDeletionCallback(intent)) deletionCallbackTick.value++
         intent?.let {
             try {
                 supabaseClient.handleDeeplinks(it)
@@ -213,6 +226,16 @@ class MainActivity : ComponentActivity() {
                 val isOnboarding by authViewModel.isOnboarding.collectAsState()
                 val awaitingOtp by authViewModel.awaitingOtp.collectAsState()
                 val otpEmail by authViewModel.otpEmail.collectAsState()
+
+                // 🌟 Verified deletion deep link → once the (re-imported) session
+                //    is Authenticated, stamp the 3-day deletion deadline via RPC.
+                val deletionTick = deletionCallbackTick.value
+                LaunchedEffect(deletionTick, sessionStatus) {
+                    if (deletionTick > 0 && sessionStatus is SessionStatus.Authenticated) {
+                        deletionCallbackTick.value = 0
+                        authViewModel.completeVerifiedDeletionRequest()
+                    }
+                }
                 val googleFirstName by authViewModel.googleFirstName.collectAsState()
                 val googleLastName by authViewModel.googleLastName.collectAsState()
                 val googleAvatarUrl by authViewModel.googleAvatarUrl.collectAsState()
@@ -440,6 +463,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         injectDeepLink(intent)
+        if (isDeletionCallback(intent)) deletionCallbackTick.value++
         try {
             supabaseClient.handleDeeplinks(intent)
         } catch (_: Exception) {}
