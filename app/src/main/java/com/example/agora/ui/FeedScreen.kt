@@ -283,7 +283,7 @@ fun GlobalFeedScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
                     top = statusBarTop + 84.dp,   // Clears frosted top bar (64dp + divider + fade)
-                    bottom = navBarBottom + 108.dp // Clears floating nav pill (68dp + 18dp margin) + buffer
+                    bottom = navBarBottom + 116.dp // Clears floating dock (60dp pill + 24dp float) + buffer
                 ),
                 verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
