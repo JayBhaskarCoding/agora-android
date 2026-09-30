@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -57,6 +58,7 @@ import androidx.navigation.compose.dialog
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
+import coil.compose.AsyncImage
 import com.example.agora.data.supabaseClient
 import com.example.agora.model.Post
 import com.example.agora.model.Profile
@@ -139,8 +141,13 @@ fun MainScreen(
     val coroutineScope = rememberCoroutineScope()
     val currentUser = supabaseClient.auth.currentUserOrNull()
     var userHandle by remember { mutableStateOf("@user") }
+    // 🌟 Drawer avatar source — reactive: refetched whenever the route
+    //    settles, so a fresh avatar uploaded in Account Details shows up the
+    //    moment the user navigates back. Null on fetch failure → the header
+    //    gracefully falls back to the initial badge.
+    var userAvatarUrl by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(currentUser) {
+    LaunchedEffect(currentUser, currentRoute) {
         if (currentUser != null) {
             try {
                 val profile = withContext(Dispatchers.IO) {
@@ -149,8 +156,10 @@ fun MainScreen(
                         .decodeSingle<Profile>()
                 }
                 userHandle = "@${profile.handle}"
+                userAvatarUrl = profile.avatarUrl
             } catch (_: Exception) {
                 userHandle = "@user"
+                userAvatarUrl = null
             }
         }
     }
@@ -237,12 +246,27 @@ fun MainScreen(
                                     .background(colors.cardSurface),
                                 contentAlignment = Alignment.Center
                             ) {
+                                // 🌟 Dynamic avatar: the logged-in user's real profile
+                                // picture. The initial badge stays painted UNDERNEATH as
+                                // the graceful fallback — if the avatar is null or the
+                                // network load fails, the image layer simply never draws
+                                // and the initial shows through (no error painter needed).
                                 Text(
                                     text = userHandle.trimStart('@').take(1).uppercase(),
                                     fontSize = 22.sp,
                                     fontWeight = FontWeight.Black,
                                     color = colors.accent
                                 )
+                                if (userAvatarUrl != null) {
+                                    AsyncImage(
+                                        model = userAvatarUrl,
+                                        contentDescription = "Your profile picture",
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clip(CircleShape),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                }
                             }
                         }
                         Spacer(modifier = Modifier.height(16.dp))
@@ -734,10 +758,11 @@ fun MainScreen(
 }
 
 /**
- * A bottom-nav rail item: icon well with a centered text label BELOW it —
- * the standard premium bottom-nav stack. The label is always present (tint
- * marks the active tab together with the glow), so nothing animates layout,
- * nothing jumps, and the pill keeps one stable, thicker geometry.
+ * A bottom-nav rail item — strictly icon-only. The glyph sits vertically
+ * centered in the thick pill (full-height tap target); the active tab reads
+ * through the filled icon, accent tint and radial glow, so no text label is
+ * needed and nothing animates layout. `label` remains as the accessibility
+ * content description.
  */
 @Composable
 private fun NavRailItem(
@@ -756,13 +781,15 @@ private fun NavRailItem(
 
     Column(
         modifier = Modifier
+            .fillMaxHeight()
             .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(horizontal = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
         Box(
-            modifier = Modifier.size(34.dp),
+            modifier = Modifier.size(38.dp),
             contentAlignment = Alignment.Center
         ) {
             // K2 resolution: qualify the scope overload explicitly — the
@@ -799,18 +826,9 @@ private fun NavRailItem(
                 imageVector = if (selected) selectedIcon else icon,
                 contentDescription = label,
                 tint = tint,
-                modifier = Modifier.size(22.dp)
+                modifier = Modifier.size(24.dp)
             )
         }
-
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(
-            text = label,
-            style = AgoraType.NavLabel,
-            color = tint,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
     }
 }
 

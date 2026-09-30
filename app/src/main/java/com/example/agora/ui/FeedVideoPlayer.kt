@@ -25,6 +25,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.example.agora.media.FeedPlayerPool
 
@@ -86,6 +87,11 @@ fun FeedVideoPlayer(
                 PlayerView(ctx).apply {
                     player = exoPlayer
                     useController = false
+                    // ✦ Crop-to-fill: the video covers the whole cell exactly
+                    //    like a ContentScale.Crop photo — center-cropped, zero
+                    //    pillarbox bars. View-level property only; playback
+                    //    lifecycle and pool ownership are untouched.
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
