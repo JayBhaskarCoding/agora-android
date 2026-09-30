@@ -55,6 +55,16 @@ fun RegisterScreen(
         }
     }
 
+    // 🌟 Google-gate safety net: if the screen mounts straight into OTP mode
+    //    and no code has been dispatched yet (e.g. the sign-in-time send
+    //    failed on a flaky network), trigger the /otp dispatch now. The VM
+    //    flag keeps this idempotent — never a double send.
+    LaunchedEffect(initialOtpEmail) {
+        if (initialOtpEmail != null && !viewModel.googleOtpDispatched) {
+            viewModel.sendGoogleOtp(initialOtpEmail)
+        }
+    }
+
     VibrantGlassBackground(isDarkTheme = isDark) {
         Scaffold(
             snackbarHost = {
