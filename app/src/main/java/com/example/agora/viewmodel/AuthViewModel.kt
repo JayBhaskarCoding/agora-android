@@ -21,6 +21,7 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.providers.Google
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.auth.providers.builtin.IDToken
+import io.github.jan.supabase.auth.providers.builtin.OTP
 import kotlinx.coroutines.CancellationException
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.auth.user.UserInfo
@@ -888,6 +889,97 @@ class AuthViewModel : ViewModel() {
         }
     }
 
+    // =====================================================================================
+    // 🌟 ACCOUNT DELETION — 3-DAY GRACE PERIOD
+    //
+    // Confirmation is an inbox-ownership check via magic link: startAccountDeletion()
+    // asks GoTrue for a login OTP/magic link addressed to the registered email with
+    // redirect_to = agora://auth-callback?flow=delete-account. The browser verifies the
+    // token and deep-links back; supabaseClient.handleDeeplinks() (already wired in
+    // MainActivity) re-imports the session, and MainActivity then calls
+    // completeVerifiedDeletionRequest() — which stamps profiles.deletion_scheduled_at =
+    // now() + 3 days through the SECURITY DEFINER RPC. A daily pg_cron → process-deletions
+    // Edge Function permanently erases due accounts (storage media + auth.admin.deleteUser,
+    // FK-cascading profiles/posts/comments/likes/notifications/reports) even if the user
+    // logs out during the window. cancelAccountDeletion() is the "Revert Changes" path.
+    // =====================================================================================
+    private val deletionRedirectUrl = "agora://auth-callback?flow=delete-account"
+
+    private val _deletionFlowActive = MutableStateFlow(false)
+    val deletionFlowActive: StateFlow<Boolean> = _deletionFlowActive.asStateFlow()
+
+    private val _deletionLinkSentEmail = MutableStateFlow<String?>(null)
+    val deletionLinkSentEmail: StateFlow<String?> = _deletionLinkSentEmail.asStateFlow()
+
+    /** Step 1 — send the magic-link confirmation to the registered email. */
+    fun startAccountDeletion() {
+        val email = supabaseClient.auth.currentUserOrNull()?.email
+            ?: _profileState.value?.email
+        if (email.isNullOrBlank()) {
+            _errorMessage.value = "This account has no email address, so deletion cannot be verified."
+            return
+        }
+        viewModelScope.launch {
+            try {
+                clearError()
+                withContext(Dispatchers.IO) {
+                    supabaseClient.auth.signInWith(OTP, redirectUrl = deletionRedirectUrl) {
+                        this.email = email
+                        // Never provision a fresh identity from a deletion check.
+                        createUser = false
+                    }
+                }
+                _deletionFlowActive.value = true
+                _deletionLinkSentEmail.value = email
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                _errorMessage.value = handleAuthError(e)
+            }
+        }
+    }
+
+    /** Step 2 — the verified deep link came back: stamp the 3-day deadline. */
+    fun completeVerifiedDeletionRequest() {
+        viewModelScope.launch {
+            try {
+                clearError()
+                withContext(Dispatchers.IO) {
+                    supabaseClient.postgrest.rpc("request_account_deletion")
+                }
+                _deletionLinkSentEmail.value = null
+                refreshProfile()
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                _deletionFlowActive.value = false
+                _errorMessage.value = handleAuthError(e)
+            }
+        }
+    }
+
+    /** Revert Changes — clears deletion_scheduled_at back to NULL. */
+    fun cancelAccountDeletion(onFinished: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                clearError()
+                withContext(Dispatchers.IO) {
+                    supabaseClient.postgrest.rpc("cancel_account_deletion")
+                }
+                refreshProfile()
+                onFinished(true)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                _errorMessage.value = handleAuthError(e)
+                onFinished(false)
+            }
+        }
+    }
+
+    /** One-shot consumption of the "route me to PendingDeletion" trigger. */
+    fun consumeDeletionFlow() {
+        _deletionFlowActive.value = false
+        _deletionLinkSentEmail.value = null
+    }
+
     fun signOut() {
         val previousJob = sessionConflictJob
         val previousChannel = activeSessionChannel
@@ -902,6 +994,10 @@ class AuthViewModel : ViewModel() {
         _isOnboarding.value = false
         _awaitingOtp.value = false
         _otpEmail.value = ""
+        // Deletion UI state resets, but a stamped deletion_scheduled_at stays in
+        // the database on purpose — the cron job runs even after logout.
+        _deletionFlowActive.value = false
+        _deletionLinkSentEmail.value = null
         _passwordResetStep.value = null
         _errorMessage.value = null
         _remoteLogoutEvent.value = false

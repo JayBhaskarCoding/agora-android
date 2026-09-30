@@ -424,6 +424,15 @@ fun MainScreen(
                         AccountDetailsScreen(
                             viewModel = authViewModel,
                             themeViewModel = themeViewModel,
+                            onBack = { navController.popBackStack() },
+                            onNavigateToPendingDeletion = { navController.navigate("pending_deletion") }
+                        )
+                    }
+
+                    // 🌟 3-day account-deletion grace window: status + Revert Changes.
+                    composable("pending_deletion") {
+                        PendingDeletionScreen(
+                            viewModel = authViewModel,
                             onBack = { navController.popBackStack() }
                         )
                     }

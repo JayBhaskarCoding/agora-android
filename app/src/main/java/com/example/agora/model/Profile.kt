@@ -19,5 +19,9 @@ data class Profile(
     /** Single-device login claim: device id of the device currently allowed to hold the session. */
     @SerialName("current_device_id")
     val currentDeviceId: String? = null,
-    val email: String? = null
+    val email: String? = null,
+    /** 🌟 When non-null the account is in the 3-day deletion grace window: it
+     *  will be permanently erased at this instant by the backend cron job. */
+    @SerialName("deletion_scheduled_at")
+    val deletionScheduledAt: String? = null
 )

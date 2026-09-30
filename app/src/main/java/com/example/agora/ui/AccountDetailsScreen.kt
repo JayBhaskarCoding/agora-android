@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Person
@@ -91,7 +92,8 @@ fun getTimeAgo(instantString: String?): String {
 fun AccountDetailsScreen(
     viewModel: AuthViewModel,
     themeViewModel: ThemeViewModel = viewModel(),
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onNavigateToPendingDeletion: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -104,6 +106,14 @@ fun AccountDetailsScreen(
 
     var profile by remember { mutableStateOf<Profile?>(null) }
     var isUploading by remember { mutableStateOf(false) }
+
+    // 🌟 Account-deletion state: the live column value comes from the VM's
+    //    profileState (refreshProfile() republishes it after the RPCs); the
+    //    local one-shot fetch seeds the fallback.
+    val liveProfile by viewModel.profileState.collectAsState()
+    val deletionFlowActive by viewModel.deletionFlowActive.collectAsState()
+    val deletionLinkSentEmail by viewModel.deletionLinkSentEmail.collectAsState()
+    val deletionScheduledAt = liveProfile?.deletionScheduledAt ?: profile?.deletionScheduledAt
 
     var firstName by remember { mutableStateOf("") }
     var lastName by remember { mutableStateOf("") }
@@ -160,6 +170,23 @@ fun AccountDetailsScreen(
             lastName = fetchedProfile.lastName ?: ""
             gender = fetchedProfile.gender ?: ""
             dob = fetchedProfile.dob ?: ""
+        }
+    }
+
+    LaunchedEffect(deletionLinkSentEmail) {
+        deletionLinkSentEmail?.let { email ->
+            snackbarHostState.showSnackbar(
+                "Confirmation link sent to $email — open it to schedule deletion."
+            )
+        }
+    }
+
+    // 🌟 After the verified deep link schedules the deletion, route to the
+    //    pending-deletion screen exactly once.
+    LaunchedEffect(deletionScheduledAt, deletionFlowActive) {
+        if (!deletionScheduledAt.isNullOrBlank() && deletionFlowActive) {
+            viewModel.consumeDeletionFlow()
+            onNavigateToPendingDeletion()
         }
     }
 
@@ -566,6 +593,39 @@ fun AccountDetailsScreen(
                     .fillMaxWidth()
                     .padding(bottom = 10.dp, start = 6.dp)
             )
+
+            // 🌟 Delete Account — magic-link verified, 3-day grace, fully revertible.
+            //    If a deletion is already scheduled, this becomes the entry point
+            //    to the PendingDeletionScreen instead of re-sending a link.
+            OutlinedButton(
+                onClick = {
+                    if (!deletionScheduledAt.isNullOrBlank()) {
+                        onNavigateToPendingDeletion()
+                    } else {
+                        viewModel.startAccountDeletion()
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = CircleShape,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+            ) {
+                Icon(
+                    Icons.Default.DeleteForever,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = if (!deletionScheduledAt.isNullOrBlank()) "Deletion Pending — View" else "Delete Account",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
 
             OutlinedButton(
                 onClick = { viewModel.signOut() },
