@@ -16,12 +16,18 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.33.1";
  *   2. auth.admin.deleteUser(uid) — which cascades through
  *      profiles → posts/comments/post_likes/notifications/reports via FK.
  *
- *   soft (close account, keep posts):
+ *   soft — the "Ghost Migration" (migration 20990101000007):
  *   1. purge only the avatar (profile PII) — post media stays live,
- *   2. anonymize the profile row and flag status = 'closed' so clients
- *      mask the author as "Removed User" while keeping the @handle,
- *   3. permanently ban the auth user (NEVER deleteUser — the profiles FK
- *      cascades from auth.users and would erase the posts we must keep).
+ *   2. close_account_ghost() RPC atomically removes the user's likes and
+ *      comments (decrementing the denormalized post counters), anonymizes
+ *      the profile row, flags status = 'closed', stores the SHA-256 ghost
+ *      hash of the real email and keeps the @handle locked,
+ *   3. detach the real email from auth.users — replaced by an irreversible
+ *      dummy under @ghost.agora (GoTrue syncs the email identity too, see
+ *      internal/api/admin.go) so the person can register a fresh account
+ *      with their real address later — and permanently ban the ghost
+ *      (NEVER deleteUser: the profiles FK cascade would erase the kept
+ *      posts).
  *
  * Works regardless of session state: a user who logs out during the grace
  * window is still processed on schedule.
@@ -58,6 +64,17 @@ async function deleteFolder(storage: StorageClient, bucket: string, prefix: stri
   for (const sub of subFolders) {
     await deleteFolder(storage, bucket, sub);
   }
+}
+
+/** Lowercase hex SHA-256 of `input` — must match
+ *  encode(extensions.digest(input, 'sha256'), 'hex') in Postgres. Callers
+ *  normalize (trim + lowercase) before hashing, same as the SQL side. */
+async function sha256Hex(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 serve(async (req) => {
@@ -97,43 +114,57 @@ serve(async (req) => {
       const mode = (row.deletion_mode as string | null) ?? "hard";
       try {
         if (mode === "soft") {
-          // SOFT: close the account but keep its posts under a
-          // "Removed User" alias.
+          // SOFT — the "Ghost Migration": close the account, keep its posts
+          // under the "Removed User" alias, and detach the real email so it
+          // can register a brand-new account later.
           // 1. The avatar is profile PII — purge it. Post media stays live.
           await deleteFolder(supabase.storage, "avatars", uid);
 
-          // 2. Anonymize the profile row and flag it closed so clients mask
-          //    the author. The handle stays in place (locked to the removed
-          //    user) and the deadline is cleared so cron never reprocesses.
-          const { error: closeError } = await supabase
+          // 2. Resolve the account's real email for the ghost hash:
+          //    profiles.email first, GoTrue as fallback (covers partial
+          //    re-runs where the profile row was already anonymized).
+          const { data: profileRow } = await supabase
             .from("profiles")
-            .update({
-              status: "closed",
-              first_name: null,
-              last_name: null,
-              avatar_url: null,
-              gender: null,
-              dob: null,
-              email: null,
-              fcm_token: null,
-              current_device_id: null,
-              active_session_id: null,
-              deletion_scheduled_at: null,
-            })
-            .eq("id", uid);
+            .select("email")
+            .eq("id", uid)
+            .maybeSingle();
+          let realEmail = ((profileRow?.email as string | null) ?? "").trim().toLowerCase();
+          if (!realEmail) {
+            const { data: authRow } = await supabase.auth.admin.getUserById(uid);
+            const candidate = (authRow?.user?.email ?? "").trim().toLowerCase();
+            if (candidate && !candidate.endsWith("@ghost.agora")) realEmail = candidate;
+          }
+          const emailHash = realEmail ? await sha256Hex(realEmail) : null;
+
+          // 3. Atomic DB-side close: likes/comments removed (post counters
+          //    decremented), profile anonymized + flagged closed, ghost hash
+          //    stored, handle kept & locked, deadline cleared so cron never
+          //    reprocesses this row.
+          const { error: closeError } = await supabase.rpc("close_account_ghost", {
+            p_uid: uid,
+            p_email_hash: emailHash,
+          });
           if (closeError) throw closeError;
 
-          // 3. Permanently ban the auth user. NEVER deleteUser here —
-          //    profiles reference auth.users ON DELETE CASCADE, which would
-          //    erase the profile row and (via its own cascades) every post.
-          const { error: banError } = await supabase.auth.admin.updateUserById(
-            uid,
-            { ban_duration: "none" },
-          );
+          // 4. Detach the real email from auth.users — replaced by an
+          //    irreversible dummy under @ghost.agora (admin update syncs the
+          //    email identity too, so signup's duplicate check no longer sees
+          //    the real address) — and permanently ban the ghost. NEVER
+          //    deleteUser here: profiles reference auth.users ON DELETE
+          //    CASCADE, which would erase the posts we must keep.
+          const ghostEmail =
+            `ghost_${(await sha256Hex(`${uid}:${Date.now()}`)).slice(0, 40)}@ghost.agora`;
+          const { error: banError } = await supabase.auth.admin.updateUserById(uid, {
+            email: ghostEmail,
+            email_confirm: true,
+            ban_duration: "none",
+          });
           if (banError) throw banError;
 
           closed.push(uid);
-          console.log(`Closed expired account ${uid} (soft delete — posts kept)`);
+          console.log(
+            `Ghosted expired account ${uid} (posts kept, email ${emailHash ? "detached" : "already absent"})`,
+          );
         } else {
           // HARD: full, permanent erase.
           // 1. Storage media first — these rows never cascade from auth.users.

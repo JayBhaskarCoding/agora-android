@@ -46,6 +46,10 @@ fun RegisterScreen(
     val coroutineScope = rememberCoroutineScope()
     val isDark = LocalDarkTheme.current
 
+    // 🌟 Ghost-account gate: this email belongs to a previously closed account
+    //    whose posts were kept — the user must accept wiping them first.
+    var showGhostDialog by remember { mutableStateOf(false) }
+
     LaunchedEffect(rawErrorMessage) {
         rawErrorMessage?.let { error ->
             coroutineScope.launch {
@@ -53,6 +57,51 @@ fun RegisterScreen(
                 viewModel.clearError()
             }
         }
+    }
+
+    if (showGhostDialog) {
+        AlertDialog(
+            onDismissRequest = { showGhostDialog = false },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            title = { Text("Closed Account Found", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "An account previously registered with this email was closed, " +
+                        "but its posts were kept. Proceeding will permanently delete " +
+                        "all historic posts linked to this email."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showGhostDialog = false
+                        // Wipe the kept ghost posts first, then fire the standard
+                        // registration OTP for the (now free) email.
+                        viewModel.wipeHistoricGhostData(email) {
+                            viewModel.startRegistration(email)
+                        }
+                    }
+                ) {
+                    Text(
+                        "Proceed",
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showGhostDialog = false }) {
+                    Text(
+                        "Cancel",
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        )
     }
 
     VibrantGlassBackground(isDarkTheme = isDark) {
@@ -183,8 +232,18 @@ fun RegisterScreen(
                                         val isReal = EmailValidator.isEmailReal(email)
                                         job.cancel()
 
-                                        if (isReal) viewModel.startRegistration(email)
-                                        else snackbarHostState.showSnackbar("This email address does not appear to be active.")
+                                        if (!isReal) {
+                                            snackbarHostState.showSnackbar("This email address does not appear to be active.")
+                                            return@launch
+                                        }
+
+                                        // 🌟 Ghost intercept: if this email was attached to a
+                                        //    previously closed account, confirm the historic-post
+                                        //    wipe before the signup OTP is sent.
+                                        viewModel.checkClosedAccountEmail(email) { isGhost ->
+                                            if (isGhost) showGhostDialog = true
+                                            else viewModel.startRegistration(email)
+                                        }
                                     }
                                 },
                                 modifier = Modifier
