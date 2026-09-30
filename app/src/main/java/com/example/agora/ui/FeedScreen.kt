@@ -747,7 +747,8 @@ private fun FeedTopBar(
                         modifier = Modifier.size(18.dp)
                     )
                 }
-            }        }
+            }
+        }
 
 
         // ✦ Feather zone — gradient only: no blur, no clip, nothing to cut a
