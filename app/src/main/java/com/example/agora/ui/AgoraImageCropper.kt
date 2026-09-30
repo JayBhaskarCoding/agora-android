@@ -42,6 +42,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import com.example.agora.ui.theme.LocalDarkTheme
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -90,14 +91,6 @@ import kotlin.math.roundToInt
  *    pipeline consumed from uCrop.
  */
 
-/** Fixed Noir chrome for the always-dark immersive editor. */
-private val CropCanvas = Color(0xFF06070C)
-private val CropToolbarTop = Color(0xFF12141D).copy(alpha = 0.92f)
-private val CropToolbarBottom = Color(0xFF12141D).copy(alpha = 0.72f)
-private val CropAccent = Color(0xFF818CF8)
-private val CropTextPrimary = Color(0xFFF4F5FA)
-private val CropTextSecondary = Color(0xFFA9AEC0)
-private val CropHairline = Color.White.copy(alpha = 0.10f)
 
 /** Stage facts shared by the draw pass, the gesture handler and the saver. */
 private data class CropGeometry(
@@ -136,6 +129,22 @@ fun AgoraImageCropDialog(
     var winRect by remember { mutableStateOf(Rect.Zero) }
 
     val geometry = remember { mutableStateOf(CropGeometry()) }
+
+    // 🌟 Theme-aware editor chrome: obsidian noir in dark mode; frosted pearl
+    //    bars, charcoal ink and an indigo accent in light mode. The media
+    //    viewport (dim wash, grid lines, corner knobs) deliberately stays dark
+    //    in both themes — the photo-editor convention for accurate colour
+    //    judgement against the image.
+    val isDarkChrome = LocalDarkTheme.current
+    val CropCanvas = if (isDarkChrome) Color(0xFF06070C) else Color(0xFFF1F2F4)
+    val CropToolbarTop = if (isDarkChrome) Color(0xFF12141D).copy(alpha = 0.92f) else Color.White.copy(alpha = 0.88f)
+    val CropToolbarBottom = if (isDarkChrome) Color(0xFF12141D).copy(alpha = 0.72f) else Color.White.copy(alpha = 0.72f)
+    val CropAccent = if (isDarkChrome) Color(0xFF818CF8) else Color(0xFF4F46E5)
+    val CropTextPrimary = if (isDarkChrome) Color(0xFFF4F5FA) else Color(0xFF1C1C1E)
+    val CropTextSecondary = if (isDarkChrome) Color(0xFFA9AEC0) else Color(0xFF5B5F66)
+    val CropHairline = if (isDarkChrome) Color.White.copy(alpha = 0.10f) else Color(0xFF1C1C1E).copy(alpha = 0.10f)
+    val CropChipIdle = if (isDarkChrome) Color.White.copy(alpha = 0.07f) else Color(0xFF1C1C1E).copy(alpha = 0.05f)
+    val CropChipBorder = if (isDarkChrome) Color.White.copy(alpha = 0.25f) else Color(0xFF1C1C1E).copy(alpha = 0.22f)
 
     LaunchedEffect(sourceUri) {
         val decoded = decodeOrientedBitmap(context, sourceUri)
@@ -180,7 +189,7 @@ fun AgoraImageCropDialog(
                         modifier = Modifier
                             .size(40.dp)
                             .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.07f))
+                            .background(CropChipIdle)
                             .border(1.dp, CropHairline, CircleShape)
                             .clickable { if (!isSaving) onDismiss() },
                         contentAlignment = Alignment.Center
@@ -203,7 +212,7 @@ fun AgoraImageCropDialog(
 
                     val canConfirm = bitmap != null && !isSaving
                     val confirmBg by animateColorAsState(
-                        targetValue = if (canConfirm) CropAccent else Color.White.copy(alpha = 0.07f),
+                        targetValue = if (canConfirm) CropAccent else CropChipIdle,
                         animationSpec = tween(180),
                         label = "CropConfirmBg"
                     )
@@ -214,7 +223,7 @@ fun AgoraImageCropDialog(
                             .background(confirmBg)
                             .border(
                                 1.dp,
-                                if (canConfirm) Color.White.copy(alpha = 0.25f) else CropHairline,
+                                if (canConfirm) CropChipBorder else CropHairline,
                                 CircleShape
                             )
                             .clickable(enabled = canConfirm) {
@@ -512,7 +521,7 @@ fun AgoraImageCropDialog(
                     CropRatioLabels.forEachIndexed { index, label ->
                         val active = index == ratioIndex
                         val pillBg by animateColorAsState(
-                            targetValue = if (active) CropAccent else Color.White.copy(alpha = 0.07f),
+                            targetValue = if (active) CropAccent else CropChipIdle,
                             animationSpec = tween(180),
                             label = "RatioPillBg$index"
                         )
@@ -527,7 +536,7 @@ fun AgoraImageCropDialog(
                                 .background(pillBg)
                                 .border(
                                     1.dp,
-                                    if (active) Color.White.copy(alpha = 0.25f) else CropHairline,
+                                    if (active) CropChipBorder else CropHairline,
                                     CircleShape
                                 )
                                 .clickable {

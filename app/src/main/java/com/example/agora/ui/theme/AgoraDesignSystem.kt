@@ -16,7 +16,7 @@ import androidx.compose.ui.unit.sp
  *
  * A move away from translucent "glass everywhere" toward an editorial-luxury
  * language: deep obsidian canvases, solid sculpted cards with hairline borders
- * and a top specular sheen, warm paper tones in light mode, and an
+ * and a top specular sheen, cool pearl tones in light mode, and an
  * indigo → violet → fuchsia accent used sparingly.
  *
  * These tokens are consumed ONLY by the reimagined feed layer
@@ -83,24 +83,24 @@ private val DarkAgoraColors = AgoraColors(
 
 private val LightAgoraColors = AgoraColors(
     isDark = false,
-    canvasTop = Color(0xFFFAF9F5),
-    canvasBottom = Color(0xFFEFEDE5),
+    canvasTop = Color(0xFFF8F9FA),
+    canvasBottom = Color(0xFFF1F2F4),
     auroraPrimary = Color(0xFFA5B4FC),
     auroraSecondary = Color(0xFF7DD3FC),
     auroraTertiary = Color(0xFFF0ABFC),
     cardSurface = Color(0xFFFFFFFF),
     cardSheen = Color.White.copy(alpha = 0.6f),
-    cardBorder = Color(0xFFE7E4DB),
-    cardElevation = 10.dp,
-    hairline = Color(0xFFECEAE2),
-    insetSurface = Color(0xFFF3F1EA),
-    textPrimary = Color(0xFF16181D),
+    cardBorder = Color(0xFFE5E5EA),
+    cardElevation = 12.dp,
+    hairline = Color(0xFFEBEBEF),
+    insetSurface = Color(0xFFF1F2F4),
+    textPrimary = Color(0xFF1C1C1E),
     textSecondary = Color(0xFF5B5F66),
     textTertiary = Color(0xFF9A9DA6),
     accent = Color(0xFF4F46E5),
     accentSoft = Color(0xFF4F46E5).copy(alpha = 0.10f),
     onAccent = Color(0xFFFFFFFF),
-    mediaPlate = Color(0xFFF0EEE7),
+    mediaPlate = Color(0xFFEDEEF1),
     scrim = Color(0xFF111318).copy(alpha = 0.42f),
     success = Color(0xFF059669),
     danger = Color(0xFFDC2626)

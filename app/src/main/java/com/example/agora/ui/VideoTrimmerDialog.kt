@@ -81,6 +81,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.ui.PlayerView
 import com.example.agora.media.ExoPlayerHelper
+import com.example.agora.ui.theme.LocalDarkTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -107,14 +108,6 @@ import kotlin.math.abs
  * output exactly as before.
  */
 
-private val TrimSurface = Color(0xFF12141D).copy(alpha = 0.96f)
-private val TrimBarTop = Color(0xFF12141D).copy(alpha = 0.92f)
-private val TrimBarBottom = Color(0xFF12141D).copy(alpha = 0.72f)
-private val TrimHairline = Color.White.copy(alpha = 0.10f)
-private val TrimAccent = Color(0xFF818CF8)
-private val TrimTextPrimary = Color(0xFFF4F5FA)
-private val TrimTextSecondary = Color(0xFFA9AEC0)
-private val TrimCell = Color(0xFF1C1F2B)
 private const val MIN_TRIM_MS = 1000f
 private const val FILMSTRIP_CELLS = 10
 
@@ -127,6 +120,11 @@ fun VideoTrimmerDialog(
     onTrimConfirmed: (startMs: Long, endMs: Long) -> Unit,
     onCancel: () -> Unit
 ) {
+    // 🌟 Theme-aware chrome (light: white glass sheet + silver hairline).
+    val isDarkChrome = LocalDarkTheme.current
+    val TrimSurface = if (isDarkChrome) Color(0xFF12141D).copy(alpha = 0.96f) else Color.White.copy(alpha = 0.98f)
+    val TrimHairline = if (isDarkChrome) Color.White.copy(alpha = 0.10f) else Color(0xFF1C1C1E).copy(alpha = 0.10f)
+
     Dialog(
         onDismissRequest = onCancel,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -162,6 +160,22 @@ fun VideoTrimmerContent(
     onTrimConfirmed: (startMs: Long, endMs: Long) -> Unit,
     onCancel: () -> Unit
 ) {
+
+
+    // 🌟 Theme-aware editor chrome: obsidian noir in dark mode; frosted pearl
+    //    bars, charcoal ink and an indigo accent in light mode. The media
+    //    viewport (preview plate, filmstrip dim, timeline ticks) stays dark in
+    //    both themes — video-editor convention for accurate judgement.
+    val isDarkChrome = LocalDarkTheme.current
+    val TrimBarTop = if (isDarkChrome) Color(0xFF12141D).copy(alpha = 0.92f) else Color.White.copy(alpha = 0.88f)
+    val TrimBarBottom = if (isDarkChrome) Color(0xFF12141D).copy(alpha = 0.72f) else Color.White.copy(alpha = 0.72f)
+    val TrimHairline = if (isDarkChrome) Color.White.copy(alpha = 0.10f) else Color(0xFF1C1C1E).copy(alpha = 0.10f)
+    val TrimAccent = if (isDarkChrome) Color(0xFF818CF8) else Color(0xFF4F46E5)
+    val TrimTextPrimary = if (isDarkChrome) Color(0xFFF4F5FA) else Color(0xFF1C1C1E)
+    val TrimTextSecondary = if (isDarkChrome) Color(0xFFA9AEC0) else Color(0xFF5B5F66)
+    val TrimCell = if (isDarkChrome) Color(0xFF1C1F2B) else Color(0xFFF1F2F4)
+    val TrimChipIdle = if (isDarkChrome) Color.White.copy(alpha = 0.07f) else Color(0xFF1C1C1E).copy(alpha = 0.05f)
+    val TrimChipBorder = if (isDarkChrome) Color.White.copy(alpha = 0.25f) else Color(0xFF1C1C1E).copy(alpha = 0.22f)
     val context = LocalContext.current
 
     var isPlaying by remember { mutableStateOf(true) }
@@ -281,8 +295,8 @@ fun VideoTrimmerContent(
                         },
                         enabled = !isCompressing && durationMs > 0f,
                         background = if (!isCompressing && durationMs > 0f) TrimAccent
-                        else Color.White.copy(alpha = 0.07f),
-                        border = if (!isCompressing && durationMs > 0f) Color.White.copy(alpha = 0.25f)
+                        else TrimChipIdle,
+                        border = if (!isCompressing && durationMs > 0f) TrimChipBorder
                         else TrimHairline
                     ) {
                         if (isCompressing) {
@@ -555,7 +569,7 @@ fun VideoTrimmerContent(
                                     .background(TrimCell)
                                     .border(
                                         width = 1.dp,
-                                        color = Color.White.copy(alpha = 0.04f)
+                                        color = if (isDarkChrome) Color.White.copy(alpha = 0.04f) else Color(0xFF1C1C1E).copy(alpha = 0.06f)
                                     )
                             )
                         }
@@ -610,7 +624,7 @@ fun VideoTrimmerContent(
                             .height(4.dp)
                             .clip(CircleShape),
                         color = TrimAccent,
-                        trackColor = Color.White.copy(alpha = 0.08f)
+                        trackColor = TrimChipIdle
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
@@ -631,8 +645,8 @@ fun VideoTrimmerContent(
 private fun GlassChip(
     onClick: () -> Unit,
     enabled: Boolean = true,
-    background: Color = Color.White.copy(alpha = 0.07f),
-    border: Color = TrimHairline,
+    background: Color = if (LocalDarkTheme.current) Color.White.copy(alpha = 0.07f) else Color(0xFF1C1C1E).copy(alpha = 0.05f),
+    border: Color = if (LocalDarkTheme.current) Color.White.copy(alpha = 0.10f) else Color(0xFF1C1C1E).copy(alpha = 0.10f),
     content: @Composable BoxScope.() -> Unit
 ) {
     Box(
