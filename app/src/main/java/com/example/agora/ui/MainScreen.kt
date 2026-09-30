@@ -156,7 +156,9 @@ fun MainScreen(
                         .decodeSingle<Profile>()
                 }
                 userHandle = "@${profile.handle}"
-                userAvatarUrl = profile.avatarUrl
+                // Strict normalization: a blank avatar URL counts as "no
+                // avatar", so the initial-fallback logic stays honest.
+                userAvatarUrl = profile.avatarUrl?.takeIf { it.isNotBlank() }
             } catch (_: Exception) {
                 userHandle = "@user"
                 userAvatarUrl = null
@@ -247,17 +249,19 @@ fun MainScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 // 🌟 Dynamic avatar: the logged-in user's real profile
-                                // picture. The initial badge stays painted UNDERNEATH as
-                                // the graceful fallback — if the avatar is null or the
-                                // network load fails, the image layer simply never draws
-                                // and the initial shows through (no error painter needed).
+                                // picture, read from the fetched Profile state. The
+                                // initial badge stays painted UNDERNEATH as the strict
+                                // fallback — it only remains visible when the remote URL
+                                // is null/empty or the load fails. Coil decodes async, so
+                                // a slow network simply keeps the initial on screen until
+                                // the photo arrives — no spinner, no crash path.
                                 Text(
                                     text = userHandle.trimStart('@').take(1).uppercase(),
                                     fontSize = 22.sp,
                                     fontWeight = FontWeight.Black,
                                     color = colors.accent
                                 )
-                                if (userAvatarUrl != null) {
+                                if (!userAvatarUrl.isNullOrBlank()) {
                                     AsyncImage(
                                         model = userAvatarUrl,
                                         contentDescription = "Your profile picture",
@@ -514,7 +518,7 @@ fun MainScreen(
                 val isHome = currentRoute == "feed"
                 val isProfileTab = currentRoute?.startsWith("profile") == true &&
                     navBackStackEntry?.arguments?.getString("userId") == null
-                val pillShape = RoundedCornerShape(34.dp)
+                val pillShape = RoundedCornerShape(28.dp) // half of the 56dp pill = perfect semicircle ends
 
                 Box(
                     modifier = Modifier
@@ -525,7 +529,10 @@ fun MainScreen(
                 ) {
                     Row(
                         modifier = Modifier
-                            .height(80.dp)
+                            // ✦ Slim standard 56dp pill — icon-only content keeps it
+                            //    compact and sleek; the 52dp FAB sits inscribed with its
+                            //    bloom fading exactly at the edge.
+                            .height(56.dp)
                             .shadow(
                                 elevation = 22.dp,
                                 shape = pillShape,
@@ -759,7 +766,7 @@ fun MainScreen(
 
 /**
  * A bottom-nav rail item — strictly icon-only. The glyph sits vertically
- * centered in the thick pill (full-height tap target); the active tab reads
+ * centered in the slim pill (full-height tap target); the active tab reads
  * through the filled icon, accent tint and radial glow, so no text label is
  * needed and nothing animates layout. `label` remains as the accessibility
  * content description.
