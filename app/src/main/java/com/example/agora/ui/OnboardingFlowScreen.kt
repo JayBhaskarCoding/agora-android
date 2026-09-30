@@ -135,6 +135,11 @@ fun OnboardingFlowScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
+                // 🌟 Keyboard push-up: the IME inset becomes bottom content
+                //    padding INSIDE the scroll region, so tapping Bio/Username
+                //    pans the focused field and its Continue button smoothly
+                //    above the on-screen keyboard.
+                .imePadding()
                 .padding(horizontal = 24.dp, vertical = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
