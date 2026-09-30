@@ -82,6 +82,34 @@ class AuthViewModel : ViewModel() {
     private val _userState = MutableStateFlow<UserInfo?>(null)
     val userState: StateFlow<UserInfo?> = _userState.asStateFlow()
 
+    // 🌟 Full profile row (handle, avatar_url, …) for the signed-in user —
+    //    the single source of truth feeding the drawer header. Screens call
+    //    [refreshProfile] whenever identity may have changed (route changes,
+    //    avatar edits) and collect [profileState] reactively.
+    private val _profileState = MutableStateFlow<Profile?>(null)
+    val profileState: StateFlow<Profile?> = _profileState.asStateFlow()
+
+    /** Re-fetches `profiles` for the current user; cheap enough to call on every route change. */
+    fun refreshProfile() {
+        val uid = supabaseClient.auth.currentUserOrNull()?.id
+        if (uid == null) {
+            _profileState.value = null
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val profile = withContext(Dispatchers.IO) {
+                    supabaseClient.from("profiles")
+                        .select { filter { eq("id", uid) } }
+                        .decodeSingle<Profile>()
+                }
+                _profileState.value = profile
+            } catch (e: Exception) {
+                Log.w("AuthViewModel", "refreshProfile failed: ${e.message}")
+            }
+        }
+    }
+
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
