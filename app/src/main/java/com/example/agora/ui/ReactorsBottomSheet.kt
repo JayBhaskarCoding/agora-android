@@ -1,6 +1,7 @@
 package com.example.agora.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -14,15 +15,29 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.agora.model.ReactorDetails
 
+/**
+ * ✦ Reactions bottom sheet — reusable wherever a reaction count/button lives.
+ *
+ * Three body states driven by [isLoading] and [reactorsList]:
+ *   loading → centered spinner (ONLY while a fetch is in flight),
+ *   empty   → centered "No reactions yet" invitation,
+ *   loaded  → LazyColumn of reactor rows (avatar, name, @username, emoji),
+ *              each row tappable through [onUserClick] to open that profile.
+ *
+ * Styling stays theme-aware (Material colorScheme surfaces) so the premium
+ * dark/light look is preserved in both modes.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReactorsBottomSheet(
     reactorsList: List<ReactorDetails>,
+    isLoading: Boolean = false,
     onDismissRequest: () -> Unit,
     onUserClick: (String) -> Unit = {}
 ) {
@@ -47,7 +62,8 @@ fun ReactorsBottomSheet(
                 modifier = Modifier.padding(bottom = 16.dp)
             )
 
-            if (reactorsList.isEmpty()) {
+            if (isLoading) {
+                // ✦ Actively fetching — and only then — show the spinner.
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -55,6 +71,24 @@ fun ReactorsBottomSheet(
                     contentAlignment = Alignment.Center
                 ) {
                     CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                }
+            } else if (reactorsList.isEmpty()) {
+                // ✦ Fetch finished with nothing — the old code spun forever here.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(horizontal = 24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "No reactions yet. Be the first to show some appreciation!",
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
                 }
             } else {
                 LazyColumn(
@@ -66,6 +100,9 @@ fun ReactorsBottomSheet(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(CircleShape)
+                                // 🌟 Avatar + name (the whole row) navigate to the
+                                //    reactor's profile.
+                                .clickable { onUserClick(reactor.userId) }
                                 .padding(4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {

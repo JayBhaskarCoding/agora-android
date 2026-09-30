@@ -33,6 +33,7 @@ import com.example.agora.model.Post
 import com.example.agora.model.PostLike
 import com.example.agora.model.Profile
 import com.example.agora.model.ReactorDetails
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
@@ -130,37 +131,51 @@ class FeedViewModel : ViewModel() {
     private val _reactorsList = MutableStateFlow<List<ReactorDetails>>(emptyList())
     val reactorsList: StateFlow<List<ReactorDetails>> = _reactorsList.asStateFlow()
 
+    /** True only while a reactors fetch is in flight — the sheet shows its
+     *  spinner exclusively on this flag, so an empty result can render the
+     *  "no reactions yet" state instead of spinning forever. */
+    private val _reactorsLoading = MutableStateFlow(false)
+    val reactorsLoading: StateFlow<Boolean> = _reactorsLoading.asStateFlow()
+
     var selectedPostIdForReactors by mutableStateOf<String?>(null)
 
     fun loadReactors(postId: String) {
         selectedPostIdForReactors = postId
         viewModelScope.launch {
             _reactorsList.value = emptyList()
+            _reactorsLoading.value = true
             try {
                 val fetchedReactors = withContext(Dispatchers.IO) {
+                    // Newest first, capped at 50 rows to keep the sheet light.
+                    // The join carries profiles.status so closed (ghost)
+                    // accounts can be masked as "Removed User" here too.
                     val rawList = supabaseClient.from("post_likes").select(
-                        columns = Columns.raw("reaction_type, user_id, profiles!fk_post_likes_user_id(id, first_name, last_name, handle, avatar_url)")
+                        columns = Columns.raw("reaction_type, user_id, profiles!post_likes_user_id_fkey(id, first_name, last_name, handle, avatar_url, status)")
                     ) {
                         filter { eq("post_id", postId) }
+                        order("created_at", Order.DESCENDING)
                         limit(50)
                     }.decodeList<JsonObject>()
 
                     rawList.map { json ->
-                        val reactionType = json["reaction_type"]?.jsonPrimitive?.content ?: "❤️"
-                        val userId = json["user_id"]?.jsonPrimitive?.content ?: ""
+                        // contentOrNull (not content): SQL NULLs arrive as JsonNull
+                        // whose .content is the literal string "null".
+                        val reactionType = json["reaction_type"]?.jsonPrimitive?.contentOrNull ?: "❤️"
+                        val userId = json["user_id"]?.jsonPrimitive?.contentOrNull ?: ""
                         val profileObj = json["profiles"] as? JsonObject
-                        val firstName = profileObj?.get("first_name")?.jsonPrimitive?.content ?: "User"
-                        val lastName = profileObj?.get("last_name")?.jsonPrimitive?.content ?: ""
-                        val handle = profileObj?.get("handle")?.jsonPrimitive?.content ?: "user"
-                        val avatarUrl = profileObj?.get("avatar_url")?.jsonPrimitive?.content
+                        val isClosed = profileObj?.get("status")?.jsonPrimitive?.contentOrNull == "closed"
+                        val firstName = profileObj?.get("first_name")?.jsonPrimitive?.contentOrNull ?: "User"
+                        val lastName = profileObj?.get("last_name")?.jsonPrimitive?.contentOrNull ?: ""
+                        val handle = profileObj?.get("handle")?.jsonPrimitive?.contentOrNull ?: "user"
+                        val avatarUrl = profileObj?.get("avatar_url")?.jsonPrimitive?.contentOrNull
 
                         val fullName = listOf(firstName, lastName).filter { it.isNotBlank() }.joinToString(" ").ifBlank { "User" }
 
                         ReactorDetails(
                             userId = userId,
-                            displayName = fullName,
+                            displayName = if (isClosed) "Removed User" else fullName,
                             username = "@$handle",
-                            avatarUrl = avatarUrl,
+                            avatarUrl = if (isClosed) null else avatarUrl,
                             reactionType = reactionType
                         )
                     }
@@ -170,6 +185,8 @@ class FeedViewModel : ViewModel() {
                 if (e is CancellationException) throw e
                 e.printStackTrace()
                 _reactorsList.value = emptyList()
+            } finally {
+                _reactorsLoading.value = false
             }
         }
     }

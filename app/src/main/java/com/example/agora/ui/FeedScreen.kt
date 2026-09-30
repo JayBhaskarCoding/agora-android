@@ -361,9 +361,9 @@ fun GlobalFeedScreen(
                             onUserClicked = onUser,
                             onOptionsClicked = onOptions,
                             onShowReactorsClick = {
-                                if (post.likes > 0) {
-                                    viewModel.loadReactors(post.id)
-                                }
+                                // Always open — even at 0 the sheet shows its
+                                // "no reactions yet" empty state.
+                                viewModel.loadReactors(post.id)
                             }
                         )
                     }
@@ -628,12 +628,19 @@ fun GlobalFeedScreen(
 
     // --- REACTORS BOTTOM SHEET ---
     val reactorsList by viewModel.reactorsList.collectAsState()
+    val reactorsLoading by viewModel.reactorsLoading.collectAsState()
     val selectedPostIdForReactors = viewModel.selectedPostIdForReactors
 
     if (selectedPostIdForReactors != null) {
         ReactorsBottomSheet(
             reactorsList = reactorsList,
-            onDismissRequest = { viewModel.selectedPostIdForReactors = null }
+            isLoading = reactorsLoading,
+            onDismissRequest = { viewModel.selectedPostIdForReactors = null },
+            onUserClick = { userId ->
+                // Dismiss the sheet first, then jump to the reactor's profile.
+                viewModel.selectedPostIdForReactors = null
+                onNavigateToProfile(userId)
+            }
         )
     }
 }
@@ -887,9 +894,12 @@ fun PostCard(
                 .border(width = 1.dp, color = colors.cardBorder, shape = cardShape)
         ) {
             // ── Identity header ──────────────────────────────────────────
+            // 🌟 The WHOLE header (avatar + name + @handle + time) navigates to
+            //    the author's profile — not just the small avatar.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .clickable { onUserClicked() }
                     .padding(start = 16.dp, end = 12.dp, top = 14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -906,8 +916,7 @@ fun PostCard(
                                     listOf(colors.cardBorder, colors.cardBorder)
                                 )
                             }
-                        )
-                        .clickable { onUserClicked() },
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Box(
@@ -1050,7 +1059,7 @@ fun PostCard(
                     style = AgoraType.Count,
                     color = likeColor,
                     modifier = Modifier
-                        .clickable(enabled = post.likes > 0) { onShowReactorsClick() }
+                        .clickable { onShowReactorsClick() }
                         .padding(horizontal = 6.dp, vertical = 10.dp)
                 )
 
