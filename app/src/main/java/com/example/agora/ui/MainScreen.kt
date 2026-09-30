@@ -518,21 +518,22 @@ fun MainScreen(
                 val isHome = currentRoute == "feed"
                 val isProfileTab = currentRoute?.startsWith("profile") == true &&
                     navBackStackEntry?.arguments?.getString("userId") == null
-                val pillShape = RoundedCornerShape(30.dp) // half of the 60dp pill = stadium ends
+                val pillShape = RoundedCornerShape(percent = 50) // true pill: semicircle ends at any height
 
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .navigationBarsPadding()
-                        .padding(bottom = 18.dp),
+                        // ✦ Floating dock margins — the pill hovers above the feed.
+                        .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Row(
                         modifier = Modifier
-                            // ✦ Wide floating stadium pill (reference design): spans
-                            //    ~78% of the width at 60dp tall with the three controls
-                            //    evenly distributed — home | create | profile.
-                            .fillMaxWidth(0.78f)
+                            // ✦ Floating glass dock: full width inside the 16dp side
+                            //    margins, slim 60dp tall, three controls evenly spaced —
+                            //    home | create | profile. No text labels anywhere.
+                            .fillMaxWidth()
                             .height(60.dp)
                             .shadow(
                                 elevation = 22.dp,
@@ -541,8 +542,22 @@ fun MainScreen(
                                 ambientColor = Color.Black.copy(alpha = 0.12f)
                             )
                             .hazeChild(state = hazeState, shape = pillShape, blurRadius = 40.dp)
-                            .background(colors.cardSurface.copy(alpha = if (colors.isDark) 0.82f else 0.90f))
-                            .border(width = 1.dp, color = colors.cardBorder, shape = pillShape)
+                            // ✦ Dark translucent glass slab — the hazeChild above
+                            //    frosts the feed behind it on capable devices.
+                            .background(colors.cardSurface.copy(alpha = if (colors.isDark) 0.80f else 0.90f))
+                            // ✦ 3D top-lit glass edge: vertical gradient hairline —
+                            //    subtle highlight up top fading to near-transparent below.
+                            .border(
+                                width = 1.dp,
+                                brush = Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color.White.copy(alpha = 0.30f),
+                                        Color.White.copy(alpha = 0.10f),
+                                        Color.White.copy(alpha = 0.02f)
+                                    )
+                                ),
+                                shape = pillShape
+                            )
                             .padding(horizontal = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -755,7 +770,7 @@ fun MainScreen(
 
 /**
  * A bottom-nav rail item — strictly icon-only, filling an even share of the
- * wide stadium pill (full-height tap target). Per the reference design the
+ * floating glass dock (full-height tap target). Per the reference design the
  * active tab reads through the filled glyph in accent tint (no glow bloom);
  * idle tabs sit in a lighter neutral tint. `label` remains as the
  * accessibility content description.
@@ -786,11 +801,12 @@ private fun NavRailItem(
     ) {
         // Reference design: no glow bloom — the active tab reads purely
         // through the filled glyph in accent tint against the light idle tint.
+        // Compact original glyph size — sits perfectly in the slim dock.
         Icon(
             imageVector = if (selected) selectedIcon else icon,
             contentDescription = label,
             tint = tint,
-            modifier = Modifier.size(26.dp)
+            modifier = Modifier.size(22.dp)
         )
     }
 }
