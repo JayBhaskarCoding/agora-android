@@ -42,7 +42,7 @@ object GlassTokens {
     val DarkSurface: Color = Color(0xFF12141D)
     val DarkSurfaceSubtle: Color = Color(0xFF1C1F2B)
     val LightSurface: Color = Color(0xFFFFFFFF)
-    val LightSurfaceSubtle: Color = Color(0xFFF3F1EA)
+    val LightSurfaceSubtle: Color = Color(0xFFF1F2F4)
 
     // Hairline edges
     val DarkBorder: Brush = Brush.linearGradient(
@@ -54,8 +54,8 @@ object GlassTokens {
 
     val LightBorder: Brush = Brush.linearGradient(
         colors = listOf(
-            Color(0xFFE7E4DB),
-            Color(0xFFEDEAE1)
+            Color(0xFFE3E4E9),
+            Color(0xFFEDEEF2)
         )
     )
 

@@ -17,7 +17,7 @@ import androidx.compose.ui.unit.dp
  * ✦ AGORA NOIR CANVAS
  *
  * The app-wide ambient background, matching the home feed exactly: a deep
- * obsidian vertical gradient (warm paper in light mode) with soft aurora
+ * obsidian vertical gradient (cool pearl in light mode) with soft aurora
  * washes painted as radial-gradient brushes — no runtime blur modifiers, so
  * the whole canvas costs a single raster pass.
  *
@@ -42,9 +42,9 @@ fun VibrantGlassBackground(
                         )
                     } else {
                         listOf(
-                            Color(0xFFFAF9F5),
-                            Color(0xFFF5F3ED),
-                            Color(0xFFEFEDE5)
+                            Color(0xFFF8F9FA),
+                            Color(0xFFF4F5F7),
+                            Color(0xFFF1F2F4)
                         )
                     }
                 )

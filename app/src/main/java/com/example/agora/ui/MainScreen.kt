@@ -542,8 +542,8 @@ fun MainScreen(
                             .shadow(
                                 elevation = 22.dp,
                                 shape = pillShape,
-                                spotColor = Color.Black.copy(alpha = if (colors.isDark) 0.55f else 0.20f),
-                                ambientColor = Color.Black.copy(alpha = 0.12f)
+                                spotColor = Color.Black.copy(alpha = if (colors.isDark) 0.55f else 0.10f),
+                                ambientColor = Color.Black.copy(alpha = if (colors.isDark) 0.12f else 0.05f)
                             )
                             .clip(pillShape)
                             // ✦ True frosted glass: Haze replays the feed behind the
@@ -648,8 +648,10 @@ fun MainScreen(
                                     .shadow(
                                         elevation = 8.dp,
                                         shape = CircleShape,
-                                        spotColor = Color(0xFF6366F1).copy(alpha = 0.45f),
-                                        ambientColor = Color(0xFF8B5CF6).copy(alpha = 0.20f)
+                                        // Dark: signature indigo glow. Light: soft,
+                                        // diffused neutral drop shadow — no glow.
+                                        spotColor = if (colors.isDark) Color(0xFF6366F1).copy(alpha = 0.45f) else Color.Black.copy(alpha = 0.18f),
+                                        ambientColor = if (colors.isDark) Color(0xFF8B5CF6).copy(alpha = 0.20f) else Color.Black.copy(alpha = 0.08f)
                                     )
                                     .clip(CircleShape)
                                     // ✦ Create-button colour deliberately kept from the

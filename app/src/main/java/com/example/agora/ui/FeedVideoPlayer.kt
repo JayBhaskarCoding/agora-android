@@ -8,11 +8,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.VolumeOff
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,7 +30,8 @@ import com.example.agora.media.FeedPlayerPool
  * Inline feed video cell.
  *
  * Players come from [FeedPlayerPool] (bounded reuse — no create/destroy churn
- * while scrolling), mute is session-global, and playback never autoplays here;
+ * while scrolling), previews always play muted — audio lives in the fullscreen
+ * player — and playback never autoplays here;
  * tapping opens the fullscreen player.
  */
 @OptIn(UnstableApi::class)
@@ -123,24 +121,6 @@ fun FeedVideoPlayer(
                 contentDescription = "Open Fullscreen Video",
                 tint = Color.White,
                 modifier = Modifier.size(36.dp)
-            )
-        }
-
-        // Persistent Mute/Unmute toggle button in bottom right
-        IconButton(
-            onClick = { FeedPlayerPool.setMuted(!isMuted) },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(12.dp)
-                .clip(CircleShape)
-                .background(Color.Black.copy(alpha = 0.55f))
-                .size(36.dp)
-        ) {
-            Icon(
-                imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
-                contentDescription = "Toggle Mute",
-                tint = Color.White,
-                modifier = Modifier.size(20.dp)
             )
         }
     }

@@ -373,8 +373,8 @@ fun CreatePostScreen(
                         .fillMaxWidth(0.96f)
                         .fillMaxHeight(0.92f),
                     shape = RoundedCornerShape(28.dp),
-                    color = Color(0xFF12141D).copy(alpha = 0.96f),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.09f))
+                    color = if (isDarkTheme) Color(0xFF12141D).copy(alpha = 0.96f) else Color.White.copy(alpha = 0.98f),
+                    border = BorderStroke(1.dp, if (isDarkTheme) Color.White.copy(alpha = 0.09f) else Color(0xFFE3E4E9))
                 ) {
                     VideoTrimmerContent(
                         videoUri = editingUri,

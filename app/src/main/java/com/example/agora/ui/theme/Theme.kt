@@ -27,7 +27,7 @@ private val Shape22 = RoundedCornerShape(22.dp)
 private val Shape28 = RoundedCornerShape(28.dp)
 
 // ✦ AGORA NOIR — the global MaterialTheme now speaks the same language as the
-//   feed design system: obsidian canvases, solid graphite surfaces, warm paper
+//   feed design system: obsidian canvases, solid graphite surfaces, cool pearl
 //   light mode, hairline outlines and the brand indigo accent.
 private val LightColorScheme = lightColorScheme(
     primary = AgoraIndigo,

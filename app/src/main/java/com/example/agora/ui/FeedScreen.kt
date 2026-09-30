@@ -853,8 +853,10 @@ fun PostCard(
                 .shadow(
                     elevation = colors.cardElevation,
                     shape = cardShape,
-                    spotColor = Color(0xFF1F2430).copy(alpha = 0.16f),
-                    ambientColor = Color(0xFF1F2430).copy(alpha = 0.10f)
+                    // 🌟 Light mode: soft, diffused black hover shadow instead
+                    //    of the dark mode's deeper slate cast.
+                    spotColor = if (colors.isDark) Color(0xFF1F2430).copy(alpha = 0.16f) else Color.Black.copy(alpha = 0.07f),
+                    ambientColor = if (colors.isDark) Color(0xFF1F2430).copy(alpha = 0.10f) else Color.Black.copy(alpha = 0.05f)
                 )
                 .clip(cardShape)
                 .background(colors.cardSurface)
