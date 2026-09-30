@@ -37,6 +37,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
+import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.Order
 import io.github.jan.supabase.realtime.PostgresAction
@@ -137,25 +138,49 @@ class FeedViewModel : ViewModel() {
     private val _reactorsLoading = MutableStateFlow(false)
     val reactorsLoading: StateFlow<Boolean> = _reactorsLoading.asStateFlow()
 
+    /** Non-null when the reactors fetch FAILED — the sheet must show this
+     *  (with a retry) instead of masquerading a failure as "no reactions". */
+    private val _reactorsError = MutableStateFlow<String?>(null)
+    val reactorsError: StateFlow<String?> = _reactorsError.asStateFlow()
+
     var selectedPostIdForReactors by mutableStateOf<String?>(null)
 
     fun loadReactors(postId: String) {
         selectedPostIdForReactors = postId
         viewModelScope.launch {
             _reactorsList.value = emptyList()
+            _reactorsError.value = null
             _reactorsLoading.value = true
             try {
                 val fetchedReactors = withContext(Dispatchers.IO) {
                     // Newest first, capped at 50 rows to keep the sheet light.
                     // The join carries profiles.status so closed (ghost)
                     // accounts can be masked as "Removed User" here too.
-                    val rawList = supabaseClient.from("post_likes").select(
-                        columns = Columns.raw("reaction_type, user_id, profiles!post_likes_user_id_fkey(id, first_name, last_name, handle, avatar_url, status)")
-                    ) {
-                        filter { eq("post_id", postId) }
-                        order("created_at", Order.DESCENDING)
-                        limit(50)
-                    }.decodeList<JsonObject>()
+                    val rawList = try {
+                        supabaseClient.from("post_likes").select(
+                            columns = Columns.raw("reaction_type, user_id, profiles!post_likes_user_id_fkey(id, first_name, last_name, handle, avatar_url, status)")
+                        ) {
+                            filter { eq("post_id", postId) }
+                            order("created_at", Order.DESCENDING)
+                            limit(50)
+                        }.decodeList<JsonObject>()
+                    } catch (schemaError: PostgrestRestException) {
+                        // Graceful degradation: on a live DB that predates the
+                        // created_at (20990101000009) / status (20990101000006)
+                        // migrations the full query 400s. Retry the plain shape —
+                        // unordered, no ghost masking — so real reactions still
+                        // render instead of a false "no reactions yet".
+                        Log.w(
+                            "FeedViewModel",
+                            "loadReactors: full query rejected (${schemaError.message}); falling back to plain shape"
+                        )
+                        supabaseClient.from("post_likes").select(
+                            columns = Columns.raw("reaction_type, user_id, profiles!post_likes_user_id_fkey(id, first_name, last_name, handle, avatar_url)")
+                        ) {
+                            filter { eq("post_id", postId) }
+                            limit(50)
+                        }.decodeList<JsonObject>()
+                    }
 
                     rawList.map { json ->
                         // contentOrNull (not content): SQL NULLs arrive as JsonNull
@@ -183,8 +208,9 @@ class FeedViewModel : ViewModel() {
                 _reactorsList.value = fetchedReactors
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                e.printStackTrace()
+                Log.e("FeedViewModel", "loadReactors failed for post $postId: ${e.localizedMessage}", e)
                 _reactorsList.value = emptyList()
+                _reactorsError.value = "Couldn't load reactions. Please try again."
             } finally {
                 _reactorsLoading.value = false
             }

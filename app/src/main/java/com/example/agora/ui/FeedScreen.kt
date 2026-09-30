@@ -629,12 +629,15 @@ fun GlobalFeedScreen(
     // --- REACTORS BOTTOM SHEET ---
     val reactorsList by viewModel.reactorsList.collectAsState()
     val reactorsLoading by viewModel.reactorsLoading.collectAsState()
+    val reactorsError by viewModel.reactorsError.collectAsState()
     val selectedPostIdForReactors = viewModel.selectedPostIdForReactors
 
     if (selectedPostIdForReactors != null) {
         ReactorsBottomSheet(
             reactorsList = reactorsList,
             isLoading = reactorsLoading,
+            errorMessage = reactorsError,
+            onRetry = { selectedPostIdForReactors?.let { viewModel.loadReactors(it) } },
             onDismissRequest = { viewModel.selectedPostIdForReactors = null },
             onUserClick = { userId ->
                 // Dismiss the sheet first, then jump to the reactor's profile.
@@ -894,83 +897,91 @@ fun PostCard(
                 .border(width = 1.dp, color = colors.cardBorder, shape = cardShape)
         ) {
             // ── Identity header ──────────────────────────────────────────
-            // 🌟 The WHOLE header (avatar + name + @handle + time) navigates to
-            //    the author's profile — not just the small avatar.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onUserClicked() }
                     .padding(start = 16.dp, end = 12.dp, top = 14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Avatar — sweep-gradient ring only for the viewer's own posts.
-                Box(
-                    modifier = Modifier
-                        .size(46.dp)
-                        .clip(CircleShape)
-                        .background(
-                            brush = if (isOwnPost) {
-                                AgoraRingGradient
-                            } else {
-                                Brush.linearGradient(
-                                    listOf(colors.cardBorder, colors.cardBorder)
-                                )
-                            }
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(colors.insetSurface),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (post.userAvatarUrl != null) {
-                            AsyncImage(
-                                model = post.userAvatarUrl,
-                                contentDescription = "Avatar",
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Default.Person,
-                                contentDescription = "Default Avatar",
-                                tint = colors.textTertiary,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-                    }
-                }
-
-                Column(
+                // 🌟 Profile tap target: an inner Row wrapping ONLY the avatar and
+                //    the name/@handle block. weight(1f) pushes the overflow chip to
+                //    the far right as a completely independent click target — the
+                //    ripple never spans the empty space or overlaps the "..." menu.
+                Row(
                     modifier = Modifier
                         .weight(1f)
-                        .padding(start = 12.dp)
+                        .clickable { onUserClicked() },
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = post.firstName,
-                        style = AgoraType.AuthorName,
-                        color = colors.textPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Avatar — sweep-gradient ring only for the viewer's own posts.
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(CircleShape)
+                            .background(
+                                brush = if (isOwnPost) {
+                                    AgoraRingGradient
+                                } else {
+                                    Brush.linearGradient(
+                                        listOf(colors.cardBorder, colors.cardBorder)
+                                    )
+                                }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(colors.insetSurface),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (post.userAvatarUrl != null) {
+                                AsyncImage(
+                                    model = post.userAvatarUrl,
+                                    contentDescription = "Avatar",
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Person,
+                                    contentDescription = "Default Avatar",
+                                    tint = colors.textTertiary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 12.dp)
+                    ) {
                         Text(
-                            text = "@${post.handle}",
-                            style = AgoraType.Meta,
-                            color = colors.textTertiary,
+                            text = post.firstName,
+                            style = AgoraType.AuthorName,
+                            color = colors.textPrimary,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
+                            overflow = TextOverflow.Ellipsis
                         )
-                        Text(
-                            text = "  ·  ${post.timeAgo}",
-                            style = AgoraType.Meta,
-                            color = colors.textTertiary
-                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "@${post.handle}",
+                                style = AgoraType.Meta,
+                                color = colors.textTertiary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            Text(
+                                text = "  ·  ${post.timeAgo}",
+                                style = AgoraType.Meta,
+                                color = colors.textTertiary
+                            )
+                        }
                     }
                 }
 

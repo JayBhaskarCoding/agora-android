@@ -24,9 +24,12 @@ import com.example.agora.model.ReactorDetails
 /**
  * ✦ Reactions bottom sheet — reusable wherever a reaction count/button lives.
  *
- * Three body states driven by [isLoading] and [reactorsList]:
+ * Four body states, checked in this exact order:
  *   loading → centered spinner (ONLY while a fetch is in flight),
- *   empty   → centered "No reactions yet" invitation,
+ *   error   → centered failure message + Retry ([onRetry]) — a failed fetch
+ *              must NEVER masquerade as "no reactions yet",
+ *   empty   → centered "No reactions yet" invitation, shown only when the
+ *              fetch finished cleanly and the list is genuinely empty,
  *   loaded  → LazyColumn of reactor rows (avatar, name, @username, emoji),
  *              each row tappable through [onUserClick] to open that profile.
  *
@@ -38,6 +41,8 @@ import com.example.agora.model.ReactorDetails
 fun ReactorsBottomSheet(
     reactorsList: List<ReactorDetails>,
     isLoading: Boolean = false,
+    errorMessage: String? = null,
+    onRetry: () -> Unit = {},
     onDismissRequest: () -> Unit,
     onUserClick: (String) -> Unit = {}
 ) {
@@ -72,8 +77,32 @@ fun ReactorsBottomSheet(
                 ) {
                     CircularProgressIndicator(modifier = Modifier.size(32.dp))
                 }
+            } else if (errorMessage != null) {
+                // ✦ The fetch FAILED — honest error + retry, never a false empty.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(horizontal = 24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = errorMessage,
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        TextButton(onClick = onRetry) {
+                            Text("Retry", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
             } else if (reactorsList.isEmpty()) {
-                // ✦ Fetch finished with nothing — the old code spun forever here.
+                // ✦ Fetch finished cleanly with nothing — the genuine empty state.
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
