@@ -614,6 +614,29 @@ class AuthViewModel : ViewModel() {
                 return@launch
             }
 
+            // 🌟 GHOST ACCOUNT INTERCEPT: an identifier belonging to a soft-closed
+            //    account (its locked username, or the email it was closed with) gets
+            //    a clear message instead of GoTrue's generic invalid-credentials
+            //    error — the ghost's auth email was detached to a @ghost.agora dummy.
+            try {
+                val closed = withContext(Dispatchers.IO) {
+                    supabaseClient.postgrest
+                        .rpc(
+                            "check_closed_account_login",
+                            buildJsonObject { put("p_identifier", input) }
+                        )
+                        .decodeAs<Boolean>()
+                }
+                if (closed) {
+                    _errorMessage.value = "This account is closed. You must register a new account to use this email."
+                    return@launch
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                // Fail open — an unreachable check must not lock out live accounts.
+                Log.w("AuthViewModel", "closed-account pre-login check failed: ${e.message}")
+            }
+
             var loginEmail = input
 
             // 🌟 USERNAME → EMAIL RESOLUTION: Supabase signInWith(Email) requires an
@@ -816,6 +839,53 @@ class AuthViewModel : ViewModel() {
                 if (e is CancellationException) throw e
                 _errorMessage.value = e.localizedMessage ?: "Failed to sign in with Google"
                 Log.e("GoogleAuth", "Google sign-in error: ${e.localizedMessage}", e)
+            }
+        }
+    }
+
+    /** 🌟 Ghost intercept (registration) — true when this email once belonged to a
+     *  soft-closed account whose posts were kept under the "Removed User" alias.
+     *  Anon-callable RPC (check_closed_account_email matches the SHA-256 ghost
+     *  hash stored at close time). Fails OPEN: if the lookup itself errors we
+     *  proceed with the normal registration flow rather than block signups. */
+    fun checkClosedAccountEmail(email: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val closed = withContext(Dispatchers.IO) {
+                    supabaseClient.postgrest
+                        .rpc(
+                            "check_closed_account_email",
+                            buildJsonObject { put("p_email", email.trim()) }
+                        )
+                        .decodeAs<Boolean>()
+                }
+                onResult(closed)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.w("AuthViewModel", "checkClosedAccountEmail failed: ${e.message}")
+                onResult(false)
+            }
+        }
+    }
+
+    /** 🌟 The "Proceed" hammer of the registration ghost dialog — permanently
+     *  deletes the closed account's kept posts (the RPC removes the profile row,
+     *  cascading posts/comments/likes/notifications/reports) before the fresh
+     *  signup fires. */
+    fun wipeHistoricGhostData(email: String, onDone: () -> Unit) {
+        viewModelScope.launch {
+            try {
+                clearError()
+                withContext(Dispatchers.IO) {
+                    supabaseClient.postgrest.rpc(
+                        "wipe_historic_ghost_data",
+                        buildJsonObject { put("p_email", email.trim()) }
+                    )
+                }
+                onDone()
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                _errorMessage.value = handleAuthError(e)
             }
         }
     }
