@@ -25,6 +25,7 @@ import kotlinx.coroutines.CancellationException
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.auth.user.UserInfo
 import io.github.jan.supabase.exceptions.RestException
+import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
@@ -956,6 +957,54 @@ class AuthViewModel : ViewModel() {
             } catch (e: Exception) {
                 _isOnboarding.value = false
                 _errorMessage.value = handleAuthError(e)
+            }
+        }
+    }
+
+    // =====================================================================================
+    // 🌟 CHANGE USERNAME — LOCAL EMAIL GATE + update_username RPC
+    // =====================================================================================
+
+    /** Step 1 — the identity gate, PURELY LOCAL per the guardrail: compares the typed
+     *  email against the session-cached auth user (currentUserOrNull() reads the
+     *  in-memory session — no network call). Exact match required; a mismatch returns
+     *  false so the caller can block the change and surface an error. */
+    fun isEmailVerifiedForUsernameChange(typedEmail: String): Boolean {
+        val sessionEmail = supabaseClient.auth.currentUserOrNull()?.email
+        return !sessionEmail.isNullOrBlank() && typedEmail.trim() == sessionEmail
+    }
+
+    /** Step 2 — push the new handle through the update_username RPC. The server
+     *  re-normalizes (trim, strip '@', lowercase) and re-validates 3-20 chars of
+     *  [a-z0-9_], then updates profiles.handle under its UNIQUE constraint; a
+     *  23505 comes back as a clean "Username already taken". Because every read
+     *  joins profiles live, all past/future posts, likes and comments pick the new
+     *  handle up automatically — and refreshProfile() flips profileState so the
+     *  Compose UI recomposes globally the instant the update lands. */
+    fun updateUsername(newUsername: String, onSuccess: () -> Unit) {
+        val normalized = newUsername.trim().removePrefix("@").lowercase()
+        if (!normalized.matches(Regex("^[a-z0-9_]{3,20}$"))) {
+            _errorMessage.value = "Username must be 3-20 characters: lowercase letters, numbers or underscore."
+            return
+        }
+        viewModelScope.launch {
+            try {
+                clearError()
+                withContext(Dispatchers.IO) {
+                    supabaseClient.postgrest.rpc(
+                        "update_username",
+                        buildJsonObject { put("p_new_username", normalized) }
+                    )
+                }
+                refreshProfile()
+                onSuccess()
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                _errorMessage.value = if (e is PostgrestRestException && e.code == "23505") {
+                    "Username already taken. Please choose another."
+                } else {
+                    handleAuthError(e)
+                }
             }
         }
     }
