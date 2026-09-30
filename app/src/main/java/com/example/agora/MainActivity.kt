@@ -18,8 +18,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -44,7 +42,6 @@ import com.example.agora.ui.InAppNotificationManager
 import com.example.agora.ui.LoginScreen
 import com.example.agora.ui.MainScreen
 import com.example.agora.ui.OnboardingFlowScreen
-import com.example.agora.ui.OtpVerificationScreen
 import com.example.agora.ui.PasswordResetScreen
 import com.example.agora.ui.RegisterScreen
 import com.example.agora.ui.theme.AgoraTheme
@@ -334,22 +331,19 @@ class MainActivity : ComponentActivity() {
                                         }
                                     } else if (awaitingOtp) {
                                         // 🌟 OTP gate for authenticated-but-unverified sessions
-                                        //    (brand-new Google identities). verifyOtpCode flips
-                                        //    awaitingOtp→false / isOnboarding→true on success, so
-                                        //    this branch unmounts and the enter-details screen
-                                        //    takes over — a state switch, not a back-stack hop,
-                                        //    so back can never return to the OTP gate.
-                                        OtpVerificationScreen(
+                                        //    (brand-new Google identities): reuse the EXACT
+                                        //    RegisterScreen presentation (join-agora background +
+                                        //    floating glass card) instead of a bare screen.
+                                        //    initialOtpEmail injects the Google payload email and
+                                        //    starts the card straight in verification mode, so the
+                                        //    email form step is never rendered. verifyOtpCode
+                                        //    flips awaitingOtp→false / isOnboarding→true on
+                                        //    success — a state switch, not a back-stack hop, so
+                                        //    back can never return to an irrelevant step.
+                                        RegisterScreen(
                                             viewModel = authViewModel,
-                                            email = otpEmail,
-                                            // 🌟 Standalone host: this Surface applies no window
-                                            //    insets, so the gate pads itself clear of the
-                                            //    status bar and centers vertically — the title
-                                            //    never sits under the battery/wifi icons again.
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .statusBarsPadding()
-                                                .wrapContentSize(Alignment.Center)
+                                            onNavigateToLogin = { },
+                                            initialOtpEmail = otpEmail
                                         )
                                     } else if (isOnboarding) {
                                         OnboardingFlowScreen(
