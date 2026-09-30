@@ -158,12 +158,38 @@ fun PendingDeletionScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
+                    // 🌟 Reflect the mode picked on the DeletionModeScreen.
+                    val deletionMode = liveProfile?.deletionMode
+                    val modeCaption = when (deletionMode) {
+                        "soft" -> "Mode: Close Account — posts kept under \"Removed User\""
+                        "hard" -> "Mode: Delete Everything — full, permanent erase"
+                        else -> null
+                    }
+                    if (modeCaption != null) {
+                        Text(
+                            text = modeCaption,
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.accent,
+                            textAlign = TextAlign.Center
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+
                     Text(
-                        text = "You have a 3-day grace period. Until then, reverting keeps " +
-                            "your profile, posts and media exactly as they are. After the " +
-                            "deadline, a background job permanently erases your account and " +
-                            "everything attached to it — including if you log out in the " +
-                            "meantime. This cannot be undone once it runs.",
+                        text = if (deletionMode == "soft")
+                            "You have a 3-day grace period. Until then, reverting keeps " +
+                                "your account exactly as it is. After the deadline, your " +
+                                "profile is closed and anonymized — your posts stay visible " +
+                                "under \"Removed User\" and your username remains locked. " +
+                                "This cannot be undone once it runs."
+                        else
+                            "You have a 3-day grace period. Until then, reverting keeps " +
+                                "your profile, posts and media exactly as they are. After the " +
+                                "deadline, a background job permanently erases your account and " +
+                                "everything attached to it — including if you log out in the " +
+                                "meantime. This cannot be undone once it runs.",
                         fontSize = 13.5.sp,
                         lineHeight = 20.sp,
                         color = colors.textSecondary,

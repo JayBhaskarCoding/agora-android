@@ -124,6 +124,10 @@ fun AccountDetailsScreen(
     var showDatePicker by remember { mutableStateOf(false) }
     val datePickerState = rememberDatePickerState()
 
+    // 🌟 Destructive-action gate: Delete Account must be confirmed before the
+    //    reauthentication email is ever sent.
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+
     val hasChanges = profile != null && (
             firstName != profile?.firstName ||
                     lastName != (profile?.lastName ?: "") ||
@@ -182,6 +186,49 @@ fun AccountDetailsScreen(
             viewModel.consumeDeletionFlow()
             onNavigateToDeletionOtp()
         }
+    }
+
+    // 🌟 "Are you sure?" gate styled to match the glassmorphic surfaces.
+    if (showDeleteConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmDialog = false },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            title = { Text("Delete Account?", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "Are you sure you want to schedule your account for deletion? " +
+                        "You'll confirm it's really you with a 6-digit code, then " +
+                        "choose what gets erased. You can revert any time within " +
+                        "the 3-day window."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirmDialog = false
+                        viewModel.startAccountDeletion()
+                    }
+                ) {
+                    Text(
+                        "Yes, Proceed",
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmDialog = false }) {
+                    Text(
+                        "Cancel",
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        )
     }
 
     if (showDatePicker) {
@@ -596,7 +643,9 @@ fun AccountDetailsScreen(
                     if (!deletionScheduledAt.isNullOrBlank()) {
                         onNavigateToPendingDeletion()
                     } else {
-                        viewModel.startAccountDeletion()
+                        // Confirm first — the reauthentication code is only
+                        // sent after "Yes, Proceed".
+                        showDeleteConfirmDialog = true
                     }
                 },
                 modifier = Modifier
