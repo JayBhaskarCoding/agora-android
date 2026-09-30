@@ -518,7 +518,7 @@ fun MainScreen(
                 val isHome = currentRoute == "feed"
                 val isProfileTab = currentRoute?.startsWith("profile") == true &&
                     navBackStackEntry?.arguments?.getString("userId") == null
-                val pillShape = RoundedCornerShape(28.dp) // half of the 56dp pill = perfect semicircle ends
+                val pillShape = RoundedCornerShape(30.dp) // half of the 60dp pill = stadium ends
 
                 Box(
                     modifier = Modifier
@@ -529,10 +529,11 @@ fun MainScreen(
                 ) {
                     Row(
                         modifier = Modifier
-                            // ✦ Slim standard 56dp pill — icon-only content keeps it
-                            //    compact and sleek; the 52dp FAB sits inscribed with its
-                            //    bloom fading exactly at the edge.
-                            .height(56.dp)
+                            // ✦ Wide floating stadium pill (reference design): spans
+                            //    ~78% of the width at 60dp tall with the three controls
+                            //    evenly distributed — home | create | profile.
+                            .fillMaxWidth(0.78f)
+                            .height(60.dp)
                             .shadow(
                                 elevation = 22.dp,
                                 shape = pillShape,
@@ -540,14 +541,14 @@ fun MainScreen(
                                 ambientColor = Color.Black.copy(alpha = 0.12f)
                             )
                             .hazeChild(state = hazeState, shape = pillShape, blurRadius = 40.dp)
-                            .background(colors.cardSurface.copy(alpha = if (colors.isDark) 0.70f else 0.80f))
+                            .background(colors.cardSurface.copy(alpha = if (colors.isDark) 0.82f else 0.90f))
                             .border(width = 1.dp, color = colors.cardBorder, shape = pillShape)
-                            .padding(horizontal = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            .padding(horizontal = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         NavRailItem(
                             selected = isHome,
+                            modifier = Modifier.weight(1f),
                             label = "Home",
                             icon = Icons.Outlined.Home,
                             selectedIcon = Icons.Filled.Home,
@@ -573,35 +574,22 @@ fun MainScreen(
                             label = "FabScale"
                         )
                         Box(
-                            modifier = Modifier.padding(horizontal = 4.dp),
+                            modifier = Modifier.padding(horizontal = 2.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            // Accent bloom behind the button
                             Box(
                                 modifier = Modifier
-                                    .size(62.dp)
-                                    .background(
-                                        brush = Brush.radialGradient(
-                                            colorStops = arrayOf(
-                                                0f to colors.accent.copy(alpha = 0.26f),
-                                                0.6f to colors.accent.copy(alpha = 0.07f),
-                                                1f to Color.Transparent
-                                            )
-                                        ),
-                                        shape = CircleShape
-                                    )
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .size(52.dp)
+                                    .size(50.dp)
                                     .scale(fabScale)
                                     .shadow(
-                                        elevation = 14.dp,
+                                        elevation = 10.dp,
                                         shape = CircleShape,
-                                        spotColor = Color(0xFF6366F1).copy(alpha = 0.55f),
-                                        ambientColor = Color(0xFF8B5CF6).copy(alpha = 0.25f)
+                                        spotColor = Color(0xFF6366F1).copy(alpha = 0.45f),
+                                        ambientColor = Color(0xFF8B5CF6).copy(alpha = 0.20f)
                                     )
                                     .clip(CircleShape)
+                                    // ✦ Create-button colour deliberately kept from the
+                                    //    previous design: the violet→fuchsia gradient.
                                     .background(AgoraAccentGradient)
                                     .pointerInput(Unit) {
                                         detectTapGestures(
@@ -619,13 +607,14 @@ fun MainScreen(
                                     imageVector = Icons.Rounded.Add,
                                     contentDescription = "Create post",
                                     tint = Color.White,
-                                    modifier = Modifier.size(26.dp)
+                                    modifier = Modifier.size(24.dp)
                                 )
                             }
                         }
 
                         NavRailItem(
                             selected = isProfileTab,
+                            modifier = Modifier.weight(1f),
                             label = "Profile",
                             icon = Icons.Outlined.Person,
                             selectedIcon = Icons.Filled.Person,
@@ -765,15 +754,16 @@ fun MainScreen(
 }
 
 /**
- * A bottom-nav rail item — strictly icon-only. The glyph sits vertically
- * centered in the slim pill (full-height tap target); the active tab reads
- * through the filled icon, accent tint and radial glow, so no text label is
- * needed and nothing animates layout. `label` remains as the accessibility
- * content description.
+ * A bottom-nav rail item — strictly icon-only, filling an even share of the
+ * wide stadium pill (full-height tap target). Per the reference design the
+ * active tab reads through the filled glyph in accent tint (no glow bloom);
+ * idle tabs sit in a lighter neutral tint. `label` remains as the
+ * accessibility content description.
  */
 @Composable
 private fun NavRailItem(
     selected: Boolean,
+    modifier: Modifier = Modifier,
     label: String,
     icon: ImageVector,
     selectedIcon: ImageVector,
@@ -781,61 +771,27 @@ private fun NavRailItem(
 ) {
     val colors = rememberAgoraColors()
     val tint by animateColorAsState(
-        targetValue = if (selected) colors.accent else colors.textTertiary,
+        targetValue = if (selected) colors.accent else colors.textSecondary,
         animationSpec = tween(durationMillis = 220),
         label = "NavRailTint"
     )
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxHeight()
             .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp),
+            .clickable(onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Box(
-            modifier = Modifier.size(38.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            // K2 resolution: qualify the scope overload explicitly — the
-            // ColumnScope receiver cannot cross the BoxScope lambda boundary
-            // ("cannot be called with an implicit receiver"). enter/exit are
-            // fully specified (fade + scale), so behavior matches top-level.
-            this@Column.AnimatedVisibility(
-                visible = selected,
-                enter = fadeIn(tween(220)) + scaleIn(
-                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                    initialScale = 0.5f
-                ),
-                exit = fadeOut(tween(140)) + scaleOut(
-                    animationSpec = tween(140),
-                    targetScale = 0.5f
-                )
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            brush = Brush.radialGradient(
-                                colorStops = arrayOf(
-                                    0f to colors.accent.copy(alpha = 0.30f),
-                                    0.6f to colors.accent.copy(alpha = 0.08f),
-                                    1f to Color.Transparent
-                                )
-                            ),
-                            shape = CircleShape
-                        )
-                )
-            }
-            Icon(
-                imageVector = if (selected) selectedIcon else icon,
-                contentDescription = label,
-                tint = tint,
-                modifier = Modifier.size(24.dp)
-            )
-        }
+        // Reference design: no glow bloom — the active tab reads purely
+        // through the filled glyph in accent tint against the light idle tint.
+        Icon(
+            imageVector = if (selected) selectedIcon else icon,
+            contentDescription = label,
+            tint = tint,
+            modifier = Modifier.size(26.dp)
+        )
     }
 }
 
