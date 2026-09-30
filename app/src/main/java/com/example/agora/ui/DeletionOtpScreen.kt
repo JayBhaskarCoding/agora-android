@@ -28,7 +28,7 @@ import com.example.agora.viewmodel.AuthViewModel
  *  - subtitle: explains the code guards account deletion
  *  - submit:   [AuthViewModel.verifyDeletionOtp] → verify_deletion_otp RPC verifies the
  *              code against GoTrue's reauthentication token hash and, on a match, stamps
- *              the 3-day deadline → [onVerified] routes to PendingDeletionScreen.
+ *              the 3-day deadline → [onVerified] routes to DeletionModeScreen.
  *  - resend:   [AuthViewModel.resendDeletionOtp] (pure re-send, no navigation side effects)
  *
  * Wrong/expired codes surface through errorMessage → snackbar; the card stays up so the

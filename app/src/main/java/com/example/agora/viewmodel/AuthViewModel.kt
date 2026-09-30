@@ -953,8 +953,8 @@ class AuthViewModel : ViewModel() {
     }
 
     /** Step 2 — verify the 6-digit code; on success the RPC has already stamped
-     *  the 3-day deadline, so route to the pending-deletion screen. A wrong or
-     *  expired code surfaces a clear error and keeps the card up. */
+     *  the 3-day deadline and the flow proceeds to deletion-mode selection.
+     *  A wrong or expired code surfaces a clear error and keeps the card up. */
     fun verifyDeletionOtp(rawCode: String, onSuccess: () -> Unit) {
         val cleanCode = rawCode.trim()
         if (cleanCode.isBlank()) {
@@ -987,7 +987,30 @@ class AuthViewModel : ViewModel() {
         }
     }
 
-    /** Revert Changes — clears deletion_scheduled_at back to NULL. */
+    /** Step 3 — record the chosen deletion mode against the verified schedule.
+     *  'soft' closes the account but keeps posts under a "Removed User" alias;
+     *  'hard' erases everything. The RPC rejects the call unless
+     *  verify_deletion_otp() has already stamped the 3-day deadline. */
+    fun chooseDeletionMode(isSoftDelete: Boolean, onScheduled: () -> Unit) {
+        viewModelScope.launch {
+            try {
+                clearError()
+                withContext(Dispatchers.IO) {
+                    supabaseClient.postgrest.rpc(
+                        "choose_deletion_mode",
+                        buildJsonObject { put("p_is_soft", isSoftDelete) }
+                    )
+                }
+                refreshProfile()
+                onScheduled()
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                _errorMessage.value = handleAuthError(e)
+            }
+        }
+    }
+
+    /** Revert Changes — clears deletion_scheduled_at and the chosen mode back to NULL. */
     fun cancelAccountDeletion(onFinished: (Boolean) -> Unit) {
         viewModelScope.launch {
             try {

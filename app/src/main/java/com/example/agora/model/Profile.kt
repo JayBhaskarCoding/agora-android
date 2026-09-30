@@ -21,7 +21,14 @@ data class Profile(
     val currentDeviceId: String? = null,
     val email: String? = null,
     /** 🌟 When non-null the account is in the 3-day deletion grace window: it
-     *  will be permanently erased at this instant by the backend cron job. */
+     *  will be processed at this instant by the backend cron job. */
     @SerialName("deletion_scheduled_at")
-    val deletionScheduledAt: String? = null
+    val deletionScheduledAt: String? = null,
+    /** 🌟 Chosen deletion mode while scheduled: 'soft' = close the account and
+     *  keep posts under a "Removed User" alias, 'hard' = erase everything.
+     *  NULL until the user picks one on the DeletionModeScreen. */
+    @SerialName("deletion_mode")
+    val deletionMode: String? = null,
+    /** 'active' or 'closed' — closed accounts are soft-deleted and masked everywhere. */
+    val status: String? = "active"
 )

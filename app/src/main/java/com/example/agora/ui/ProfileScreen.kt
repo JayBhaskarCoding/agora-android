@@ -138,12 +138,20 @@ fun ProfileScreen(
         if (targetUserId != null) {
             try {
                 val profile = supabaseClient.from("profiles").select { filter { eq("id", targetUserId) } }.decodeSingle<Profile>()
+                // 🌟 Closed (soft-deleted) accounts are masked: generic name and
+                //    placeholder avatar — but the @username stays visible (it
+                //    remains locked to the removed user).
+                val isClosed = profile.status == "closed"
                 val formattedName = listOfNotNull(profile.firstName, profile.lastName)
                     .filter { it.isNotBlank() }
                     .joinToString(" ")
-                profileFullName = if (formattedName.isNotBlank()) formattedName else "User"
+                profileFullName = when {
+                    isClosed -> "Removed User"
+                    formattedName.isNotBlank() -> formattedName
+                    else -> "User"
+                }
                 handle = "@${profile.handle}"
-                avatarUrl = profile.avatarUrl
+                avatarUrl = if (isClosed) null else profile.avatarUrl
             } catch (e: Exception) {
                 profileFullName = "User"
                 handle = "@user"

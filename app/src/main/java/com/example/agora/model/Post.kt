@@ -12,7 +12,9 @@ data class AuthorProfile(
     @SerialName("first_name") val firstName: String? = "User",
     @SerialName("last_name") val lastName: String? = null,
     val handle: String? = "user",
-    @SerialName("avatar_url") val avatarUrl: String? = null
+    @SerialName("avatar_url") val avatarUrl: String? = null,
+    /** 'active' or 'closed' — closed accounts were soft-deleted and must be masked. */
+    val status: String? = "active"
 )
 
 /**
@@ -39,9 +41,16 @@ data class Post(
     val imageUrls: List<String> = mediaUrls.ifEmpty { fallbackImageUrls }
     val timeAgo: String = formatTimestamp(createdAt)
 
-    val firstName: String = authorProfile?.firstName?.ifBlank { null } ?: "User"
+    /** 🌟 True when the author soft-closed their account: the UI masks them as
+     *  "Removed User" with the generic avatar placeholder — but the @username
+     *  stays visible (it remains locked to the removed user). */
+    val isAuthorClosed: Boolean = authorProfile?.status == "closed"
+
+    val firstName: String =
+        if (isAuthorClosed) "Removed User"
+        else authorProfile?.firstName?.ifBlank { null } ?: "User"
     val handle: String = authorProfile?.handle?.ifBlank { null } ?: "user"
-    val userAvatarUrl: String? = authorProfile?.avatarUrl
+    val userAvatarUrl: String? = if (isAuthorClosed) null else authorProfile?.avatarUrl
 
     private fun formatTimestamp(instantString: String?): String {
         if (instantString.isNullOrBlank()) return "Just now"

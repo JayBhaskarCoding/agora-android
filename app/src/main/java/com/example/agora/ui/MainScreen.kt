@@ -432,15 +432,31 @@ fun MainScreen(
 
                     // 🌟 Reauthentication OTP for account deletion — the shared
                     //    OTP card in its deletion context. On success it swaps to
-                    //    the pending screen, dropping itself from the backstack
-                    //    so Back lands on Account Details, never on the code entry.
+                    //    the mode-selection screen, dropping itself from the
+                    //    backstack so Back never lands on the code entry.
                     composable("verify_deletion") {
                         DeletionOtpScreen(
                             viewModel = authViewModel,
                             onBack = { navController.popBackStack() },
                             onVerified = {
+                                navController.navigate("deletion_mode") {
+                                    popUpTo("verify_deletion") { inclusive = true }
+                                }
+                            }
+                        )
+                    }
+
+                    // 🌟 Soft-close vs hard-erase selection, reached only after the
+                    //    OTP was verified and the 3-day deadline stamped. On a
+                    //    recorded choice it swaps to the pending screen so Back
+                    //    lands on Account Details.
+                    composable("deletion_mode") {
+                        DeletionModeScreen(
+                            viewModel = authViewModel,
+                            onBack = { navController.popBackStack() },
+                            onScheduled = {
                                 navController.navigate("pending_deletion") {
-                                    popUpTo("account_details")
+                                    popUpTo("deletion_mode") { inclusive = true }
                                 }
                             }
                         )
