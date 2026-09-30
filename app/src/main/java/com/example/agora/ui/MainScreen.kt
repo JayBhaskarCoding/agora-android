@@ -62,7 +62,6 @@ import androidx.navigation.navArgument
 import androidx.navigation.navDeepLink
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import coil.request.listener
 import com.example.agora.data.supabaseClient
 import com.example.agora.model.Post
 import com.example.agora.navigation.DeepLinkRouter
