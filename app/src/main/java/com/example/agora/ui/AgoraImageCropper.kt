@@ -257,25 +257,38 @@ private fun CropStudio(
         fitBounds(bmp.width, bmp.height, stageSize.width.toFloat(), stageSize.height.toFloat())
     }
 
-    /* ── ✦ Auto-zoom: dynamic viewport math ──
-     * The selected region always maximizes the screen. The photo layer
-     * scales by min(stageW/cropW, stageH/cropH) and translates so
-     * cropRect.center lands exactly on stage.center — shrink the box and
-     * the image glides in, expand it and the image glides back out.
-     * cropRect itself is NEVER rescaled: it stays in absolute, unscaled
-     * Fit-bounds pixels, so handleAt/applyDrag and the createBitmap slice
-     * keep consuming pure image coordinates. No-bouncy springs make the
-     * zoom/pan follow the finger fluidly instead of snapping. */
+    /* ── ✦ Auto-zoom: dynamic viewport math — RELEASE-TRIGGERED ──
+     * The selected region always maximizes the screen: the photo layer
+     * scales by min(stageW/cropW, stageH/cropH) and translates so the
+     * crop center lands exactly on stage.center. But the viewport is
+     * framed against zoomRect, NOT the live cropRect: while a handle
+     * drag is active (isDragging), zoomRect FREEZES at the box captured
+     * in onDragStart — the photo holds perfectly still and the finger
+     * only moves the crop-overlay lines, never warping the image
+     * underneath itself. The instant the drag ends, zoomRect flips to
+     * the finalized cropRect, the targets recalculate and the springs
+     * glide the photo to the new framing. Preset pills never set
+     * isDragging, so a pill tap triggers the same recalculation (and
+     * buttery zoom) immediately. cropRect itself stays in absolute,
+     * unscaled Fit-bounds pixels throughout — handleAt/applyDrag and
+     * the createBitmap slice never see zoom values, and the screen-space
+     * overlay keeps every hairline stroke crisp at any zoom. */
+    var isDragging by remember { mutableStateOf(false) }
+    // The crop box as it was when the active drag began — the viewport
+    // stays framed on this until the finger lifts.
+    var dragStartCrop by remember { mutableStateOf(Rect.Zero) }
+
+    val zoomRect = if (isDragging) dragStartCrop else cropRect
     val zoomActive = stageSize != IntSize.Zero &&
-        cropRect != Rect.Zero && cropRect.width > 0f && cropRect.height > 0f
+        zoomRect != Rect.Zero && zoomRect.width > 0f && zoomRect.height > 0f
     val targetScale = if (zoomActive) {
-        min(stageSize.width / cropRect.width, stageSize.height / cropRect.height)
+        min(stageSize.width / zoomRect.width, stageSize.height / zoomRect.height)
     } else 1f
     val targetOffsetX = if (zoomActive) {
-        targetScale * (stageSize.width / 2f - cropRect.center.x)
+        targetScale * (stageSize.width / 2f - zoomRect.center.x)
     } else 0f
     val targetOffsetY = if (zoomActive) {
-        targetScale * (stageSize.height / 2f - cropRect.center.y)
+        targetScale * (stageSize.height / 2f - zoomRect.center.y)
     } else 0f
 
     val zoomSpec = spring<Float>(
@@ -508,6 +521,11 @@ private fun CropStudio(
 
                             detectDragGestures(
                                 onDragStart = { start ->
+                                    // ✦ Lock the viewport for the duration of the
+                                    // gesture: targets stay framed on the drag-start
+                                    // box so the photo can't shift under the finger.
+                                    isDragging = true
+                                    dragStartCrop = cropRect
                                     gestureStartScreen = start
                                     gestureStartRect = cropRect
                                     // Hit-test against the VISIBLE (zoomed) window —
@@ -537,8 +555,17 @@ private fun CropStudio(
                                         min0 = minWin
                                     )
                                 },
-                                onDragEnd = { activeHandle = NO_HANDLE },
-                                onDragCancel = { activeHandle = NO_HANDLE }
+                                onDragEnd = {
+                                    activeHandle = NO_HANDLE
+                                    // ✦ Finger lifted — zoomRect flips to the
+                                    // finalized cropRect and the springs glide the
+                                    // photo to frame the new selection.
+                                    isDragging = false
+                                },
+                                onDragCancel = {
+                                    activeHandle = NO_HANDLE
+                                    isDragging = false
+                                }
                             )
                         }
                 )
