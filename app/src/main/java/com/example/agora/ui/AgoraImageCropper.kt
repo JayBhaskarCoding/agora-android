@@ -420,20 +420,19 @@ private fun CropStudio(
                     // Corner brackets — rounded white Ls, the flagship look.
                     val arm = 22.dp.toPx()
                     val thick = 3.5.dp.toPx()
-                    val stroke = Stroke(width = thick, cap = StrokeCap.Round)
                     val white = Color.White
                     // TL
-                    drawLine(white, Offset(win.left, win.top), Offset(win.left + arm, win.top), stroke)
-                    drawLine(white, Offset(win.left, win.top), Offset(win.left, win.top + arm), stroke)
+                    drawLine(white, Offset(win.left, win.top), Offset(win.left + arm, win.top), thick, StrokeCap.Round)
+                    drawLine(white, Offset(win.left, win.top), Offset(win.left, win.top + arm), thick, StrokeCap.Round)
                     // TR
-                    drawLine(white, Offset(win.right, win.top), Offset(win.right - arm, win.top), stroke)
-                    drawLine(white, Offset(win.right, win.top), Offset(win.right, win.top + arm), stroke)
+                    drawLine(white, Offset(win.right, win.top), Offset(win.right - arm, win.top), thick, StrokeCap.Round)
+                    drawLine(white, Offset(win.right, win.top), Offset(win.right, win.top + arm), thick, StrokeCap.Round)
                     // BR
-                    drawLine(white, Offset(win.right, win.bottom), Offset(win.right - arm, win.bottom), stroke)
-                    drawLine(white, Offset(win.right, win.bottom), Offset(win.right, win.bottom - arm), stroke)
+                    drawLine(white, Offset(win.right, win.bottom), Offset(win.right - arm, win.bottom), thick, StrokeCap.Round)
+                    drawLine(white, Offset(win.right, win.bottom), Offset(win.right, win.bottom - arm), thick, StrokeCap.Round)
                     // BL
-                    drawLine(white, Offset(win.left, win.bottom), Offset(win.left + arm, win.bottom), stroke)
-                    drawLine(white, Offset(win.left, win.bottom), Offset(win.left, win.bottom - arm), stroke)
+                    drawLine(white, Offset(win.left, win.bottom), Offset(win.left + arm, win.bottom), thick, StrokeCap.Round)
+                    drawLine(white, Offset(win.left, win.bottom), Offset(win.left, win.bottom - arm), thick, StrokeCap.Round)
                 }
 
                 // 🌟 Gesture layer: detectDragGestures with 48dp invisible
