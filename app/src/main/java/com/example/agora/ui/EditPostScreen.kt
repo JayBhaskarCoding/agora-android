@@ -125,6 +125,10 @@ fun EditPostScreen(
     // swaps into the media list in place.
     var cropSourceUri by remember { mutableStateOf<Uri?>(null) }
 
+    // The EXISTING remote media currently in the fullscreen viewer — the same
+    // component the feed opens (pinch-zoom image / ExpandedVideoScreen player).
+    var expandedRemoteUrl by remember { mutableStateOf<String?>(null) }
+
     // 🌟 Task 2: Multi-Media Picker Launcher for appending new items
     val multiMediaPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 5)
@@ -286,12 +290,20 @@ fun EditPostScreen(
                                             .clickable {
                                                 val local = item.localUri
                                                 if (local != null) {
+                                                    // NEW local media → edit routing:
+                                                    // videos open the trim studio, photos
+                                                    // re-crop in the Compose-native studio.
                                                     if (item.isVideo) {
                                                         activeEditUri = local
                                                     } else {
-                                                        // Photos re-crop in the Compose-native studio.
                                                         cropSourceUri = local
                                                     }
+                                                } else if (item.remoteUrl != null) {
+                                                    // EXISTING remote media → view-only:
+                                                    // the same fullscreen viewer the feed
+                                                    // opens (image zoom / video player).
+                                                    // There is no local source to crop/trim.
+                                                    expandedRemoteUrl = item.remoteUrl
                                                 }
                                             }
                                     ) {
@@ -522,6 +534,16 @@ fun EditPostScreen(
                 }
                 cropSourceUri = null
             }
+        )
+    }
+
+    // 🌟 Fullscreen viewer for EXISTING remote media — view-only by design;
+    // the exact same component the home feed opens. Takes the plain remote
+    // URL string; video/image routing happens inside via isFeedVideoUrl.
+    expandedRemoteUrl?.let { mediaUrl ->
+        FullscreenMediaViewerDialog(
+            mediaUrl = mediaUrl,
+            onDismiss = { expandedRemoteUrl = null }
         )
     }
 }

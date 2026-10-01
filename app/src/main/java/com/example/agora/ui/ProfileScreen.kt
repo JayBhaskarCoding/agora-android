@@ -5,7 +5,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -30,20 +29,15 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.agora.data.supabaseClient
@@ -284,72 +278,13 @@ fun ProfileScreen(
     }
 
     // --- FULL SCREEN MEDIA VIEWER (IMAGE / VIDEO) ---
-    if (expandedImageUrl != null) {
-        val mediaUrl = expandedImageUrl!!
-        val isVideo = mediaUrl.contains(".mp4", ignoreCase = true) || mediaUrl.contains("video_", ignoreCase = true)
-
-        Dialog(
-            onDismissRequest = { expandedImageUrl = null },
-            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
-        ) {
-            if (isVideo) {
-                ExpandedVideoScreen(
-                    videoUrl = mediaUrl,
-                    onNavigateBack = { expandedImageUrl = null }
-                )
-            } else {
-                var scale by remember { mutableFloatStateOf(1f) }
-                var offset by remember { mutableStateOf(Offset.Zero) }
-
-                Box(
-                    modifier = Modifier.fillMaxSize().background(Color.Black),
-                    contentAlignment = Alignment.Center
-                ) {
-                    AsyncImage(
-                        model = mediaUrl,
-                        contentDescription = "Expanded Image",
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .pointerInput(Unit) {
-                                detectTransformGestures { _, pan, zoom, _ ->
-                                    scale = (scale * zoom).coerceIn(1f, 5f)
-                                    if (scale > 1f) {
-                                        val maxX = (size.width * (scale - 1)) / 2
-                                        val maxY = (size.height * (scale - 1)) / 2
-                                        offset = Offset(
-                                            x = (offset.x + pan.x * scale).coerceIn(-maxX, maxX),
-                                            y = (offset.y + pan.y * scale).coerceIn(-maxY, maxY)
-                                        )
-                                    } else {
-                                        offset = Offset.Zero
-                                    }
-                                }
-                            }
-                            .graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y),
-                        contentScale = ContentScale.Fit
-                    )
-
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .statusBarsPadding()
-                            .padding(16.dp)
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.55f))
-                            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
-                            .clickable {
-                                expandedImageUrl = null
-                                scale = 1f
-                                offset = Offset.Zero
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(20.dp))
-                    }
-                }
-            }
-        }
+    // 🌟 Shared component — the identical viewer on the feed, profile and
+    // edit-post screens (pinch-zoom images, ExpandedVideoScreen for videos).
+    expandedImageUrl?.let { mediaUrl ->
+        FullscreenMediaViewerDialog(
+            mediaUrl = mediaUrl,
+            onDismiss = { expandedImageUrl = null }
+        )
     }
 
     // --- COMMENTS BOTTOM SHEET ---
@@ -834,3 +769,7 @@ private fun ProfileTabSegment(
         )
     }
 }
+
+
+
+
