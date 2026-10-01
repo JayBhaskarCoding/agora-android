@@ -809,6 +809,7 @@ internal fun OptionsSheetRow(
  * Owner: Edit Post + Delete Post. Everyone else: Report Post. Rows use the
  * shared OptionsSheetRow so styling can never drift between screens again.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun PostOptionsSheet(
     isOwner: Boolean,
