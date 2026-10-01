@@ -1,7 +1,5 @@
 package com.example.agora.ui
 
-import android.app.Activity
-import android.content.ActivityNotFoundException
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -47,7 +45,6 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import coil.compose.AsyncImage
 import com.example.agora.media.CompressionState
-import com.example.agora.media.NativePhotoEditor
 import com.example.agora.media.VideoCompressorTrimmer
 import com.example.agora.ui.components.VibrantGlassBackground
 import com.example.agora.ui.theme.LocalDarkTheme
@@ -101,10 +98,9 @@ fun CreatePostScreen(
     // 🌟 Task 1: Multi-Selection List State & Active Edit URI State
     var selectedMedia by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var activeEditUri by remember { mutableStateOf<Uri?>(null) }
-    // The in-flight native photo editor handoff (the ACTION_EDIT session
-    // between launch and result) — its result swaps in place, preserving
-    // carousel order/count.
-    var editSession by remember { mutableStateOf<NativePhotoEditor.Session?>(null) }
+    // The carousel image currently inside the Compose-native crop studio —
+    // its result swaps in place, preserving carousel order/count.
+    var cropSourceUri by remember { mutableStateOf<Uri?>(null) }
 
     var isCompressingVideo by remember { mutableStateOf(false) }
     var compressionProgress by remember { mutableFloatStateOf(0f) }
@@ -125,10 +121,10 @@ fun CreatePostScreen(
     val videoCompressorTrimmer = remember(context) { VideoCompressorTrimmer(context) }
 
     // 🌟 UX FIX: every pick lands DIRECTLY in the media carousel — images and
-    // videos alike. No forced sequential edit loop; editing is opt-in via the
-    // per-thumbnail card tap below, which opens the device's NATIVE photo
-    // editor (ACTION_EDIT) — AI erasure, markup, filters, the full flagship
-    // toolset instead of a custom in-app cropper.
+    // videos alike. No forced sequential crop loop; editing is opt-in via the
+    // per-thumbnail Crop/Edit chip below, which opens AgoraImageCropDialog —
+    // the custom Compose crop studio (Fit-true rendering, exact-ratio preset
+    // snaps, dark glass chrome) replacing the legacy uCrop hop entirely.
     val multiMediaPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 5)
     ) { uris ->
@@ -140,48 +136,6 @@ fun CreatePostScreen(
                 }
             }
             selectedMedia = newMediaList
-        }
-    }
-
-    // 🌟 NATIVE photo editor handoff (replaces the custom Compose cropper):
-    // a photo-card tap copies the pick into a writable cache file, exposes it
-    // via FileProvider and fires ACTION_EDIT — Samsung Gallery / Google Photos
-    // / whatever the device ships. On RESULT_OK the edited bytes are
-    // snapshotted into a FRESH cache-file Uri (the same contract the upload
-    // pipeline always consumed) and swapped into the carousel IN PLACE, so
-    // the draft keeps its order, count and everything else untouched.
-    val nativeEditLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val session = editSession
-        editSession = null
-        if (session != null && result.resultCode == Activity.RESULT_OK) {
-            coroutineScope.launch {
-                val editedUri = NativePhotoEditor.finalizeEdit(context, session, result.data?.data)
-                if (editedUri != null) {
-                    selectedMedia = selectedMedia.map { if (it == session.sourceUri) editedUri else it }
-                } else {
-                    snackbarHostState.showSnackbar("Couldn't save the edited photo. Please try again.")
-                }
-            }
-        }
-    }
-
-    val startNativePhotoEdit: (Uri) -> Unit = { source ->
-        coroutineScope.launch {
-            val session = NativePhotoEditor.prepare(context, source)
-            if (session == null) {
-                snackbarHostState.showSnackbar("Couldn't open that photo for editing.")
-            } else {
-                editSession = session
-                try {
-                    nativeEditLauncher.launch(NativePhotoEditor.buildIntent(session))
-                } catch (e: ActivityNotFoundException) {
-                    // No native editor installed — the draft stays exactly as it was.
-                    editSession = null
-                    snackbarHostState.showSnackbar("No photo editor found on this device.")
-                }
-            }
         }
     }
 
@@ -345,9 +299,8 @@ fun CreatePostScreen(
                                             .border(1.dp, agora.cardBorder, RoundedCornerShape(20.dp))
                                             .clickable {
                                                 // 🌟 The whole card is the edit button: videos open the
-                                                // trim studio overlay, images open the device's NATIVE
-                                                // photo editor (ACTION_EDIT).
-                                                if (isVideo) activeEditUri = uri else startNativePhotoEdit(uri)
+                                                // trim studio overlay, images open the crop studio directly.
+                                                if (isVideo) activeEditUri = uri else cropSourceUri = uri
                                             }
                                     ) {
                                         if (isVideo) {
@@ -396,8 +349,7 @@ fun CreatePostScreen(
                                         }
 
                                         // 🌟 Decorative edit badge — the entire card already
-                                        // routes taps to the native photo editor; this just
-                                        // hints at it.
+                                        // routes taps to the crop studio; this just hints at it.
                                         if (!isVideo) {
                                             Box(
                                                 modifier = Modifier
@@ -604,4 +556,18 @@ fun CreatePostScreen(
         }
     }
 
+    // ✦ Compose-native crop studio — Fit-true rendering, 48dp precision
+    //    handles, exact-ratio presets, IO-dispatched pixel crop. The result
+    //    is a cache-file Uri — the contract the upload pipeline consumes.
+    cropSourceUri?.let { sourceUri ->
+        AgoraImageCropDialog(
+            sourceUri = sourceUri,
+            onDismiss = { cropSourceUri = null },
+            onCropped = { croppedUri ->
+                // Swap in place: carousel position/order/count preserved.
+                selectedMedia = selectedMedia.map { if (it == sourceUri) croppedUri else it }
+                cropSourceUri = null
+            }
+        )
+    }
 }

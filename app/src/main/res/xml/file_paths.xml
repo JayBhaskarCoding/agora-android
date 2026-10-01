@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<paths>
-    <!-- 🌟 Writable working copies handed to the device's native photo editor
-         (ACTION_EDIT) via FileProvider — private cache, never exported. -->
-    <cache-path
-        name="photo_edit"
-        path="photo_edit/" />
-</paths>
