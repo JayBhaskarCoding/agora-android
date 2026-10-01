@@ -464,7 +464,7 @@ private fun CropStudio(
                                         total = total,
                                         ratio = presetRatio(ratioIndex),
                                         bounds = imgBounds,
-                                        min = minWin
+                                        min0 = minWin
                                     )
                                 },
                                 onDragEnd = { activeHandle = NO_HANDLE },
