@@ -543,15 +543,19 @@ fun AgoraImageCropDialog(
                                     ratioIndex = index
                                     val geo = geometry.value
                                     if (geo.isReady) {
-                                        winRect = centeredWindowFor(ratioValue(index, geo), geo)
-                                        coverAndClamp(
-                                            geo = geo,
-                                            win = winRect,
-                                            zoomNow = zoom,
-                                            panNow = panOffset,
-                                            setZoom = { zoom = it },
-                                            setPan = { panOffset = it }
-                                        )
+                                        // 🌟 Deterministic preset framing: a fresh
+                                        // centered window at the exact ratio, zoom
+                                        // reset to the precise cover value and pan
+                                        // re-centered — no inherited zoom/pan skew
+                                        // bleeding across presets.
+                                        val newWin = centeredWindowFor(ratioValue(index, geo), geo)
+                                        winRect = newWin
+                                        val coverZoom = maxOf(
+                                            newWin.width / (geo.bmpW * geo.fitScale),
+                                            newWin.height / (geo.bmpH * geo.fitScale)
+                                        ).coerceIn(1f, 8f)
+                                        zoom = coverZoom
+                                        panOffset = clampOffset(geo, newWin, coverZoom, Offset.Zero)
                                     }
                                 }
                                 .padding(horizontal = 18.dp, vertical = 9.dp)
@@ -616,13 +620,16 @@ private fun handleAt(p: Offset, r: Rect, cornerTouch: Float, edgeTouch: Float): 
     val inX = p.x >= r.left - edgeTouch && p.x <= r.right + edgeTouch
     val inY = p.y >= r.top - edgeTouch && p.y <= r.bottom + edgeTouch
     return when {
+        // 🌟 Corners FIRST. A knob's 36dp zone overlaps the 20dp edge bands, so
+        // interleaving edge branches before corner branches let the top / right /
+        // bottom edges swallow TR, BR and BL touches — those knobs felt dead.
         cornerL && cornerT -> 0
-        nearT && inX -> 1
         cornerR && cornerT -> 2
-        nearR && inY -> 3
         cornerR && cornerB -> 4
-        nearB && inX -> 5
         cornerL && cornerB -> 6
+        nearT && inX -> 1
+        nearR && inY -> 3
+        nearB && inX -> 5
         nearL && inY -> 7
         else -> NO_HANDLE
     }
@@ -660,58 +667,78 @@ private fun resizeWindow(
     b = b.coerceIn(t + min, stage.bottom)
 
     if (ratio != null) {
-        var w = r - l
-        var h = b - t
+        // 🌟 Exact-ratio resize. Anchor the opposite corner/edge, derive BOTH
+        // dimensions from the drag, then shrink-to-fit the stage with ONE
+        // uniform factor k. The old clamp-then-fixup pass nudged single axes at
+        // stage extremes and silently broke the 1:1 / 4:5 / 16:9 lock — saved
+        // crops came out skewed away from the chosen preset.
         when (handle) {
-            // Corners: anchor the opposite corner.
-            0, 2 -> {
-                h = w / ratio
-                t = (b - h).coerceAtLeast(stage.top)
-                h = b - t
-                w = h * ratio
-                if (handle == 0) l = r - w else r = l + w
-                l = l.coerceAtLeast(stage.left)
-                if (handle == 0) w = r - l else w = r - l
-                h = w / ratio
-                t = b - h
+            0 -> { // TL — anchor bottom-right
+                var w = (r - pointer.x).coerceAtLeast(min)
+                var h = w / ratio
+                val k = minOf(1f, (r - stage.left) / w, (b - stage.top) / h)
+                w = (w * k).coerceAtLeast(min); h = w / ratio
+                l = r - w; t = b - h
             }
-            4, 6 -> {
-                h = w / ratio
-                b = (t + h).coerceAtMost(stage.bottom)
-                h = b - t
-                w = h * ratio
-                if (handle == 6) l = r - w else r = l + w
-                l = l.coerceAtLeast(stage.left)
-                w = r - l
-                h = w / ratio
-                b = t + h
+            2 -> { // TR — anchor bottom-left
+                var w = (pointer.x - l).coerceAtLeast(min)
+                var h = w / ratio
+                val k = minOf(1f, (stage.right - l) / w, (b - stage.top) / h)
+                w = (w * k).coerceAtLeast(min); h = w / ratio
+                r = l + w; t = b - h
             }
-            // Top/bottom edges: keep horizontal center.
-            1, 5 -> {
-                w = h * ratio
+            4 -> { // BR — anchor top-left
+                var w = (pointer.x - l).coerceAtLeast(min)
+                var h = w / ratio
+                val k = minOf(1f, (stage.right - l) / w, (stage.bottom - t) / h)
+                w = (w * k).coerceAtLeast(min); h = w / ratio
+                r = l + w; b = t + h
+            }
+            6 -> { // BL — anchor top-right
+                var w = (r - pointer.x).coerceAtLeast(min)
+                var h = w / ratio
+                val k = minOf(1f, (r - stage.left) / w, (stage.bottom - t) / h)
+                w = (w * k).coerceAtLeast(min); h = w / ratio
+                l = r - w; b = t + h
+            }
+            1 -> { // Top edge — anchor bottom, keep horizontal center
+                var h = (b - pointer.y).coerceAtLeast(min)
+                var w = h * ratio
                 val cx = (l + r) / 2f
-                l = (cx - w / 2f).coerceAtLeast(stage.left)
-                r = (cx + w / 2f).coerceAtMost(stage.right)
-                w = r - l
-                h = w / ratio
-                if (handle == 1) t = b - h else b = t + h
+                val roomW = minOf(cx - stage.left, stage.right - cx) * 2f
+                val k = minOf(1f, (b - stage.top) / h, roomW / w)
+                h = (h * k).coerceAtLeast(min); w = h * ratio
+                t = b - h; l = cx - w / 2f; r = cx + w / 2f
             }
-            // Left/right edges: keep vertical center.
-            3, 7 -> {
-                h = w / ratio
+            5 -> { // Bottom edge — anchor top, keep horizontal center
+                var h = (pointer.y - t).coerceAtLeast(min)
+                var w = h * ratio
+                val cx = (l + r) / 2f
+                val roomW = minOf(cx - stage.left, stage.right - cx) * 2f
+                val k = minOf(1f, (stage.bottom - t) / h, roomW / w)
+                h = (h * k).coerceAtLeast(min); w = h * ratio
+                b = t + h; l = cx - w / 2f; r = cx + w / 2f
+            }
+            3 -> { // Right edge — anchor left, keep vertical center
+                var w = (pointer.x - l).coerceAtLeast(min)
+                var h = w / ratio
                 val cy = (t + b) / 2f
-                t = (cy - h / 2f).coerceAtLeast(stage.top)
-                b = (cy + h / 2f).coerceAtMost(stage.bottom)
-                h = b - t
-                w = h * ratio
-                if (handle == 7) l = r - w else r = l + w
+                val roomH = minOf(cy - stage.top, stage.bottom - cy) * 2f
+                val k = minOf(1f, (stage.right - l) / w, roomH / h)
+                w = (w * k).coerceAtLeast(min); h = w / ratio
+                r = l + w; t = cy - h / 2f; b = cy + h / 2f
+            }
+            7 -> { // Left edge — anchor right, keep vertical center
+                var w = (r - pointer.x).coerceAtLeast(min)
+                var h = w / ratio
+                val cy = (t + b) / 2f
+                val roomH = minOf(cy - stage.top, stage.bottom - cy) * 2f
+                val k = minOf(1f, (r - stage.left) / w, roomH / h)
+                w = (w * k).coerceAtLeast(min); h = w / ratio
+                l = r - w; t = cy - h / 2f; b = cy + h / 2f
             }
         }
-        // Final safety clamp: stage bounds always win over the ratio at extremes.
-        l = l.coerceIn(stage.left, stage.right - min)
-        r = r.coerceIn(l + min, stage.right)
-        t = t.coerceIn(stage.top, stage.bottom - min)
-        b = b.coerceIn(t + min, stage.bottom)
+        return Rect(l, t, r, b)
     }
     return Rect(l, t, r, b)
 }
@@ -815,8 +842,15 @@ private suspend fun saveCrop(
 
         val x = ((window.left - imgLeft) / s).roundToInt().coerceIn(0, source.width - 1)
         val y = ((window.top - imgTop) / s).roundToInt().coerceIn(0, source.height - 1)
-        val w = (window.width / s).roundToInt().coerceIn(1, source.width - x)
-        val h = (window.height / s).roundToInt().coerceIn(1, source.height - y)
+        // 🌟 Aspect-exact output: both edges derive from the window through the
+        // SAME uniform scale s; if either would overflow the bitmap, shrink BOTH
+        // by one factor k. Clamping width and height independently (the old way)
+        // skewed the saved pixels away from the chosen 1:1 / 4:5 / 16:9.
+        val wf = window.width / s
+        val hf = window.height / s
+        val k = minOf(1f, (source.width - x) / wf, (source.height - y) / hf)
+        val w = (wf * k).roundToInt().coerceIn(1, source.width - x)
+        val h = (hf * k).roundToInt().coerceIn(1, source.height - y)
 
         val cropped = Bitmap.createBitmap(source, x, y, w, h)
         val file = File(context.cacheDir, "crop_${UUID.randomUUID()}.jpg")
