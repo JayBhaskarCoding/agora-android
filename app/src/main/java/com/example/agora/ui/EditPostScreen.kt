@@ -1,5 +1,7 @@
 package com.example.agora.ui
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -40,6 +42,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.media3.common.util.UnstableApi
 import coil.compose.AsyncImage
 import com.example.agora.media.CompressionState
+import com.example.agora.media.NativePhotoEditor
 import com.example.agora.media.VideoCompressorTrimmer
 import com.example.agora.model.Post
 import com.example.agora.ui.components.VibrantGlassBackground
@@ -121,9 +124,10 @@ fun EditPostScreen(
     val coroutineScope = rememberCoroutineScope()
     val videoCompressorTrimmer = remember(context) { VideoCompressorTrimmer(context) }
 
-    // The item currently inside the Compose-native crop studio — its result
-    // swaps into the media list in place.
-    var cropSourceUri by remember { mutableStateOf<Uri?>(null) }
+    // The in-flight native photo editor handoff (the ACTION_EDIT session
+    // between launch and result) — its result swaps into the media list in
+    // place, preserving order/count.
+    var editSession by remember { mutableStateOf<NativePhotoEditor.Session?>(null) }
 
     // The EXISTING remote media currently in the fullscreen viewer — the same
     // component the feed opens (pinch-zoom image / ExpandedVideoScreen player).
@@ -141,6 +145,48 @@ fun EditPostScreen(
                 newItems.add(EditMediaItem(localUri = uri, isVideo = isVid))
             }
             currentMediaItems = newItems
+        }
+    }
+
+    // 🌟 NATIVE photo editor handoff (replaces the custom Compose cropper):
+    // a local photo tap copies the pick into a writable cache file, exposes
+    // it via FileProvider and fires ACTION_EDIT. On RESULT_OK the edited
+    // bytes are snapshotted into a FRESH cache-file Uri and swapped into the
+    // item IN PLACE — the draft keeps its order, count and remote media.
+    val nativeEditLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val session = editSession
+        editSession = null
+        if (session != null && result.resultCode == Activity.RESULT_OK) {
+            coroutineScope.launch {
+                val editedUri = NativePhotoEditor.finalizeEdit(context, session, result.data?.data)
+                if (editedUri != null) {
+                    currentMediaItems = currentMediaItems.map { item ->
+                        if (item.localUri == session.sourceUri) item.copy(localUri = editedUri) else item
+                    }
+                } else {
+                    snackbarHostState.showSnackbar("Couldn't save the edited photo. Please try again.")
+                }
+            }
+        }
+    }
+
+    val startNativePhotoEdit: (Uri) -> Unit = { source ->
+        coroutineScope.launch {
+            val session = NativePhotoEditor.prepare(context, source)
+            if (session == null) {
+                snackbarHostState.showSnackbar("Couldn't open that photo for editing.")
+            } else {
+                editSession = session
+                try {
+                    nativeEditLauncher.launch(NativePhotoEditor.buildIntent(session))
+                } catch (e: ActivityNotFoundException) {
+                    // No native editor installed — the draft stays exactly as it was.
+                    editSession = null
+                    snackbarHostState.showSnackbar("No photo editor found on this device.")
+                }
+            }
         }
     }
 
@@ -292,11 +338,11 @@ fun EditPostScreen(
                                                 if (local != null) {
                                                     // NEW local media → edit routing:
                                                     // videos open the trim studio, photos
-                                                    // re-crop in the Compose-native studio.
+                                                    // open the device's NATIVE editor.
                                                     if (item.isVideo) {
                                                         activeEditUri = local
                                                     } else {
-                                                        cropSourceUri = local
+                                                        startNativePhotoEdit(local)
                                                     }
                                                 } else if (item.remoteUrl != null) {
                                                     // EXISTING remote media → view-only:
@@ -355,8 +401,8 @@ fun EditPostScreen(
                                         }
 
                                         // 🌟 Decorative edit badge — parity with CreatePostScreen:
-                                        //    hints that tapping a local photo re-opens the crop
-                                        //    studio (remote-only media has no local source to edit).
+                                        //    hints that tapping a local photo opens the device's
+                                        //    native editor (remote media has no local source).
                                         if (!isVidItem && item.localUri != null) {
                                             Box(
                                                 modifier = Modifier
@@ -520,21 +566,6 @@ fun EditPostScreen(
                 onCancel = { activeEditUri = null }
             )
         }
-    }
-
-    // ✦ Compose-native crop studio — replaces the legacy uCrop activity hop
-    //    for photo re-cropping. Cache-file Uri out, swapped into the item.
-    cropSourceUri?.let { sourceUri ->
-        AgoraImageCropDialog(
-            sourceUri = sourceUri,
-            onDismiss = { cropSourceUri = null },
-            onCropped = { croppedUri ->
-                currentMediaItems = currentMediaItems.map { item ->
-                    if (item.localUri == sourceUri) item.copy(localUri = croppedUri) else item
-                }
-                cropSourceUri = null
-            }
-        )
     }
 
     // 🌟 Fullscreen viewer for EXISTING remote media — view-only by design;
