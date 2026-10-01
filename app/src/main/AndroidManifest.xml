@@ -54,27 +54,6 @@
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
-
-        <!-- 🌟 FileProvider: exposes writable cache working copies to the
-             device's native photo editor (ACTION_EDIT) without tripping
-             FileUriExposedException. Private, grant-based, never exported. -->
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
     </application>
-
-    <!-- Package visibility (Android 11+) for resolving native photo editors. -->
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.EDIT" />
-            <data android:mimeType="image/*" />
-        </intent>
-    </queries>
 
 </manifest>
