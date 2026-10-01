@@ -35,6 +35,7 @@ import com.example.agora.ui.theme.LocalDarkTheme
 import com.example.agora.ui.theme.glassmorphic
 import com.example.agora.viewmodel.AuthViewModel
 import com.example.agora.viewmodel.PasswordResetStep
+import com.example.agora.ui.components.AgoraPrimaryButton
 import kotlinx.coroutines.launch
 
 @Composable
@@ -264,12 +265,11 @@ fun PasswordResetScreen(
                                             )
                                         )
 
-                                        Button(
+                                        AgoraPrimaryButton(
                                             onClick = { viewModel.requestPasswordResetOtp(emailInput) },
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(54.dp),
-                                            shape = RoundedCornerShape(16.dp),
                                             enabled = emailInput.isNotBlank()
                                         ) {
                                             Text(
@@ -310,12 +310,11 @@ fun PasswordResetScreen(
                                                 .padding(bottom = 24.dp)
                                         )
 
-                                        Button(
+                                        AgoraPrimaryButton(
                                             onClick = { viewModel.verifyPasswordResetOtp(otpInput) },
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(54.dp),
-                                            shape = RoundedCornerShape(16.dp),
                                             enabled = otpInput.length == 6
                                         ) {
                                             Text(
@@ -446,12 +445,11 @@ fun PasswordResetScreen(
                                             Spacer(modifier = Modifier.height(18.dp))
                                         }
 
-                                        Button(
+                                        AgoraPrimaryButton(
                                             onClick = { viewModel.submitNewPassword(newPasswordInput, onSuccess) },
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(54.dp),
-                                            shape = RoundedCornerShape(16.dp),
                                             enabled = newPasswordInput.length >= 8 && newPasswordInput == confirmPasswordInput
                                         ) {
                                             Text(

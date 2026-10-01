@@ -60,6 +60,7 @@ import com.example.agora.ui.theme.rememberAgoraColors
 import com.example.agora.viewmodel.FeedViewModel
 import com.example.agora.viewmodel.ThemeViewModel
 import com.example.agora.viewmodel.UploadState
+import com.example.agora.ui.components.AgoraPrimaryButton
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -483,17 +484,12 @@ fun GlobalFeedScreen(
                 }
             },
             confirmButton = {
-                Button(
+                AgoraPrimaryButton(
                     onClick = {
                         viewModel.reportPost(targetReport.id, reportReason)
                         Toast.makeText(context, "Report submitted. Thank you.", Toast.LENGTH_SHORT).show()
                         postToReport = null
-                    },
-                    shape = CircleShape,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = colors.danger,
-                        contentColor = Color.White
-                    )
+                    }
                 ) {
                     Text("Submit Report", fontWeight = FontWeight.Bold)
                 }
@@ -1248,14 +1244,7 @@ private fun FeedEmptyState(onCreatePost: () -> Unit) {
             color = colors.textTertiary
         )
         Spacer(modifier = Modifier.height(26.dp))
-        Button(
-            onClick = onCreatePost,
-            shape = CircleShape,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = colors.accent,
-                contentColor = colors.onAccent
-            )
-        ) {
+        AgoraPrimaryButton(onClick = onCreatePost) {
             Icon(
                 imageVector = Icons.Rounded.Add,
                 contentDescription = null,
@@ -1301,14 +1290,7 @@ private fun FeedErrorState(message: String, onRetry: () -> Unit) {
             color = colors.textSecondary
         )
         Spacer(modifier = Modifier.height(20.dp))
-        Button(
-            onClick = onRetry,
-            shape = CircleShape,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = colors.accent,
-                contentColor = colors.onAccent
-            )
-        ) {
+        AgoraPrimaryButton(onClick = onRetry) {
             Text("Retry", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
         }
     }

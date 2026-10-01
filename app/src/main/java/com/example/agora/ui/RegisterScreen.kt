@@ -27,6 +27,7 @@ import com.example.agora.ui.theme.LocalDarkTheme
 import com.example.agora.ui.theme.glassmorphic
 import com.example.agora.utils.EmailValidator
 import com.example.agora.viewmodel.AuthViewModel
+import com.example.agora.ui.components.AgoraPrimaryButton
 import kotlinx.coroutines.launch
 
 @Composable
@@ -225,7 +226,7 @@ fun RegisterScreen(
                                 )
                             )
 
-                            Button(
+                            AgoraPrimaryButton(
                                 onClick = {
                                     coroutineScope.launch {
                                         val job = launch { snackbarHostState.showSnackbar("Verifying email...", duration = SnackbarDuration.Indefinite) }
@@ -249,7 +250,6 @@ fun RegisterScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(54.dp),
-                                shape = CircleShape,
                                 enabled = email.isNotBlank()
                             ) {
                                 Text(

@@ -8,6 +8,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.agora.viewmodel.AuthViewModel
+import com.example.agora.ui.components.AgoraPrimaryButton
 
 @Composable
 fun OnboardingScreen(viewModel: AuthViewModel, onFinish: () -> Unit) {
@@ -43,14 +44,13 @@ fun OnboardingScreen(viewModel: AuthViewModel, onFinish: () -> Unit) {
             modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)
         )
 
-        Button(
+        AgoraPrimaryButton(
+            text = "Complete Setup",
             onClick = {
                 viewModel.completeOnboarding(gender, dob, onSuccess = onFinish)
             },
             modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Complete Setup")
-        }
+        )
 
         TextButton(onClick = onFinish) {
             Text("Skip for now")

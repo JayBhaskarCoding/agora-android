@@ -48,6 +48,7 @@ import com.example.agora.data.supabaseClient
 import com.example.agora.model.Profile
 import com.example.agora.viewmodel.AuthViewModel
 import com.example.agora.viewmodel.ThemeViewModel
+import com.example.agora.ui.components.AgoraPrimaryButton
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.storage.storage
@@ -761,7 +762,7 @@ fun AccountDetailsScreen(
                 enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                 exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
             ) {
-                Button(
+                AgoraPrimaryButton(
                     onClick = {
                         viewModel.updateProfileDetails(firstName, lastName, gender, dob) {
                             profile = profile?.copy(firstName = firstName, lastName = lastName, gender = gender, dob = dob)
@@ -772,8 +773,7 @@ fun AccountDetailsScreen(
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp),
-                    shape = CircleShape
+                        .height(52.dp)
                 ) {
                     Text("Save Changes", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }

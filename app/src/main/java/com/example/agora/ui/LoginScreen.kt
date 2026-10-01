@@ -28,6 +28,7 @@ import com.example.agora.ui.components.VibrantGlassBackground
 import com.example.agora.ui.theme.LocalDarkTheme
 import com.example.agora.ui.theme.glassmorphic
 import com.example.agora.viewmodel.AuthViewModel
+import com.example.agora.ui.components.AgoraPrimaryButton
 import kotlinx.coroutines.launch
 
 @Composable
@@ -189,12 +190,11 @@ fun LoginScreen(
                             Spacer(modifier = Modifier.height(18.dp))
                         }
 
-                        Button(
+                        AgoraPrimaryButton(
                             onClick = { authViewModel.signIn(identifier, password) },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(54.dp),
-                            shape = CircleShape,
                             enabled = identifier.isNotBlank() && password.length >= 8
                         ) {
                             Text(

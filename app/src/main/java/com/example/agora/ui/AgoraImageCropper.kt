@@ -7,6 +7,9 @@ import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -44,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -53,6 +57,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
@@ -252,6 +257,35 @@ private fun CropStudio(
         fitBounds(bmp.width, bmp.height, stageSize.width.toFloat(), stageSize.height.toFloat())
     }
 
+    /* ── ✦ Auto-zoom: dynamic viewport math ──
+     * The selected region always maximizes the screen. The photo layer
+     * scales by min(stageW/cropW, stageH/cropH) and translates so
+     * cropRect.center lands exactly on stage.center — shrink the box and
+     * the image glides in, expand it and the image glides back out.
+     * cropRect itself is NEVER rescaled: it stays in absolute, unscaled
+     * Fit-bounds pixels, so handleAt/applyDrag and the createBitmap slice
+     * keep consuming pure image coordinates. No-bouncy springs make the
+     * zoom/pan follow the finger fluidly instead of snapping. */
+    val zoomActive = stageSize != IntSize.Zero &&
+        cropRect != Rect.Zero && cropRect.width > 0f && cropRect.height > 0f
+    val targetScale = if (zoomActive) {
+        min(stageSize.width / cropRect.width, stageSize.height / cropRect.height)
+    } else 1f
+    val targetOffsetX = if (zoomActive) {
+        targetScale * (stageSize.width / 2f - cropRect.center.x)
+    } else 0f
+    val targetOffsetY = if (zoomActive) {
+        targetScale * (stageSize.height / 2f - cropRect.center.y)
+    } else 0f
+
+    val zoomSpec = spring<Float>(
+        dampingRatio = Spring.DampingRatioNoBouncy,
+        stiffness = Spring.StiffnessMediumLow
+    )
+    val zoomScale by animateFloatAsState(targetScale, zoomSpec, label = "cropZoomScale")
+    val zoomTx by animateFloatAsState(targetOffsetX, zoomSpec, label = "cropZoomTx")
+    val zoomTy by animateFloatAsState(targetOffsetY, zoomSpec, label = "cropZoomTy")
+
     LaunchedEffect(imgBounds) {
         if (imgBounds == Rect.Zero) return@LaunchedEffect
         val prev = boundsForRect
@@ -353,14 +387,28 @@ private fun CropStudio(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
+                // The auto-zoomed photo must never bleed over the chrome.
+                .clipToBounds()
                 .onSizeChanged { stageSize = it }
         ) {
             // 🌟 ContentScale.Fit — the original aspect ratio is NEVER
             // distorted on screen. FillBounds is banned from this pipeline.
+            // The graphicsLayer is a pure VIEW transform (auto-zoom): it
+            // magnifies and pans the Fit-rendered photo so the crop region
+            // fills the stage. Deferred reads (lambda form) keep the spring
+            // on the draw path — zero recompositions per frame. The crop
+            // math never sees these values.
             Image(
                 bitmap = imageBitmap,
                 contentDescription = "Photo to edit",
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = zoomScale
+                        scaleY = zoomScale
+                        translationX = zoomTx
+                        translationY = zoomTy
+                    },
                 contentScale = ContentScale.Fit
             )
 
@@ -369,7 +417,16 @@ private fun CropStudio(
                 // Dim scrim, thirds grid, hairline frame, edge bars and the
                 // corner brackets — the visible crop chrome.
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    val win = cropRect
+                    // ✦ Screen-space crop window: the model cropRect pushed
+                    // through the SAME animated zoom the photo renders with,
+                    // so the frame always sits exactly over the selected
+                    // region. Because the chrome is drawn in screen space,
+                    // hairline strokes stay constant on screen — they never
+                    // thicken when the view zooms in.
+                    val win = forwardZoom(
+                        cropRect, zoomScale, zoomTx, zoomTy,
+                        size.width, size.height
+                    )
 
                     drawRect(DimScrim, topLeft = Offset.Zero, size = Size(size.width, max(0f, win.top)))
                     drawRect(
@@ -447,17 +504,30 @@ private fun CropStudio(
                             val touch = 24.dp.toPx()   // half of the 48dp target
                             val minWin = 96.dp.toPx()
                             var gestureStartRect = Rect.Zero
-                            var gestureStartOffset = Offset.Zero
+                            var gestureStartScreen = Offset.Zero
 
                             detectDragGestures(
                                 onDragStart = { start ->
-                                    gestureStartOffset = start
+                                    gestureStartScreen = start
                                     gestureStartRect = cropRect
-                                    activeHandle = handleAt(start, cropRect, touch)
+                                    // Hit-test against the VISIBLE (zoomed) window —
+                                    // fingers live in screen space, crop math doesn't.
+                                    val visible = forwardZoom(
+                                        cropRect, zoomScale, zoomTx, zoomTy,
+                                        stageSize.width.toFloat(), stageSize.height.toFloat()
+                                    )
+                                    activeHandle = handleAt(start, visible, touch)
                                 },
                                 onDrag = { change, _ ->
                                     if (activeHandle == NO_HANDLE) return@detectDragGestures
-                                    val total = change.position - gestureStartOffset
+                                    // ✦ Screen delta → model delta: both endpoints
+                                    // inverse-map through the CURRENT animated zoom
+                                    // (== dividing the screen delta by zoomScale), so
+                                    // a spring still in flight can't inject phantom
+                                    // movement and the grabbed corner stays glued to
+                                    // the finger once the zoom settles.
+                                    val total = (change.position - gestureStartScreen) /
+                                        zoomScale.coerceAtLeast(0.0001f)
                                     cropRect = applyDrag(
                                         start = gestureStartRect,
                                         handle = activeHandle,
@@ -571,6 +641,32 @@ private fun fitBounds(bmpW: Int, bmpH: Int, stageW: Float, stageH: Float): Rect 
         top = (stageH - h) / 2f,
         right = (stageW + w) / 2f,
         bottom = (stageH + h) / 2f
+    )
+}
+
+/**
+ * ✦ Maps a model-space rect through the auto-zoom view transform —
+ * uniform [scale] about the stage center plus translation ([tx], [ty]) —
+ * i.e. where a crop-space rect physically appears on screen while the
+ * zoom springs are live. Exact inverse of the graphicsLayer on the photo
+ * (default TransformOrigin = center), which keeps the drawn frame, the
+ * 48dp hit zones and the magnified pixels in perfect register.
+ */
+private fun forwardZoom(
+    r: Rect,
+    scale: Float,
+    tx: Float,
+    ty: Float,
+    stageW: Float,
+    stageH: Float
+): Rect {
+    val cx = stageW / 2f
+    val cy = stageH / 2f
+    return Rect(
+        left = cx + scale * (r.left - cx) + tx,
+        top = cy + scale * (r.top - cy) + ty,
+        right = cx + scale * (r.right - cx) + tx,
+        bottom = cy + scale * (r.bottom - cy) + ty
     )
 }
 

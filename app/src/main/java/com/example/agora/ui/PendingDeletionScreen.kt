@@ -22,6 +22,7 @@ import com.example.agora.ui.theme.LocalDarkTheme
 import com.example.agora.ui.theme.glassmorphic
 import com.example.agora.ui.theme.rememberAgoraColors
 import com.example.agora.viewmodel.AuthViewModel
+import com.example.agora.ui.components.AgoraPrimaryButton
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneId
@@ -199,7 +200,7 @@ fun PendingDeletionScreen(
                     Spacer(modifier = Modifier.height(28.dp))
 
                     // ✦ Prominent revert action — the whole point of the grace window.
-                    Button(
+                    AgoraPrimaryButton(
                         onClick = {
                             isReverting = true
                             viewModel.cancelAccountDeletion { reverted ->
@@ -210,14 +211,13 @@ fun PendingDeletionScreen(
                         enabled = !isReverting,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(52.dp),
-                        shape = CircleShape
+                            .height(52.dp)
                     ) {
                         if (isReverting) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(22.dp),
                                 strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary
+                                color = Color.White
                             )
                         } else {
                             Text(
