@@ -132,12 +132,18 @@ fun GlobalFeedScreen(
         }
     }
 
-    // Automatically scroll to the top of the feed when a post is successfully created
+    // Automatically scroll to the top of the feed when a post is successfully created.
+    // 🌟 Jump fix: skip the animation when the top item is ALREADY the first
+    // visible one. The old unconditional animateScrollToItem(0) fired 800ms
+    // after success — exactly when users tap their first like on the new post —
+    // and yanked the list by its residual scroll offset, reading as a glitch.
     LaunchedEffect(uploadState) {
         if (uploadState is UploadState.Success) {
             coroutineScope.launch {
                 delay(800.milliseconds) // Recomposition delay buffer so new item index 0 is rendered
-                listState.animateScrollToItem(0)
+                if (listState.firstVisibleItemIndex > 0) {
+                    listState.animateScrollToItem(0)
+                }
             }
         }
     }
@@ -305,7 +311,8 @@ fun GlobalFeedScreen(
                 } else {
                     items(
                         items = posts,
-                        key = { post -> post.id }
+                        key = { post -> post.id },
+                        contentType = { "post" }
                     ) { post ->
                         // ✦ One-shot reveal: cards rise and fade in the first time
                         //    they are composed (rememberSaveable keeps them still on

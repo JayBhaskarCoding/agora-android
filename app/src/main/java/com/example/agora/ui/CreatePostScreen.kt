@@ -181,6 +181,10 @@ fun CreatePostScreen(
 
                     Button(
                         onClick = {
+                            // 🌟 Task 3: belt-and-braces multi-click guard — the
+                            // enabled flag blocks re-taps, but a double-fire before
+                            // the first recomposition must not start two uploads.
+                            if (isUploading) return@Button
                             val cleanText = postText.trim()
                             if (canPost) {
                                 // 🌟 Task 1: fire the upload and KEEP everything on

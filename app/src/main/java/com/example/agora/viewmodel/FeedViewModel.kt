@@ -235,6 +235,11 @@ class FeedViewModel : ViewModel() {
     private val _isUploading = MutableStateFlow(false)
     val isUploading: StateFlow<Boolean> = _isUploading.asStateFlow()
 
+    // 🌟 Same lock for the EDIT flow — true from the Save tap until the UPDATE
+    // (plus any new media uploads) confirms or fails.
+    private val _isUpdating = MutableStateFlow(false)
+    val isUpdating: StateFlow<Boolean> = _isUpdating.asStateFlow()
+
     private val _searchResults = MutableStateFlow<List<Profile>>(emptyList())
     val searchResults: StateFlow<List<Profile>> = _searchResults.asStateFlow()
 
@@ -682,6 +687,9 @@ class FeedViewModel : ViewModel() {
         mediaUris: List<Uri> = emptyList(),
         onSuccess: () -> Unit = {}
     ) {
+        // 🌟 Task 3: a duplicate tap while an upload is already in flight must
+        // never start a second pipeline (double posts / double DB rows).
+        if (_isUploading.value) return
         viewModelScope.launch {
             try {
                 _isUploading.value = true
@@ -909,8 +917,11 @@ class FeedViewModel : ViewModel() {
         currentItems: List<EditMediaItem>,
         onSuccess: () -> Unit = {}
     ) {
+        // 🌟 Task 3: duplicate-tap guard — one UPDATE pipeline at a time.
+        if (_isUpdating.value) return
         viewModelScope.launch {
             try {
+                _isUpdating.value = true
                 _uploadState.value = UploadState.Uploading(0.1f, "Preparing post update...")
                 val appContext = context.applicationContext
 
@@ -942,7 +953,15 @@ class FeedViewModel : ViewModel() {
                 }
 
                 val finalMediaUrls = keptRemoteUrls + newUploadedUrls
-                val userId = currentUserId ?: return@launch
+                val userId = currentUserId
+                if (userId == null) {
+                    // A silent return here strands the upload banner forever.
+                    _uploadState.value =
+                        UploadState.Error("Your session expired — please sign in again to save changes.")
+                    delay(3000)
+                    _uploadState.value = UploadState.Idle
+                    return@launch
+                }
 
                 // Same silent-loss guard as createPost: never save an edit that drops media.
                 if (newLocalUris.isNotEmpty() && newUploadedUrls.size < newLocalUris.size) {
@@ -979,6 +998,9 @@ class FeedViewModel : ViewModel() {
                 fetchPostsFromCloud()
 
                 _uploadState.value = UploadState.Success("Post updated successfully!")
+                // UPDATE confirmed — release the editor lock BEFORE onSuccess so
+                // the dialog's guarded dismissal actually runs.
+                _isUpdating.value = false
                 withContext(Dispatchers.Main) {
                     onSuccess()
                 }
@@ -990,6 +1012,9 @@ class FeedViewModel : ViewModel() {
                 _uploadState.value = UploadState.Error(handleAppError(e))
                 delay(3000)
                 _uploadState.value = UploadState.Idle
+            } finally {
+                // Failure path lands here too: editor unlocks, content stays intact.
+                _isUpdating.value = false
             }
         }
     }
