@@ -174,6 +174,26 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        /* ✦ GHOST-INSTANCE GUARD — must stay the FIRST statement in onCreate,
+         * before installSplashScreen/enableEdgeToEdge/super.
+         *
+         * Some launchers fire a fresh MAIN/LAUNCHER intent at an app that is
+         * already alive in the background, stacking a SECOND MainActivity on
+         * top of the running task. The user "returns" to that brand-new ghost
+         * instance — a fresh composition, a fresh NavController, startDestination
+         * "feed" — and every screen they were on is gone. With
+         * launchMode="singleTop" the OS resumes the existing instance instead,
+         * and this check finishes any duplicate that still slips through before
+         * it initializes anything. Deep-link intents (ACTION_VIEW) are NOT
+         * launcher intents, so they fall through and route normally. */
+        if (!isTaskRoot) {
+            val intentAction = intent.action
+            if (intent.hasCategory(Intent.CATEGORY_LAUNCHER) && intentAction != null && intentAction == Intent.ACTION_MAIN) {
+                finish()
+                return
+            }
+        }
+
         val splashScreen = installSplashScreen()
         splashScreen.setKeepOnScreenCondition { keepSplashOnScreen }
 
