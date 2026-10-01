@@ -1,8 +1,8 @@
 package com.example.agora.service
 
+import com.example.agora.ui.components.AgoraPrimaryButton
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -20,9 +20,7 @@ fun RequestNotificationPermissionDialog(
         title = { Text("Enable Notifications") },
         text = { Text("Agora uses notifications to keep you updated on likes, comments, and community messages.") },
         confirmButton = {
-            Button(onClick = onConfirm, shape = RoundedCornerShape(12.dp)) {
-                Text("Allow")
-            }
+            AgoraPrimaryButton(text = "Allow", onClick = onConfirm)
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {

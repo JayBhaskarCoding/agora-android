@@ -48,6 +48,7 @@ import com.example.agora.ui.theme.rememberAgoraColors
 import com.example.agora.viewmodel.EditMediaItem
 import com.example.agora.viewmodel.FeedViewModel
 import com.example.agora.viewmodel.UploadState
+import com.example.agora.ui.components.AgoraPrimaryButton
 import kotlinx.coroutines.launch
 
 @Composable
@@ -180,11 +181,11 @@ fun EditPostScreen(
                         )
                     }
 
-                    Button(
+                    AgoraPrimaryButton(
                         onClick = {
                             // 🌟 Task 3: multi-click guard — an aggressive double-tap
                             // must not fire two UPDATE pipelines / duplicate uploads.
-                            if (isUpdating) return@Button
+                            if (isUpdating) return@AgoraPrimaryButton
                             if (canSave) {
                                 feedViewModel.savePostChanges(
                                     context = context,
@@ -195,13 +196,7 @@ fun EditPostScreen(
                                 )
                             }
                         },
-                        enabled = canSave && !isCompressingVideo && !isUpdating,
-                        shape = CircleShape,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary
-                        ),
-                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp)
+                        enabled = canSave && !isCompressingVideo && !isUpdating
                     ) {
                         Text("Save", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     }

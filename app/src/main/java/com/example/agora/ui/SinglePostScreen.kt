@@ -43,6 +43,7 @@ import com.example.agora.model.Post
 import com.example.agora.ui.theme.rememberAgoraColors
 import com.example.agora.viewmodel.PostDetailUiState
 import com.example.agora.viewmodel.PostDetailViewModel
+import com.example.agora.ui.components.AgoraPrimaryButton
 import kotlinx.coroutines.delay
 
 /**
@@ -146,9 +147,7 @@ fun SinglePostScreen(
                                 fontSize = 16.sp
                             )
                             Spacer(modifier = Modifier.height(12.dp))
-                            Button(onClick = { viewModel.retry() }, shape = CircleShape) {
-                                Text("Retry")
-                            }
+                            AgoraPrimaryButton(text = "Retry", onClick = { viewModel.retry() })
                         }
                     }
                 }
@@ -392,17 +391,12 @@ fun SinglePostScreen(
                 }
             },
             confirmButton = {
-                Button(
+                AgoraPrimaryButton(
                     onClick = {
                         onReportPost?.invoke(targetReport.id, reportReason)
                         Toast.makeText(context, "Report submitted. Thank you.", Toast.LENGTH_SHORT).show()
                         postToReport = null
-                    },
-                    shape = CircleShape,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = colors.danger,
-                        contentColor = Color.White
-                    )
+                    }
                 ) {
                     Text("Submit Report", fontWeight = FontWeight.Bold)
                 }

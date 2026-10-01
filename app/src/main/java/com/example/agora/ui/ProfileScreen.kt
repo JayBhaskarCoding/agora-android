@@ -50,6 +50,7 @@ import com.example.agora.ui.theme.rememberAgoraColors
 import com.example.agora.viewmodel.AuthViewModel
 import com.example.agora.viewmodel.FeedViewModel
 import com.example.agora.viewmodel.ThemeViewModel
+import com.example.agora.ui.components.AgoraPrimaryButton
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
 
@@ -260,17 +261,12 @@ fun ProfileScreen(
                 }
             },
             confirmButton = {
-                Button(
+                AgoraPrimaryButton(
                     onClick = {
                         feedViewModel.reportPost(targetReport.id, reportReason)
                         coroutineScope.launch { snackbarHostState.showSnackbar("Report submitted. Thank you.") }
                         postToReport = null
-                    },
-                    shape = CircleShape,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = colors.danger,
-                        contentColor = Color.White
-                    )
+                    }
                 ) { Text("Submit Report", fontWeight = FontWeight.Bold) }
             },
             dismissButton = { TextButton(onClick = { postToReport = null }) { Text("Cancel", color = colors.textTertiary) } }

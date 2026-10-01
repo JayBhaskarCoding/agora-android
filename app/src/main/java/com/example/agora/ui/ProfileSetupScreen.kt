@@ -1,5 +1,6 @@
 package com.example.agora.ui
 
+import com.example.agora.ui.components.AgoraPrimaryButton
 import android.app.DatePickerDialog
 import android.widget.DatePicker
 import androidx.compose.foundation.clickable
@@ -158,13 +159,12 @@ fun ProfileSetupScreen(
             }
 
             // 4. Submit Button
-            Button(
+            AgoraPrimaryButton(
+                text = "Complete Setup",
                 onClick = { onSetupComplete(gender, dob, theme) },
                 enabled = gender.isNotBlank() && dob.isNotBlank(),
                 modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Complete Setup")
-            }
+            )
         }
     }
 }

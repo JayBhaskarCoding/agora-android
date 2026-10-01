@@ -34,6 +34,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
@@ -48,6 +49,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.agora.viewmodel.ThemePreference
 import com.example.agora.viewmodel.ThemeViewModel
+import com.example.agora.ui.components.AgoraPrimaryButton
 import java.util.Calendar
 
 fun generateUniqueHandle(firstName: String, lastName: String): String {
@@ -384,10 +386,9 @@ fun OnboardingFlowScreen(
                                 )
                             }
 
-                            Button(
+                            AgoraPrimaryButton(
                                 onClick = { currentStep = 2 },
                                 enabled = firstName.isNotBlank() && handle.isNotBlank(),
-                                shape = RoundedCornerShape(16.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(54.dp)
@@ -434,7 +435,7 @@ fun OnboardingFlowScreen(
                                 modifier = Modifier.padding(bottom = 32.dp)
                             )
 
-                            Button(
+                            AgoraPrimaryButton(
                                 onClick = {
                                     // Save all user details including avatar selection.
                                     // 🌟 Advance ONLY when the save actually succeeded:
@@ -463,7 +464,6 @@ fun OnboardingFlowScreen(
                                     }
                                 },
                                 enabled = password.length >= 8 && !isSavingProfile,
-                                shape = RoundedCornerShape(16.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(54.dp)
@@ -472,7 +472,7 @@ fun OnboardingFlowScreen(
                                     CircularProgressIndicator(
                                         modifier = Modifier.size(22.dp),
                                         strokeWidth = 2.dp,
-                                        color = MaterialTheme.colorScheme.onPrimary
+                                        color = Color.White
                                     )
                                     Spacer(modifier = Modifier.width(10.dp))
                                     Text("Saving…", fontSize = 16.sp, fontWeight = FontWeight.Bold)
@@ -542,9 +542,8 @@ fun OnboardingFlowScreen(
 
                             Spacer(modifier = Modifier.height(36.dp))
 
-                            Button(
+                            AgoraPrimaryButton(
                                 onClick = onFinish,
-                                shape = RoundedCornerShape(16.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(54.dp)

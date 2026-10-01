@@ -15,7 +15,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -31,6 +30,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.agora.viewmodel.AuthViewModel
+import com.example.agora.ui.components.AgoraPrimaryButton
 
 /**
  * ✦ THE SHARED OTP CARD — one implementation for every 6-digit context:
@@ -131,12 +131,11 @@ fun OtpVerificationScreen(
 
         Spacer(modifier = Modifier.height(28.dp))
 
-        Button(
+        AgoraPrimaryButton(
             onClick = { onSubmit(otpCode) },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(54.dp),
-            shape = CircleShape,
             enabled = otpCode.length == 6
         ) {
             Text(

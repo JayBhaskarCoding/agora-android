@@ -52,6 +52,7 @@ import com.example.agora.ui.theme.rememberAgoraColors
 import com.example.agora.viewmodel.FeedViewModel
 import com.example.agora.viewmodel.ThemeViewModel
 import com.example.agora.viewmodel.UploadState
+import com.example.agora.ui.components.AgoraPrimaryButton
 import kotlinx.coroutines.launch
 
 @Composable
@@ -179,12 +180,12 @@ fun CreatePostScreen(
                         )
                     }
 
-                    Button(
+                    AgoraPrimaryButton(
                         onClick = {
                             // 🌟 Task 3: belt-and-braces multi-click guard — the
                             // enabled flag blocks re-taps, but a double-fire before
                             // the first recomposition must not start two uploads.
-                            if (isUploading) return@Button
+                            if (isUploading) return@AgoraPrimaryButton
                             val cleanText = postText.trim()
                             if (canPost) {
                                 // 🌟 Task 1: fire the upload and KEEP everything on
@@ -204,13 +205,7 @@ fun CreatePostScreen(
                                 )
                             }
                         },
-                        enabled = canPost && !isCompressingVideo && !isUploading,
-                        shape = CircleShape,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary
-                        ),
-                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp)
+                        enabled = canPost && !isCompressingVideo && !isUploading
                     ) {
                         Text("Post", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     }
