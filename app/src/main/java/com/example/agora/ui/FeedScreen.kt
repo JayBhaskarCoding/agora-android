@@ -387,53 +387,26 @@ fun GlobalFeedScreen(
     }
 
     // --- DYNAMIC POST OPTIONS BOTTOM SHEET ---
-    if (optionsPost != null) {
-        val targetPost = optionsPost!!
-        ModalBottomSheet(
-            onDismissRequest = { optionsPost = null },
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            containerColor = colors.cardSurface,
-            dragHandle = { BottomSheetDefaults.DragHandle(color = colors.hairline) }
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 32.dp, top = 4.dp)
-            ) {
-                if (targetPost.userId == viewModel.currentUserId) {
-                    OptionsSheetRow(
-                        label = "Edit Post",
-                        icon = Icons.Default.Edit,
-                        tint = colors.textPrimary,
-                        onClick = {
-                            postToEdit = targetPost
-                            optionsPost = null
-                        }
-                    )
-
-                    OptionsSheetRow(
-                        label = "Delete Post",
-                        icon = Icons.Default.Delete,
-                        tint = colors.danger,
-                        bold = true,
-                        onClick = {
-                            postToDelete = targetPost
-                            optionsPost = null
-                        }
-                    )
-                } else {
-                    OptionsSheetRow(
-                        label = "Report Post",
-                        icon = Icons.Default.Warning,
-                        tint = colors.textPrimary,
-                        onClick = {
-                            postToReport = targetPost
-                            optionsPost = null
-                        }
-                    )
-                }
-            }
-        }
+    // 🌟 The SAME shared PostOptionsSheet on every screen that shows posts —
+    // identical rows, order, styling and dismiss semantics, so "Edit Post"
+    // behaves exactly the same here as it does on the home feed.
+    optionsPost?.let { targetPost ->
+        PostOptionsSheet(
+            isOwner = targetPost.userId == viewModel.currentUserId,
+            onEdit = {
+                postToEdit = targetPost
+                optionsPost = null
+            },
+            onDelete = {
+                postToDelete = targetPost
+                optionsPost = null
+            },
+            onReport = {
+                postToReport = targetPost
+                optionsPost = null
+            },
+            onDismiss = { optionsPost = null }
+        )
     }
 
     // --- DELETE CONFIRMATION DIALOG ---
@@ -828,6 +801,58 @@ internal fun OptionsSheetRow(
             fontSize = 16.sp,
             fontWeight = if (bold) FontWeight.Bold else FontWeight.SemiBold
         )
+    }
+}
+
+/**
+ * 🌟 The ONE post-options sheet, shared by the home feed and profile screens.
+ * Owner: Edit Post + Delete Post. Everyone else: Report Post. Rows use the
+ * shared OptionsSheetRow so styling can never drift between screens again.
+ */
+@Composable
+internal fun PostOptionsSheet(
+    isOwner: Boolean,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onReport: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val colors = rememberAgoraColors()
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        containerColor = colors.cardSurface,
+        dragHandle = { BottomSheetDefaults.DragHandle(color = colors.hairline) }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 32.dp, top = 4.dp)
+        ) {
+            if (isOwner) {
+                OptionsSheetRow(
+                    label = "Edit Post",
+                    icon = Icons.Default.Edit,
+                    tint = colors.textPrimary,
+                    onClick = onEdit
+                )
+
+                OptionsSheetRow(
+                    label = "Delete Post",
+                    icon = Icons.Default.Delete,
+                    tint = colors.danger,
+                    bold = true,
+                    onClick = onDelete
+                )
+            } else {
+                OptionsSheetRow(
+                    label = "Report Post",
+                    icon = Icons.Default.Warning,
+                    tint = colors.textPrimary,
+                    onClick = onReport
+                )
+            }
+        }
     }
 }
 
