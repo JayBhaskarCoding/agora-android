@@ -1,8 +1,5 @@
 package com.example.agora.ui
 
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -11,7 +8,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -117,21 +113,13 @@ fun ProfileScreen(
     var postToDelete by remember { mutableStateOf<Post?>(null) }
 
     var postToEdit by remember { mutableStateOf<Post?>(null) }
-    var editPostText by remember { mutableStateOf("") }
 
     var postToReport by remember { mutableStateOf<Post?>(null) }
     var reportReason by remember { mutableStateOf("Spam") }
 
-    var keptUrls by remember { mutableStateOf<List<String>>(emptyList()) }
-    var newlyAddedUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
-
     var showCommentSheet by remember { mutableStateOf(false) }
     var selectedPostId by remember { mutableStateOf<String?>(null) }
     var expandedImageUrl by remember { mutableStateOf<String?>(null) }
-
-    val editLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
-        newlyAddedUris = newlyAddedUris + uris
-    }
 
     val comments by feedViewModel.comments.collectAsState()
 
@@ -178,56 +166,26 @@ fun ProfileScreen(
     }
 
     // --- DYNAMIC POST OPTIONS BOTTOM SHEET ---
-    if (optionsPost != null) {
-        val targetPost = optionsPost!!
-        ModalBottomSheet(
-            onDismissRequest = { optionsPost = null },
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            containerColor = colors.cardSurface,
-            dragHandle = { BottomSheetDefaults.DragHandle(color = colors.hairline) }
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 32.dp, top = 4.dp)
-            ) {
-                if (targetPost.userId == currentLoggedInUserId) {
-                    OptionsSheetRow(
-                        label = "Edit Post",
-                        icon = Icons.Default.Edit,
-                        tint = colors.textPrimary,
-                        onClick = {
-                            postToEdit = targetPost
-                            editPostText = targetPost.content
-                            keptUrls = targetPost.imageUrls
-                            newlyAddedUris = emptyList()
-                            optionsPost = null
-                        }
-                    )
-
-                    OptionsSheetRow(
-                        label = "Delete Post",
-                        icon = Icons.Default.Delete,
-                        tint = colors.danger,
-                        bold = true,
-                        onClick = {
-                            postToDelete = targetPost
-                            optionsPost = null
-                        }
-                    )
-                } else {
-                    OptionsSheetRow(
-                        label = "Report Post",
-                        icon = Icons.Default.Warning,
-                        tint = colors.textPrimary,
-                        onClick = {
-                            postToReport = targetPost
-                            optionsPost = null
-                        }
-                    )
-                }
-            }
-        }
+    // 🌟 The SAME shared PostOptionsSheet on every screen that shows posts —
+    // identical rows, order, styling and dismiss semantics, so "Edit Post"
+    // behaves exactly the same here as it does on the home feed.
+    optionsPost?.let { targetPost ->
+        PostOptionsSheet(
+            isOwner = targetPost.userId == currentLoggedInUserId,
+            onEdit = {
+                postToEdit = targetPost
+                optionsPost = null
+            },
+            onDelete = {
+                postToDelete = targetPost
+                optionsPost = null
+            },
+            onReport = {
+                postToReport = targetPost
+                optionsPost = null
+            },
+            onDismiss = { optionsPost = null }
+        )
     }
 
     // --- DELETE CONFIRMATION DIALOG ---
@@ -258,101 +216,18 @@ fun ProfileScreen(
     }
 
     // --- FULL SCREEN EDIT POST DIALOG ---
+    // 🌟 Unified editor: the EXACT same EditPostDialog the home feed opens —
+    // EditMediaItem carousel, crop/trim studios, isUpdating lock, error
+    // snackbars, the works. The deprecated inline editor that lived here
+    // (bare TextField, fixed-size thumbnail strips, the legacy VM pipeline)
+    // is gone — one editor, one code path, on every screen.
     if (postToEdit != null) {
         val targetEdit = postToEdit!!
-        Dialog(onDismissRequest = { postToEdit = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Surface(modifier = Modifier.fillMaxSize(), color = colors.canvasTop) {
-                Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TextButton(onClick = { postToEdit = null }) {
-                            Text("Cancel", color = colors.textTertiary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                        }
-
-                        Button(
-                            onClick = {
-                                feedViewModel.editPost(context, targetEdit.id, editPostText, keptUrls, newlyAddedUris)
-                                coroutineScope.launch { snackbarHostState.showSnackbar("Updating post...") }
-                                postToEdit = null
-                            },
-                            enabled = editPostText.isNotBlank(),
-                            shape = CircleShape
-                        ) { Text("Save", fontWeight = FontWeight.Bold) }
-                    }
-
-                    TextField(
-                        value = editPostText,
-                        onValueChange = { editPostText = it },
-                        modifier = Modifier.fillMaxWidth().weight(1f),
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent,
-                            focusedTextColor = colors.textPrimary,
-                            unfocusedTextColor = colors.textPrimary,
-                            cursorColor = colors.accent
-                        )
-                    )
-
-                    if (keptUrls.isNotEmpty() || newlyAddedUris.isNotEmpty()) {
-                        LazyRow(
-                            modifier = Modifier.fillMaxWidth().padding(16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            items(keptUrls, key = { url -> url }) { url ->
-                                Box(modifier = Modifier.size(120.dp)) {
-                                    AsyncImage(
-                                        model = url,
-                                        contentDescription = null,
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .clip(RoundedCornerShape(16.dp))
-                                            .border(width = 1.dp, color = colors.cardBorder, shape = RoundedCornerShape(16.dp)),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                    IconButton(
-                                        onClick = { keptUrls = keptUrls - url },
-                                        modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).background(Color.Black.copy(alpha = 0.55f), CircleShape).size(24.dp)
-                                    ) { Icon(Icons.Default.Close, contentDescription = "Remove", tint = Color.White, modifier = Modifier.size(16.dp)) }
-                                }
-                            }
-                            items(newlyAddedUris, key = { uri -> uri.toString() }) { uri ->
-                                Box(modifier = Modifier.size(120.dp)) {
-                                    AsyncImage(
-                                        model = uri,
-                                        contentDescription = null,
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .clip(RoundedCornerShape(16.dp))
-                                            .border(width = 1.dp, color = colors.cardBorder, shape = RoundedCornerShape(16.dp)),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                    IconButton(
-                                        onClick = { newlyAddedUris = newlyAddedUris - uri },
-                                        modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).background(Color.Black.copy(alpha = 0.55f), CircleShape).size(24.dp)
-                                    ) { Icon(Icons.Default.Close, contentDescription = "Remove", tint = Color.White, modifier = Modifier.size(16.dp)) }
-                                }
-                            }
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(colors.cardSurface)
-                            .padding(8.dp)
-                    ) {
-                        TextButton(onClick = { editLauncher.launch("image/*") }) {
-                            Text("📷 Add Photos", color = colors.accent, fontWeight = FontWeight.SemiBold)
-                        }
-                    }
-                }
-            }
-        }
+        EditPostDialog(
+            post = targetEdit,
+            feedViewModel = feedViewModel,
+            onDismiss = { postToEdit = null }
+        )
     }
 
     // --- REPORT POST DIALOG ---
