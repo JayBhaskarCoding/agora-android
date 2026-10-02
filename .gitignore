@@ -16,7 +16,31 @@
 local.properties
 
 # Local service credentials and Supabase CLI linkage state
+.env
+firebase-credentials.json
 /backend/.env
 /backend/firebase-credentials.json
 /backend/supabase/.temp/
 /supabase/.temp/
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.template
+
+# Credentials and signing material
+**/firebase-credentials*.json
+**/*service-account*.json
+**/*.jks
+**/*.keystore
+**/*.p12
+**/*.pem
+**/*.key
+
+# Downloaded/generated binaries
+*.exe
+*.dll
+*.so
+*.apk
+*.aab
