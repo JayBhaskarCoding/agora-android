@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agora — Credits</title>
+<style>
+/* ==========================================================================
+   Agora — Credits
+   --------------------------------------------------------------------------
+   Two counter-rotating wheels:
+     • Top-Left     → ROLE tags   (Developer / Design & Ideas / The Public)
+     • Bottom-Right → NAME tags   (Jayvardhan Bhaskar / Yashvardhan Bhaskar / The Public)
+
+   FIX 1 (HTML)  : every .segment in the Bottom-Right wheel now carries its own
+                   rectangular .tag, with the same DOM shape as the developer's.
+   FIX 2 (JS)    : the Ferris-wheel counter-rotation that kept the Top-Left tags
+                   upright is now applied to BOTH wheels, from one code path.
+   FIX 3 (CSS)   : .tag is the single shared class — identical height, padding,
+                   radius, font-size, background, border and glow. Role text is
+                   full-opacity / high contrast (was too dim).
+   ========================================================================== */
+
+:root {
+  /* One accent drives both wheels so the visual language is identical. */
+  --accent: 43 96% 66%;            /* warm gold */
+  --accent-soft: 43 96% 66%;
+  --ink: 40 30% 96%;
+  --bg-0: #080a12;
+  --bg-1: #101528;
+
+  /* ── Shared tag geometry (FIX 3) ─────────────────────────────────────── */
+  --tag-height: 40px;
+  --tag-padding: 8px 16px;
+  --tag-radius: 10px;              /* rectangular, not a pill */
+  --tag-font-size: clamp(0.78rem, 1.6vw, 0.95rem);
+  --tag-letter-spacing: 0.02em;
+  --tag-border: 1px solid hsl(var(--accent) / 0.55);
+  --tag-bg: linear-gradient(
+      180deg,
+      hsl(230 40% 18% / 0.92) 0%,
+      hsl(232 45% 11% / 0.92) 100%
+    );
+  --tag-shadow:
+      0 0 0 1px hsl(var(--accent) / 0.18),
+      0 6px 18px hsl(240 60% 4% / 0.55),
+      0 0 14px hsl(var(--accent) / 0.22),
+      inset 0 1px 0 hsl(var(--accent) / 0.16);
+
+  --wheel-size: clamp(210px, 34vw, 330px);
+  --rim-outset: 6px;               /* how far outside the disc the tag sits */
+}
+
+* { box-sizing: border-box; }
+
+html, body { min-height: 100%; }
+
+body {
+  margin: 0;
+  padding: clamp(24px, 5vw, 64px) 20px 72px;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: hsl(var(--ink));
+  background:
+    radial-gradient(1100px 620px at 12% 8%, hsl(43 90% 55% / 0.10), transparent 60%),
+    radial-gradient(900px 620px at 88% 92%, hsl(196 90% 55% / 0.10), transparent 60%),
+    linear-gradient(180deg, var(--bg-1) 0%, var(--bg-0) 100%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+}
+
+.credits {
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.credits__head { text-align: center; margin-bottom: clamp(16px, 4vw, 40px); }
+
+.credits__eyebrow {
+  margin: 0 0 6px;
+  font-size: 0.72rem;
+  letter-spacing: 0.42em;
+  text-transform: uppercase;
+  color: hsl(var(--accent) / 0.85);
+}
+
+.credits__title {
+  margin: 0;
+  font-size: clamp(1.9rem, 6vw, 3rem);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  background: linear-gradient(180deg, hsl(var(--ink)) 0%, hsl(var(--accent) / 0.92) 130%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.credits__sub {
+  margin: 10px auto 0;
+  max-width: 46ch;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  color: hsl(var(--ink) / 0.62);
+}
+
+/* ── Stage: two overlapping wheels ───────────────────────────────────────── */
+.stage {
+  position: relative;
+  width: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+  aspect-ratio: 1 / 1;
+}
+
+/* ── Wheel shell ─────────────────────────────────────────────────────────── */
+.wheel {
+  position: absolute;
+  width: var(--wheel-size);
+  height: var(--wheel-size);
+  pointer-events: none;
+}
+
+.wheel--role { top: 0; left: 0; }
+.wheel--name { bottom: 0; right: 0; }
+
+/* Everything decorative spins with the rotor. */
+.wheel__rotor {
+  position: absolute;
+  inset: 0;
+  transform: rotate(0deg);          /* driven by JS */
+  will-change: transform;
+}
+
+.wheel__disc {
+  position: absolute;
+  inset: 6%;
+  border-radius: 50%;
+  border: 1px solid hsl(var(--accent) / 0.22);
+  background:
+    radial-gradient(circle at 50% 50%, hsl(230 45% 20% / 0.55) 0%, hsl(230 50% 8% / 0.35) 70%),
+    conic-gradient(from 0deg,
+      hsl(var(--accent) / 0.10) 0deg 120deg,
+      hsl(196 90% 60% / 0.08) 120deg 240deg,
+      hsl(280 80% 65% / 0.08) 240deg 360deg);
+  box-shadow:
+    0 0 0 1px hsl(0 0% 100% / 0.03),
+    0 24px 60px hsl(240 70% 3% / 0.5),
+    inset 0 0 40px hsl(240 70% 4% / 0.5);
+}
+
+/* 120° boundary lines — one per segment, aligned with its tag. */
+.spoke {
+  position: absolute;
+  left: 50%;
+  top: 6%;
+  width: 1px;
+  height: 44%;
+  transform-origin: 50% 100%;
+  transform: rotate(var(--spoke-angle));
+  background: linear-gradient(to top, hsl(var(--accent) / 0.45), hsl(var(--accent) / 0));
+}
+
+.wheel__hub {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);   /* never rotates — stays upright */
+  width: 31%;
+  height: 31%;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid hsl(var(--accent) / 0.35);
+  background: radial-gradient(circle at 50% 35%, hsl(230 45% 26% / 0.95), hsl(230 55% 9% / 0.95));
+  box-shadow: 0 0 24px hsl(var(--accent) / 0.18), inset 0 1px 0 hsl(0 0% 100% / 0.08);
+  font-size: clamp(0.62rem, 1.2vw, 0.8rem);
+  font-weight: 650;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: hsl(var(--accent) / 0.92);
+}
+
+/* ── 120° segment container ──────────────────────────────────────────────── */
+/* One per contributor. JS rotates it by (wheel + segment) degrees; its .tag
+   is counter-rotated by the negative of that so the text stays horizontal.  */
+.segment {
+  position: absolute;
+  inset: 0;
+  transform: rotate(var(--segment-angle, 0deg));   /* driven by JS */
+  will-change: transform;
+}
+
+/* ── THE shared tag class (FIX 3) ────────────────────────────────────────── */
+/* Role tags and name tags are the SAME element with the SAME geometry; only
+   the accent strength differs (see .tag--primary).                          */
+.tag {
+  position: absolute;
+  left: 50%;
+  top: 6%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--tag-height);
+  padding: var(--tag-padding);
+  border-radius: var(--tag-radius);
+  border: var(--tag-border);
+  background: var(--tag-bg);
+  box-shadow: var(--tag-shadow);
+  font-size: var(--tag-font-size);
+  font-weight: 600;
+  letter-spacing: var(--tag-letter-spacing);
+  line-height: 1;
+  white-space: nowrap;
+  text-align: center;
+  backdrop-filter: blur(6px);
+  /* FIX 3: full opacity + a contrast lift. The role tags ("Design & Ideas",
+     "The Public") used to render at ~55% opacity and washed out. */
+  opacity: 1;
+  color: hsl(var(--ink) / 0.96);
+  text-shadow: 0 1px 2px hsl(240 70% 4% / 0.85);
+  transform: translate(-50%, -50%) translateY(calc(-1 * var(--rim-outset))) rotate(0deg);
+  will-change: transform;
+}
+
+/* Optional per-wheel accent hue — geometry is untouched, only hue. */
+.wheel--role .tag { --accent: 196 90% 68%; }
+.wheel--name .tag { --accent: 43 96% 66%; }
+
+/* The developer's box keeps its stronger glow (already in the design). */
+.tag--primary {
+  border-color: hsl(var(--accent) / 0.85);
+  box-shadow:
+    0 0 0 1px hsl(var(--accent) / 0.28),
+    0 8px 24px hsl(240 60% 4% / 0.6),
+    0 0 22px hsl(var(--accent) / 0.5),
+    0 0 46px hsl(var(--accent) / 0.24),
+    inset 0 1px 0 hsl(var(--accent) / 0.22);
+  color: hsl(var(--ink));
+}
+
+.credits__foot {
+  margin: clamp(20px, 5vw, 44px) auto 0;
+  max-width: 52ch;
+  text-align: center;
+  font-size: 0.86rem;
+  line-height: 1.7;
+  color: hsl(var(--ink) / 0.55);
+}
+
+@media (max-width: 560px) {
+  :root { --tag-height: 34px; --tag-padding: 6px 12px; --rim-outset: 4px; }
+  .stage { aspect-ratio: 1 / 1.05; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wheel__rotor, .segment, .tag { transition: none; }
+}
+</style>
+</head>
+<body>
+
+<main class="credits">
+  <header class="credits__head">
+    <p class="credits__eyebrow">Agora</p>
+    <h1 class="credits__title">Credits</h1>
+    <p class="credits__sub">The people who shaped the platform — and the people who give it a reason to exist.</p>
+  </header>
+
+  <div class="stage">
+
+    <!-- ══════════════ TOP-LEFT WHEEL — role tags ══════════════ -->
+    <div class="wheel wheel--role" data-wheel="role" data-speed="-6">
+      <div class="wheel__rotor">
+        <div class="wheel__disc"></div>
+        <span class="spoke" style="--spoke-angle: 0deg"></span>
+        <span class="spoke" style="--spoke-angle: 120deg"></span>
+        <span class="spoke" style="--spoke-angle: 240deg"></span>
+      </div>
+
+      <div class="segment" data-angle="0" style="--segment-angle: 0deg">
+        <div class="tag">Developer</div>
+      </div>
+      <div class="segment" data-angle="120" style="--segment-angle: 120deg">
+        <div class="tag">Design &amp; Ideas</div>
+      </div>
+      <div class="segment" data-angle="240" style="--segment-angle: 240deg">
+        <div class="tag">The Public</div>
+      </div>
+
+      <div class="wheel__hub"><span>Roles</span></div>
+    </div>
+
+    <!-- ══════════════ BOTTOM-RIGHT WHEEL — name tags ══════════════ -->
+    <!-- FIX 1: all three 120° segments now carry a name tag, using the exact
+         same DOM structure as the developer's (the only one that had one). -->
+    <div class="wheel wheel--name" data-wheel="name" data-speed="6">
+      <div class="wheel__rotor">
+        <div class="wheel__disc"></div>
+        <span class="spoke" style="--spoke-angle: 0deg"></span>
+        <span class="spoke" style="--spoke-angle: 120deg"></span>
+        <span class="spoke" style="--spoke-angle: 240deg"></span>
+      </div>
+
+      <div class="segment" data-angle="0" style="--segment-angle: 0deg">
+        <div class="tag tag--primary">Jayvardhan Bhaskar</div>
+      </div>
+      <div class="segment" data-angle="120" style="--segment-angle: 120deg">
+        <div class="tag">Yashvardhan Bhaskar</div>
+      </div>
+      <div class="segment" data-angle="240" style="--segment-angle: 240deg">
+        <div class="tag">The Public</div>
+      </div>
+
+      <div class="wheel__hub"><span>Names</span></div>
+    </div>
+
+  </div>
+
+  <p class="credits__foot">
+    Jayvardhan Bhaskar — developer. Yashvardhan Bhaskar — design &amp; ideas, and the
+    original maker of this credits screen. The Public — everyone who uses Agora and
+    makes it what it is.
+  </p>
+</main>
+
+<script>
+/* ==========================================================================
+   FIX 2 — Ferris-wheel counter-rotation (one code path for BOTH wheels)
+   --------------------------------------------------------------------------
+   For a segment whose base angle is A on a wheel currently rotated by W:
+
+     segment position angle  =  W + A        (moves the tag around the rim)
+     tag rotation            = -(W + A)      (cancels it out)
+
+   Net on-screen rotation = (W + A) + (-(W + A)) = 0 → the text stays perfectly
+   horizontal, never upside down or tilted, at every frame.
+
+   The transform order matters:
+     translate(-50%, -50%)            → centres the box on its anchor point
+     translateY(-rim-outset)          → pushes it radially outside the disc
+     rotate(-(W + A))                 → spins the box in place about its centre
+   ========================================================================== */
+(function () {
+  var wheels = Array.prototype.slice.call(document.querySelectorAll('.wheel'));
+  var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+  function rimOutset(wheel) {
+    // Read once (and on resize) so the transform itself stays a plain number —
+    // no var()/calc() inside a JS-assigned transform, which some browsers
+    // reject outright (silently dropping the whole transform).
+    var raw = getComputedStyle(wheel).getPropertyValue('--rim-outset');
+    return parseFloat(raw) || 6;
+  }
+
+  // Cache the DOM nodes once; only transforms are touched per frame.
+  var rigs = wheels.map(function (wheel) {
+    var segments = Array.prototype.slice.call(wheel.querySelectorAll('.segment'));
+    return {
+      wheel: wheel,
+      rotor: wheel.querySelector('.wheel__rotor'),
+      speed: parseFloat(wheel.dataset.speed || '0'),   // degrees per second
+      angle: 0,                                        // W
+      outset: rimOutset(wheel),                        // px outside the disc
+      segments: segments.map(function (segment) {
+        return {
+          element: segment,
+          angle: parseFloat(segment.dataset.angle || '0'),        // A
+          tag: segment.querySelector('.tag')
+        };
+      })
+    };
+  });
+
+  function render(rig) {
+    var wheelAngle = rig.angle;
+
+    // Decorative artwork (disc + 120° spokes) simply spins with the wheel.
+    if (rig.rotor) rig.rotor.style.transform = 'rotate(' + wheelAngle + 'deg)';
+
+    rig.segments.forEach(function (segment) {
+      // Total rotation applied to this 120° segment of the wheel.
+      var total = wheelAngle + segment.angle;
+
+      segment.element.style.transform = 'rotate(' + total + 'deg)';
+
+      // Exactly the same counter-math the Top-Left tags always used.
+      if (segment.tag) {
+        segment.tag.style.transform =
+          'translate(-50%, -50%) ' +
+          'translateY(' + (-rig.outset) + 'px) ' +
+          'rotate(' + (-total) + 'deg)';
+      }
+    });
+  }
+
+  window.addEventListener('resize', function () {
+    rigs.forEach(function (rig) { rig.outset = rimOutset(rig.wheel); });
+  });
+
+  var last = null;
+  function frame(now) {
+    if (last === null) last = now;
+    var deltaSeconds = Math.min((now - last) / 1000, 0.1);   // clamp after tab switches
+    last = now;
+
+    rigs.forEach(function (rig) {
+      if (!reduceMotion.matches) {
+        rig.angle = (rig.angle + rig.speed * deltaSeconds) % 360;
+      }
+      render(rig);
+    });
+
+    requestAnimationFrame(frame);
+  }
+
+  requestAnimationFrame(frame);
+})();
+</script>
+
+</body>
+</html>
