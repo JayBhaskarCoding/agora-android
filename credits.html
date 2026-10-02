@@ -2,82 +2,118 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Agora — Credits</title>
 <style>
 /* ==========================================================================
-   Agora — Credits
+   Agora — Credits (rotary UI)
    --------------------------------------------------------------------------
-   Two counter-rotating wheels:
-     • Top-Left     → ROLE tags   (Developer / Design & Ideas / The Public)
-     • Bottom-Right → NAME tags   (Jayvardhan Bhaskar / Yashvardhan Bhaskar / The Public)
+   Layout (flex column, everything is in flow → no absolute-position overlap
+   traps on any breakpoint):
+     .credits
+       ├─ .credits__head                     header
+       ├─ .stage            flex:1           wheels (absolute) + centred card
+       │    ├─ .wheel--role  Top-Left        role tags
+       │    ├─ .wheel--name  Bottom-Right    name tags
+       │    └─ .card                         photo / monogram, role, name, bio
+       └─ .hud                               "WHEEL TO ROTATE" pager + sound
 
-   FIX 1 (HTML)  : every .segment in the Bottom-Right wheel now carries its own
-                   rectangular .tag, with the same DOM shape as the developer's.
-   FIX 2 (JS)    : the Ferris-wheel counter-rotation that kept the Top-Left tags
-                   upright is now applied to BOTH wheels, from one code path.
-   FIX 3 (CSS)   : .tag is the single shared class — identical height, padding,
-                   radius, font-size, background, border and glow. Role text is
-                   full-opacity / high contrast (was too dim).
+   Rotation model (JS)
+     pos            float position in "contributor" units (0 .. n-1)
+     segmentAngle   A_i = direction * i * 120deg
+     wheelAngle     W   = activeAngle - direction * pos * 120deg
+     tag counter    -(W + A_i)   →  net rotation 0 → text always horizontal
+
+   Responsive: every mobile change lives in the @media (max-width: 768px)
+   block at the bottom — wheel size, off-screen anchor, tag/type scale and the
+   stacked HUD. Desktop is untouched by that block.
    ========================================================================== */
 
 :root {
-  /* One accent drives both wheels so the visual language is identical. */
-  --accent: 43 96% 66%;            /* warm gold */
-  --accent-soft: 43 96% 66%;
+  --accent: 43 96% 66%;          /* warm gold */
+  --accent-alt: 196 90% 68%;     /* cyan      */
   --ink: 40 30% 96%;
   --bg-0: #080a12;
   --bg-1: #101528;
 
-  /* ── Shared tag geometry (FIX 3) ─────────────────────────────────────── */
-  --tag-height: 40px;
-  --tag-padding: 8px 16px;
-  --tag-radius: 10px;              /* rectangular, not a pill */
-  --tag-font-size: clamp(0.78rem, 1.6vw, 0.95rem);
+  /* ── Wheels ─────────────────────────────────────────────────────────── */
+  --wheel-size: clamp(420px, 54vw, 760px);
+  --wheel-anchor: 50%;           /* how far the wheel is pushed off-screen  */
+  --rim-fraction: 0.44;          /* tag radius as a fraction of wheel size  */
+  --rim-outset: 6px;             /* extra push outside the disc             */
+  --tag-safe-margin: 14px;       /* min gap between tag and viewport edge   */
+
+  /* ── Shared tag geometry (identical on both wheels) ─────────────────── */
+  --tag-height: 44px;
+  --tag-padding: 10px 18px;
+  --tag-radius: 10px;
+  --tag-font-size: 1rem;
   --tag-letter-spacing: 0.02em;
+  --tag-max-width: none;
   --tag-border: 1px solid hsl(var(--accent) / 0.55);
-  --tag-bg: linear-gradient(
-      180deg,
-      hsl(230 40% 18% / 0.92) 0%,
-      hsl(232 45% 11% / 0.92) 100%
-    );
+  --tag-bg: linear-gradient(180deg,
+      hsl(230 40% 18% / 0.94) 0%,
+      hsl(232 45% 11% / 0.94) 100%);
   --tag-shadow:
       0 0 0 1px hsl(var(--accent) / 0.18),
       0 6px 18px hsl(240 60% 4% / 0.55),
       0 0 14px hsl(var(--accent) / 0.22),
       inset 0 1px 0 hsl(var(--accent) / 0.16);
 
-  --wheel-size: clamp(210px, 34vw, 330px);
-  --rim-outset: 6px;               /* how far outside the disc the tag sits */
+  /* ── Type / card scale ──────────────────────────────────────────────── */
+  --title-size: clamp(2.6rem, 8vw, 5.25rem);
+  --title-tracking: 0.16em;
+  --avatar-size: 132px;
+  --card-name-size: clamp(1.6rem, 3.4vw, 2.4rem);
+  --card-bio-size: 1rem;
+  --card-width: 46ch;
+  --hud-inset: clamp(24px, 12vw, 220px);
 }
 
 * { box-sizing: border-box; }
 
-html, body { min-height: 100%; }
+html, body { height: 100%; }
 
 body {
   margin: 0;
-  padding: clamp(24px, 5vw, 64px) 20px 72px;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg-0);
   color: hsl(var(--ink));
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+/* ── Shell ──────────────────────────────────────────────────────────────── */
+.credits {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100svh;
+  overflow: hidden;                 /* clips the wheels that bleed off-screen */
   background:
     radial-gradient(1100px 620px at 12% 8%, hsl(43 90% 55% / 0.10), transparent 60%),
     radial-gradient(900px 620px at 88% 92%, hsl(196 90% 55% / 0.10), transparent 60%),
     linear-gradient(180deg, var(--bg-1) 0%, var(--bg-0) 100%);
-  background-attachment: fixed;
-  -webkit-font-smoothing: antialiased;
+  /* The whole surface is the drag target (JS preventDefaults touchmove). */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
-.credits {
-  max-width: 980px;
-  margin: 0 auto;
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.credits__head {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  text-align: center;
+  padding: clamp(22px, 4vw, 46px) 20px 0;
+  pointer-events: none;
 }
-
-.credits__head { text-align: center; margin-bottom: clamp(16px, 4vw, 40px); }
 
 .credits__eyebrow {
-  margin: 0 0 6px;
-  font-size: 0.72rem;
+  margin: 0 0 8px;
+  font-size: clamp(0.6rem, 1.4vw, 0.74rem);
   letter-spacing: 0.42em;
   text-transform: uppercase;
   color: hsl(var(--accent) / 0.85);
@@ -85,48 +121,53 @@ body {
 
 .credits__title {
   margin: 0;
-  font-size: clamp(1.9rem, 6vw, 3rem);
+  font-size: var(--title-size);
   font-weight: 650;
-  letter-spacing: -0.02em;
-  background: linear-gradient(180deg, hsl(var(--ink)) 0%, hsl(var(--accent) / 0.92) 130%);
+  line-height: 1;
+  letter-spacing: var(--title-tracking);
+  text-transform: uppercase;
+  background: linear-gradient(180deg, hsl(var(--ink)) 0%, hsl(var(--accent) / 0.9) 130%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
 
-.credits__sub {
-  margin: 10px auto 0;
-  max-width: 46ch;
-  font-size: 0.92rem;
-  line-height: 1.6;
-  color: hsl(var(--ink) / 0.62);
-}
-
-/* ── Stage: two overlapping wheels ───────────────────────────────────────── */
+/* ── Stage: wheels + centred card ───────────────────────────────────────── */
 .stage {
   position: relative;
-  width: 100%;
-  max-width: 860px;
-  margin: 0 auto;
-  aspect-ratio: 1 / 1;
+  z-index: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  place-items: center;
 }
 
-/* ── Wheel shell ─────────────────────────────────────────────────────────── */
+/* ── Wheels ─────────────────────────────────────────────────────────────── */
 .wheel {
   position: absolute;
   width: var(--wheel-size);
   height: var(--wheel-size);
   pointer-events: none;
+  z-index: 0;
 }
 
-.wheel--role { top: 0; left: 0; }
-.wheel--name { bottom: 0; right: 0; }
+/* Desktop: the wheel centre sits on the stage corner, so roughly a quarter of
+   the rim sweeps through the page. Mobile overrides --wheel-anchor to 65%. */
+.wheel--role {
+  top: 0;
+  left: 0;
+  transform: translate(calc(-1 * var(--wheel-anchor)), calc(-1 * var(--wheel-anchor)));
+}
+.wheel--name {
+  bottom: 0;
+  right: 0;
+  transform: translate(var(--wheel-anchor), var(--wheel-anchor));
+}
 
-/* Everything decorative spins with the rotor. */
 .wheel__rotor {
   position: absolute;
   inset: 0;
-  transform: rotate(0deg);          /* driven by JS */
+  transform: rotate(0deg);          /* JS: rotate(W) */
   will-change: transform;
 }
 
@@ -147,7 +188,6 @@ body {
     inset 0 0 40px hsl(240 70% 4% / 0.5);
 }
 
-/* 120° boundary lines — one per segment, aligned with its tag. */
 .spoke {
   position: absolute;
   left: 50%;
@@ -163,42 +203,44 @@ body {
   position: absolute;
   left: 50%;
   top: 50%;
-  transform: translate(-50%, -50%);   /* never rotates — stays upright */
-  width: 31%;
-  height: 31%;
+  transform: translate(-50%, -50%);  /* never rotates */
+  width: 26%;
+  height: 26%;
   display: grid;
   place-items: center;
   border-radius: 50%;
-  border: 1px solid hsl(var(--accent) / 0.35);
+  border: 1px solid hsl(var(--accent) / 0.3);
   background: radial-gradient(circle at 50% 35%, hsl(230 45% 26% / 0.95), hsl(230 55% 9% / 0.95));
-  box-shadow: 0 0 24px hsl(var(--accent) / 0.18), inset 0 1px 0 hsl(0 0% 100% / 0.08);
-  font-size: clamp(0.62rem, 1.2vw, 0.8rem);
+  box-shadow: 0 0 24px hsl(var(--accent) / 0.16), inset 0 1px 0 hsl(0 0% 100% / 0.08);
+  font-size: 0.66rem;
   font-weight: 650;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: hsl(var(--accent) / 0.92);
+  color: hsl(var(--accent) / 0.85);
 }
 
-/* ── 120° segment container ──────────────────────────────────────────────── */
-/* One per contributor. JS rotates it by (wheel + segment) degrees; its .tag
-   is counter-rotated by the negative of that so the text stays horizontal.  */
+/* ── 120° segment containers ────────────────────────────────────────────── */
 .segment {
   position: absolute;
   inset: 0;
-  transform: rotate(var(--segment-angle, 0deg));   /* driven by JS */
+  /* Pre-JS fallback: tags render upright before the script runs. */
+  transform: rotate(calc(var(--i) * 120deg * var(--dir, 1)));
   will-change: transform;
 }
 
-/* ── THE shared tag class (FIX 3) ────────────────────────────────────────── */
-/* Role tags and name tags are the SAME element with the SAME geometry; only
-   the accent strength differs (see .tag--primary).                          */
+.wheel--role { --dir: 1; }
+.wheel--name { --dir: -1; }
+
+/* ── Shared tag class: role tags and name tags are the same element ─────── */
 .tag {
   position: absolute;
   left: 50%;
-  top: 6%;
+  /* Anchor on the disc rim: 50% − rim-fraction·100%  (0.44 → top: 6%) */
+  top: calc(50% - var(--rim-fraction) * 100%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  max-width: var(--tag-max-width);
   height: var(--tag-height);
   padding: var(--tag-padding);
   border-radius: var(--tag-radius);
@@ -212,20 +254,16 @@ body {
   white-space: nowrap;
   text-align: center;
   backdrop-filter: blur(6px);
-  /* FIX 3: full opacity + a contrast lift. The role tags ("Design & Ideas",
-     "The Public") used to render at ~55% opacity and washed out. */
-  opacity: 1;
+  opacity: 1;                                   /* full contrast (was too dim) */
   color: hsl(var(--ink) / 0.96);
   text-shadow: 0 1px 2px hsl(240 70% 4% / 0.85);
-  transform: translate(-50%, -50%) translateY(calc(-1 * var(--rim-outset))) rotate(0deg);
+  transform: translate(-50%, -50%) rotate(calc(-1 * var(--i) * 120deg * var(--dir, 1)));
   will-change: transform;
 }
 
-/* Optional per-wheel accent hue — geometry is untouched, only hue. */
-.wheel--role .tag { --accent: 196 90% 68%; }
+.wheel--role .tag { --accent: var(--accent-alt); }
 .wheel--name .tag { --accent: 43 96% 66%; }
 
-/* The developer's box keeps its stronger glow (already in the design). */
 .tag--primary {
   border-color: hsl(var(--accent) / 0.85);
   box-shadow:
@@ -234,41 +272,242 @@ body {
     0 0 22px hsl(var(--accent) / 0.5),
     0 0 46px hsl(var(--accent) / 0.24),
     inset 0 1px 0 hsl(var(--accent) / 0.22);
-  color: hsl(var(--ink));
 }
 
-.credits__foot {
-  margin: clamp(20px, 5vw, 44px) auto 0;
-  max-width: 52ch;
+/* ── Contributor card ───────────────────────────────────────────────────── */
+.card {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: min(100%, var(--card-width));
+  padding: 0 22px;
   text-align: center;
-  font-size: 0.86rem;
-  line-height: 1.7;
-  color: hsl(var(--ink) / 0.55);
+  transition: opacity 0.22s ease, transform 0.22s ease;
 }
 
-@media (max-width: 560px) {
-  :root { --tag-height: 34px; --tag-padding: 6px 12px; --rim-outset: 4px; }
-  .stage { aspect-ratio: 1 / 1.05; }
+.card.is-swapping { opacity: 0; transform: translateY(10px); }
+
+.card__avatar {
+  position: relative;
+  width: var(--avatar-size);
+  height: var(--avatar-size);
+  border-radius: 50%;
+  overflow: hidden;
+  border: 1px solid hsl(var(--accent) / 0.4);
+  background: radial-gradient(circle at 50% 30%, hsl(230 45% 28%) 0%, hsl(232 50% 10%) 100%);
+  box-shadow: 0 0 30px hsl(var(--accent) / 0.22), inset 0 1px 0 hsl(0 0% 100% / 0.08);
+}
+
+.avatar__monogram {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: calc(var(--avatar-size) * 0.3);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: hsl(var(--accent) / 0.9);
+  transition: opacity 0.2s ease;
+}
+
+.avatar__glyph { color: hsl(var(--accent) / 0.9); }
+
+.avatar__photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+}
+
+.card__role {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: hsl(var(--accent) / 0.9);
+}
+
+.card__name {
+  margin: 0;
+  font-size: var(--card-name-size);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+}
+
+.card__bio {
+  margin: 0;
+  max-width: 42ch;
+  font-size: var(--card-bio-size);
+  line-height: 1.65;
+  color: hsl(var(--ink) / 0.72);
+}
+
+/* ── HUD: pager + sound ─────────────────────────────────────────────────── */
+.hud {
+  position: relative;
+  z-index: 3;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: clamp(10px, 2vw, 18px) var(--hud-inset) clamp(18px, 3vw, 30px);
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.68rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: hsl(var(--ink) / 0.6);
+}
+
+.pager__glyph {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid hsl(var(--accent) / 0.35);
+  color: hsl(var(--accent) / 0.9);
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.pager__dots { display: flex; gap: 8px; }
+
+.pager__dot {
+  width: 22px;
+  height: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: hsl(var(--ink) / 0.22);
+  cursor: pointer;
+  transition: background 0.2s ease, width 0.2s ease;
+}
+
+.pager__dot[aria-selected="true"] {
+  width: 34px;
+  background: hsl(var(--accent) / 0.95);
+  box-shadow: 0 0 12px hsl(var(--accent) / 0.5);
+}
+
+.sound {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  border-radius: 999px;
+  border: 1px solid hsl(var(--ink) / 0.16);
+  background: hsl(230 40% 12% / 0.7);
+  backdrop-filter: blur(6px);
+  color: hsl(var(--ink) / 0.66);
+  font: inherit;
+  font-size: 0.66rem;
+  font-weight: 650;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.sound[aria-pressed="true"] {
+  color: hsl(var(--accent));
+  border-color: hsl(var(--accent) / 0.5);
+  box-shadow: 0 0 18px hsl(var(--accent) / 0.22);
+}
+
+.sound svg { width: 15px; height: 15px; }
+
+.pager__dot:focus-visible,
+.sound:focus-visible {
+  outline: 2px solid hsl(var(--accent) / 0.8);
+  outline-offset: 3px;
+}
+
+/* ==========================================================================
+   MOBILE — portrait phones (and small tablets in portrait)
+   ========================================================================== */
+@media (max-width: 768px) {
+  :root {
+    /* 1. Smaller wheels, pushed further off-screen → narrow, shallow arcs
+          that no longer collide in the middle of the screen. */
+    --wheel-size: clamp(300px, 86vw, 430px);
+    --wheel-anchor: 65%;
+    --rim-outset: 4px;
+    --tag-safe-margin: 12px;
+
+    /* Scaled-down tags to fit the tighter arcs. */
+    --tag-height: 34px;
+    --tag-padding: 6px 12px;
+    --tag-radius: 9px;
+    --tag-font-size: 0.76rem;
+    --tag-letter-spacing: 0.01em;
+    --tag-max-width: min(52vw, 260px);
+
+    /* 2. Type + card scale. */
+    --title-size: clamp(1.7rem, 10.5vw, 2.5rem);   /* fits on one line */
+    --title-tracking: 0.06em;                      /* tighter tracking  */
+    --avatar-size: 88px;
+    --card-name-size: 1.35rem;
+    --card-bio-size: 0.9rem;
+    --card-width: 34ch;
+    --hud-inset: 18px;
+  }
+
+  .credits__head { padding-top: max(18px, env(safe-area-inset-top)); }
+
+  /* HUD becomes a centred vertical stack in normal flow — it can never sit
+     under the bottom-right wheel's arc, because the wheels are anchored to
+     the stage *above* it. */
+  .hud {
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 18px calc(16px + env(safe-area-inset-bottom));
+  }
+
+  .pager { gap: 10px; font-size: 0.58rem; letter-spacing: 0.16em; }
+  .sound { padding: 8px 14px; font-size: 0.6rem; letter-spacing: 0.18em; }
+
+  .card { gap: 10px; }
+  .card__bio { line-height: 1.55; }
+}
+
+/* Short phones: trim the vertical stack so everything still fits. */
+@media (max-width: 768px) and (max-height: 640px) {
+  :root { --avatar-size: 66px; --title-size: 1.4rem; --card-bio-size: 0.82rem; }
+  .card__bio { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .wheel__rotor, .segment, .tag { transition: none; }
+  .card { transition: none; }
 }
 </style>
 </head>
 <body>
 
-<main class="credits">
+<main class="credits" id="credits">
+
   <header class="credits__head">
     <p class="credits__eyebrow">Agora</p>
     <h1 class="credits__title">Credits</h1>
-    <p class="credits__sub">The people who shaped the platform — and the people who give it a reason to exist.</p>
   </header>
 
-  <div class="stage">
+  <div class="stage" id="stage">
 
-    <!-- ══════════════ TOP-LEFT WHEEL — role tags ══════════════ -->
-    <div class="wheel wheel--role" data-wheel="role" data-speed="-6">
+    <!-- ══════════ TOP-LEFT: role tags (direction +1, active arc 135°) ══════════ -->
+    <div class="wheel wheel--role" data-wheel data-direction="1" data-active-angle="135" aria-hidden="true">
       <div class="wheel__rotor">
         <div class="wheel__disc"></div>
         <span class="spoke" style="--spoke-angle: 0deg"></span>
@@ -276,23 +515,21 @@ body {
         <span class="spoke" style="--spoke-angle: 240deg"></span>
       </div>
 
-      <div class="segment" data-angle="0" style="--segment-angle: 0deg">
+      <div class="segment" data-index="0" style="--i: 0">
         <div class="tag">Developer</div>
       </div>
-      <div class="segment" data-angle="120" style="--segment-angle: 120deg">
+      <div class="segment" data-index="1" style="--i: 1">
         <div class="tag">Design &amp; Ideas</div>
       </div>
-      <div class="segment" data-angle="240" style="--segment-angle: 240deg">
+      <div class="segment" data-index="2" style="--i: 2">
         <div class="tag">The Public</div>
       </div>
 
       <div class="wheel__hub"><span>Roles</span></div>
     </div>
 
-    <!-- ══════════════ BOTTOM-RIGHT WHEEL — name tags ══════════════ -->
-    <!-- FIX 1: all three 120° segments now carry a name tag, using the exact
-         same DOM structure as the developer's (the only one that had one). -->
-    <div class="wheel wheel--name" data-wheel="name" data-speed="6">
+    <!-- ══════════ BOTTOM-RIGHT: name tags (direction −1, active arc 315°) ══════════ -->
+    <div class="wheel wheel--name" data-wheel data-direction="-1" data-active-angle="315" aria-hidden="true">
       <div class="wheel__rotor">
         <div class="wheel__disc"></div>
         <span class="spoke" style="--spoke-angle: 0deg"></span>
@@ -300,118 +537,521 @@ body {
         <span class="spoke" style="--spoke-angle: 240deg"></span>
       </div>
 
-      <div class="segment" data-angle="0" style="--segment-angle: 0deg">
+      <div class="segment" data-index="0" style="--i: 0">
         <div class="tag tag--primary">Jayvardhan Bhaskar</div>
       </div>
-      <div class="segment" data-angle="120" style="--segment-angle: 120deg">
+      <div class="segment" data-index="1" style="--i: 1">
         <div class="tag">Yashvardhan Bhaskar</div>
       </div>
-      <div class="segment" data-angle="240" style="--segment-angle: 240deg">
+      <div class="segment" data-index="2" style="--i: 2">
         <div class="tag">The Public</div>
       </div>
 
       <div class="wheel__hub"><span>Names</span></div>
     </div>
 
+    <section class="card" id="card" aria-live="polite">
+      <div class="card__avatar">
+        <span class="avatar__monogram" id="avatarMonogram">JB</span>
+        <img class="avatar__photo" id="avatarPhoto" alt="" hidden />
+      </div>
+      <p class="card__role" id="cardRole">Developer</p>
+      <h2 class="card__name" id="cardName">Jayvardhan Bhaskar</h2>
+      <p class="card__bio" id="cardBio"></p>
+    </section>
+
   </div>
 
-  <p class="credits__foot">
-    Jayvardhan Bhaskar — developer. Yashvardhan Bhaskar — design &amp; ideas, and the
-    original maker of this credits screen. The Public — everyone who uses Agora and
-    makes it what it is.
-  </p>
+  <div class="hud">
+    <div class="pager">
+      <span class="pager__glyph" aria-hidden="true">↻</span>
+      <span class="pager__label">Wheel to rotate</span>
+      <div class="pager__dots" id="dots" role="tablist" aria-label="Contributors"></div>
+    </div>
+
+    <button class="sound" type="button" id="sound" aria-pressed="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M11 5 6 9H3v6h3l5 4V5Z" />
+        <path d="M16 9.5a3.5 3.5 0 0 1 0 5" id="soundWave1" style="opacity:.25" />
+        <path d="M18.5 7a7 7 0 0 1 0 10" id="soundWave2" style="opacity:.25" />
+        <path d="M4 20 20 4" id="soundSlash" />
+      </svg>
+      <span class="sound__label" id="soundLabel">Sound off</span>
+    </button>
+  </div>
+
 </main>
 
 <script>
 /* ==========================================================================
-   FIX 2 — Ferris-wheel counter-rotation (one code path for BOTH wheels)
-   --------------------------------------------------------------------------
-   For a segment whose base angle is A on a wheel currently rotated by W:
-
-     segment position angle  =  W + A        (moves the tag around the rim)
-     tag rotation            = -(W + A)      (cancels it out)
-
-   Net on-screen rotation = (W + A) + (-(W + A)) = 0 → the text stays perfectly
-   horizontal, never upside down or tilted, at every frame.
-
-   The transform order matters:
-     translate(-50%, -50%)            → centres the box on its anchor point
-     translateY(-rim-outset)          → pushes it radially outside the disc
-     rotate(-(W + A))                 → spins the box in place about its centre
+   Credits — scroll/touch-driven rotation, snapping, responsive tag safety
    ========================================================================== */
 (function () {
-  var wheels = Array.prototype.slice.call(document.querySelectorAll('.wheel'));
+  'use strict';
+
+  /* ── Content ─────────────────────────────────────────────────────────── */
+  /* Drop real photos at these paths and they appear automatically; until
+     then (or if a file is missing) the monogram / crowd glyph shows.        */
+  var CONTRIBUTORS = [
+    {
+      name: 'Jayvardhan Bhaskar',
+      role: 'Developer',
+      monogram: 'JB',
+      photo: 'assets/credits/jayvardhan.jpg',
+      bio: 'Built Agora end to end — the Android app, the Supabase backend and the push pipeline that keeps every conversation moving.'
+    },
+    {
+      name: 'Yashvardhan Bhaskar',
+      role: 'Design & Ideas',
+      monogram: 'YB',
+      photo: 'assets/credits/yashvardhan.jpg',
+      bio: 'Shaped how Agora looks and feels, and made this credits screen. Most of the details you enjoy started as one of his ideas.'
+    },
+    {
+      name: 'The Public',
+      role: 'Everyone',
+      glyph: true,
+      bio: 'Every post, every comment, every late-night thread. Agora is whatever you make of it — thank you for showing up.'
+    }
+  ];
+
+  var GLYPH_SVG =
+    '<svg class="avatar__glyph" viewBox="0 0 24 24" width="44%" height="44%" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<circle cx="9" cy="8" r="3.2"/><circle cx="17" cy="9.5" r="2.3"/>' +
+    '<path d="M3.4 20c0-3.4 2.5-5.6 5.6-5.6s5.6 2.2 5.6 5.6"/>' +
+    '<path d="M15.6 20c0-2.4 1.3-4.1 3.3-4.5"/></svg>';
+
+  /* ── Tuning ──────────────────────────────────────────────────────────── */
+  var STEP_DEGREES       = 120;   // one contributor per 120°
+  var WHEEL_STEP_PX      = 420;   // trackpad px per contributor
+  var TOUCH_STEP_PX      = 190;   // finger px per contributor
+  var SNAP_THRESHOLD     = 0.65;  // 65% of a step → advance, else spring back
+  var VELOCITY_THRESHOLD = 0.9;   // contributor-units/second → flick
+  var RUBBER             = 0.55;  // how far past the ends you can drag
+  var SPRING             = 11;    // spring stiffness (per second)
+  var WHEEL_IDLE_MS      = 130;   // wheel idle before snapping
+  var EDGE_RESCUE        = 0.9;   // rescue tags that are ≥10% on screen
+
+  /* ── DOM ─────────────────────────────────────────────────────────────── */
+  var root       = document.getElementById('credits');
+  var card       = document.getElementById('card');
+  var cardRole   = document.getElementById('cardRole');
+  var cardName   = document.getElementById('cardName');
+  var cardBio    = document.getElementById('cardBio');
+  var monogramEl = document.getElementById('avatarMonogram');
+  var photoEl    = document.getElementById('avatarPhoto');
+  var dotsEl     = document.getElementById('dots');
+  var soundBtn   = document.getElementById('sound');
+  var soundLabel = document.getElementById('soundLabel');
+  var soundSlash = document.getElementById('soundSlash');
+  var soundWaves = [document.getElementById('soundWave1'), document.getElementById('soundWave2')];
+
   var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  var count = CONTRIBUTORS.length;
 
-  function rimOutset(wheel) {
-    // Read once (and on resize) so the transform itself stays a plain number —
-    // no var()/calc() inside a JS-assigned transform, which some browsers
-    // reject outright (silently dropping the whole transform).
-    var raw = getComputedStyle(wheel).getPropertyValue('--rim-outset');
-    return parseFloat(raw) || 6;
-  }
+  /* ── State ───────────────────────────────────────────────────────────── */
+  var pos         = 0;    // animated float position (contributor units)
+  var target      = 0;    // where pos is heading
+  var activeIndex = -1;
+  var dragging    = false;
 
-  // Cache the DOM nodes once; only transforms are touched per frame.
-  var rigs = wheels.map(function (wheel) {
-    var segments = Array.prototype.slice.call(wheel.querySelectorAll('.segment'));
+  /* ── Wheel rigs ──────────────────────────────────────────────────────── */
+  var rigs = Array.prototype.slice.call(document.querySelectorAll('[data-wheel]')).map(function (wheel) {
     return {
-      wheel: wheel,
+      el: wheel,
       rotor: wheel.querySelector('.wheel__rotor'),
-      speed: parseFloat(wheel.dataset.speed || '0'),   // degrees per second
-      angle: 0,                                        // W
-      outset: rimOutset(wheel),                        // px outside the disc
-      segments: segments.map(function (segment) {
+      direction: parseFloat(wheel.dataset.direction) || 1,
+      activeAngle: parseFloat(wheel.dataset.activeAngle) || 0,
+      segments: Array.prototype.slice.call(wheel.querySelectorAll('.segment')).map(function (segment) {
         return {
-          element: segment,
-          angle: parseFloat(segment.dataset.angle || '0'),        // A
-          tag: segment.querySelector('.tag')
+          el: segment,
+          index: parseFloat(segment.dataset.index) || 0,
+          tag: segment.querySelector('.tag'),
+          radius: 0, halfW: 0, halfH: 0, dx: 0
         };
-      })
+      }),
+      cx: 0, cy: 0, minX: 0, maxX: 0, top: 0, bottom: 0,
+      stageTop: 0, stageBottom: 0
     };
   });
 
-  function render(rig) {
-    var wheelAngle = rig.angle;
+  var stageEl = document.getElementById('stage');
 
-    // Decorative artwork (disc + 120° spokes) simply spins with the wheel.
-    if (rig.rotor) rig.rotor.style.transform = 'rotate(' + wheelAngle + 'deg)';
+  function clamp(v, min, max) { return v < min ? min : v > max ? max : v; }
 
-    rig.segments.forEach(function (segment) {
-      // Total rotation applied to this 120° segment of the wheel.
-      var total = wheelAngle + segment.angle;
+  /* ── Measurement — rotation-invariant, so no per-frame layout reads ──── */
+  var outsetCache = NaN;
+  var safeMargin = 14;
 
-      segment.element.style.transform = 'rotate(' + total + 'deg)';
+  function outset() {
+    if (isNaN(outsetCache)) {
+      var raw = getComputedStyle(document.documentElement).getPropertyValue('--rim-outset');
+      outsetCache = parseFloat(raw) || 6;
+    }
+    return outsetCache;
+  }
 
-      // Exactly the same counter-math the Top-Left tags always used.
-      if (segment.tag) {
-        segment.tag.style.transform =
-          'translate(-50%, -50%) ' +
-          'translateY(' + (-rig.outset) + 'px) ' +
-          'rotate(' + (-total) + 'deg)';
-      }
+  function measure() {
+    outsetCache = NaN;
+    var margin = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--tag-safe-margin'));
+    var safe = isNaN(margin) ? 14 : margin;
+    safeMargin = safe;
+    var bounds = root.getBoundingClientRect();
+
+    rigs.forEach(function (rig) {
+      var wheelRect = rig.el.getBoundingClientRect();
+      rig.cx = wheelRect.left + wheelRect.width / 2;
+      rig.cy = wheelRect.top + wheelRect.height / 2;
+      rig.minX = bounds.left + safe;
+      rig.maxX = bounds.right - safe;
+      rig.top = bounds.top;
+      rig.bottom = bounds.bottom;
+
+      // Vertical safe band: the stage box, so tags never drift over the
+      // header or the HUD on either breakpoint.
+      var stageRect = stageEl.getBoundingClientRect();
+      rig.stageTop = stageRect.top;
+      rig.stageBottom = stageRect.bottom;
+
+      // Draw once with no edge correction, so the radius/half-width we read
+      // are the tag's true geometry. Radius is rotation-invariant, so any
+      // pose gives the same answer.
+      rig.segments.forEach(function (s) {
+        s.dx = 0;
+        var total = wheelAngleFor(rig) + rig.direction * s.index * STEP_DEGREES;
+        s.el.style.transform = 'rotate(' + total + 'deg)';
+        if (s.tag) {
+          s.tag.style.transform =
+            'translate(-50%, -50%) translateY(' + (-outset()) + 'px) rotate(' + (-total) + 'deg)';
+        }
+      });
+
+      rig.segments.forEach(function (s) {
+        if (!s.tag) return;
+        var r = s.tag.getBoundingClientRect();
+        s.halfW = r.width / 2;
+        s.halfH = r.height / 2;
+        s.radius = Math.hypot((r.left + r.width / 2) - rig.cx, (r.top + r.height / 2) - rig.cy);
+      });
     });
   }
 
-  window.addEventListener('resize', function () {
-    rigs.forEach(function (rig) { rig.outset = rimOutset(rig.wheel); });
+  function wheelAngleFor(rig) {
+    return rig.activeAngle - rig.direction * pos * STEP_DEGREES;
+  }
+
+  /* ── Render ──────────────────────────────────────────────────────────── */
+  function render() {
+    rigs.forEach(function (rig) {
+      var W = wheelAngleFor(rig);
+      if (rig.rotor) rig.rotor.style.transform = 'rotate(' + W + 'deg)';
+
+      rig.segments.forEach(function (s) {
+        var total = W + rig.direction * s.index * STEP_DEGREES;   // W + A
+        s.el.style.transform = 'rotate(' + total + 'deg)';
+        if (!s.tag) return;
+
+        /* ── 4. Tag-clipping guard ──────────────────────────────────────
+           The tag centre is analytic: C + radius·(sin θ, −cos θ). Because the
+           counter-rotation cancels the ancestors' rotation, the net linear
+           transform is the identity — so a translate appended to the tag
+           moves it in SCREEN space, which is exactly what we need to nudge
+           it back inside the safe zone. Only tags that are already (mostly)
+           on screen get rescued; off-screen ones are left alone.          */
+        var theta = (total * Math.PI) / 180;
+        var x = rig.cx + s.radius * Math.sin(theta);
+        var y = rig.cy - s.radius * Math.cos(theta);
+
+        var dx = 0;
+        var dy = 0;
+        var onScreenVertically = y > rig.top - s.halfH && y < rig.bottom + s.halfH;
+        var nearHorizontally = x > rig.minX - s.halfW * EDGE_RESCUE &&
+                               x < rig.maxX + s.halfW * EDGE_RESCUE;
+        var nearVertically = y > rig.stageTop - s.halfH * EDGE_RESCUE &&
+                             y < rig.stageBottom + s.halfH * EDGE_RESCUE;
+
+        // Horizontal: keep the whole tag inside the viewport edges.
+        if (onScreenVertically && nearHorizontally) {
+          var minCentre = rig.minX + s.halfW;
+          var maxCentre = rig.maxX - s.halfW;
+          if (minCentre <= maxCentre) dx = clamp(x, minCentre, maxCentre) - x;
+        }
+
+        // Vertical: keep it clear of the header above and the HUD below.
+        if (nearHorizontally && nearVertically) {
+          var minY = rig.stageTop + s.halfH + safeMargin;
+          var maxY = rig.stageBottom - s.halfH - safeMargin;
+          if (minY <= maxY) dy = clamp(y, minY, maxY) - y;
+        }
+        s.dx = dx;
+
+        s.tag.style.transform =
+          'translate(-50%, -50%) ' +
+          'translateY(' + (-outset()) + 'px) ' +
+          'rotate(' + (-total) + 'deg) ' +
+          'translate(' + dx.toFixed(2) + 'px, ' + dy.toFixed(2) + 'px)';
+      });
+    });
+  }
+
+  /* ── Card ────────────────────────────────────────────────────────────── */
+  var swapTimer = null;
+
+  function paintCard(index, animate) {
+    if (index === activeIndex) return;
+    activeIndex = index;
+
+    var paint = function () {
+      var person = CONTRIBUTORS[index];
+      cardRole.textContent = person.role;
+      cardName.textContent = person.name;
+      cardBio.textContent = person.bio;
+
+      photoEl.hidden = true;
+      photoEl.removeAttribute('src');
+      monogramEl.style.opacity = '';
+
+      if (person.glyph) {
+        monogramEl.innerHTML = GLYPH_SVG;
+      } else {
+        monogramEl.textContent = person.monogram;
+        if (person.photo) {
+          photoEl.onload = function () { photoEl.hidden = false; monogramEl.style.opacity = '0'; };
+          photoEl.onerror = function () { photoEl.hidden = true; monogramEl.style.opacity = ''; };
+          photoEl.setAttribute('src', person.photo);
+        }
+      }
+
+      Array.prototype.forEach.call(dotsEl.children, function (dot, i) {
+        dot.setAttribute('aria-selected', i === index ? 'true' : 'false');
+      });
+    };
+
+    if (animate && !reduceMotion.matches) {
+      card.classList.add('is-swapping');
+      clearTimeout(swapTimer);
+      swapTimer = setTimeout(function () {
+        paint();
+        card.classList.remove('is-swapping');
+      }, 180);
+    } else {
+      paint();
+    }
+  }
+
+  CONTRIBUTORS.forEach(function (person, i) {
+    var dot = document.createElement('button');
+    dot.type = 'button';
+    dot.className = 'pager__dot';
+    dot.setAttribute('role', 'tab');
+    dot.setAttribute('aria-label', person.name + ' — ' + person.role);
+    dot.addEventListener('click', function () { gotoStep(i); });
+    dotsEl.appendChild(dot);
   });
 
-  var last = null;
+  function gotoStep(index) {
+    var next = clamp(index, 0, count - 1);
+    target = next;
+    if (reduceMotion.matches) { pos = target; render(); }
+    if (next !== activeIndex) blip();
+    paintCard(next, true);
+  }
+
+  /* ── Gestures ────────────────────────────────────────────────────────── */
+  var gestureStartPos   = 0;
+  var gestureStartIndex = 0;
+  var lastSamplePos     = 0;
+  var lastSampleTime    = 0;
+  var velocity          = 0;
+
+  function beginGesture() {
+    dragging = true;
+    gestureStartPos = pos;
+    gestureStartIndex = clamp(Math.round(pos), 0, count - 1);
+    lastSamplePos = pos;
+    lastSampleTime = performance.now();
+    velocity = 0;
+  }
+
+  function moveGesture(nextPos, now) {
+    pos = clamp(nextPos, -RUBBER, count - 1 + RUBBER);
+    var dt = (now - lastSampleTime) / 1000;
+    if (dt > 0.008) {
+      velocity = (pos - lastSamplePos) / dt;      // contributor units / second
+      lastSamplePos = pos;
+      lastSampleTime = now;
+    }
+  }
+
+  /* 3. One snap rule for every input: past 65% of a step, or a fast flick →
+        advance one contributor; otherwise spring back to the current one.   */
+  function endGesture() {
+    if (!dragging) return;
+    dragging = false;
+
+    var delta = pos - gestureStartPos;
+    var dir = Math.abs(delta) > 0.05 ? Math.sign(delta) : Math.sign(velocity);
+    var advanced = Math.abs(delta) > SNAP_THRESHOLD || Math.abs(velocity) > VELOCITY_THRESHOLD;
+    var next = advanced && dir !== 0
+      ? clamp(gestureStartIndex + dir, 0, count - 1)
+      : gestureStartIndex;
+
+    target = next;
+    if (reduceMotion.matches) { pos = target; render(); }
+    if (advanced && dir !== 0) blip();
+    paintCard(next, true);
+  }
+
+  /* ── 3a. Touch: drag the wheels vertically ───────────────────────────── */
+  var touchStartY = 0;
+  var touchStartPos = 0;
+
+  root.addEventListener('touchstart', function (event) {
+    if (event.touches.length !== 1) return;
+    touchStartY = event.touches[0].clientY;
+    touchStartPos = pos;
+    beginGesture();
+  }, { passive: true });
+
+  root.addEventListener('touchmove', function (event) {
+    if (!dragging || event.touches.length !== 1) return;
+    if (event.cancelable) event.preventDefault();     // own the gesture
+    var dragPx = touchStartY - event.touches[0].clientY;   // drag up = forward
+    moveGesture(touchStartPos + dragPx / TOUCH_STEP_PX, performance.now());
+  }, { passive: false });
+
+  root.addEventListener('touchend', function () { endGesture(); }, { passive: true });
+  root.addEventListener('touchcancel', function () { endGesture(); }, { passive: true });
+
+  /* ── 3b. Desktop wheel / trackpad ────────────────────────────────────── */
+  var wheelIdleTimer = null;
+
+  root.addEventListener('wheel', function (event) {
+    if (event.ctrlKey) return;                        // pinch-zoom
+    event.preventDefault();
+    if (!dragging) beginGesture();
+
+    var unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerHeight : 1;
+    moveGesture(pos + (event.deltaY * unit) / WHEEL_STEP_PX, performance.now());
+
+    // Continuous scrolling: commit each step as it is crossed, then re-baseline
+    // so a long trackpad swipe advances through every contributor.
+    var stepped = clamp(Math.round(pos), 0, count - 1);
+    if (stepped !== gestureStartIndex) {
+      target = stepped;
+      paintCard(stepped, true);
+      blip();
+      beginGesture();
+    }
+
+    clearTimeout(wheelIdleTimer);
+    wheelIdleTimer = setTimeout(endGesture, WHEEL_IDLE_MS);
+  }, { passive: false });
+
+  /* ── 3c. Keyboard + mouse drag (same physics) ────────────────────────── */
+  window.addEventListener('keydown', function (event) {
+    var forward = event.key === 'ArrowDown' || event.key === 'ArrowRight' || event.key === 'PageDown';
+    var back = event.key === 'ArrowUp' || event.key === 'ArrowLeft' || event.key === 'PageUp';
+    if (forward) gotoStep(activeIndex + 1);
+    else if (back) gotoStep(activeIndex - 1);
+    else if (event.key === 'Home') gotoStep(0);
+    else if (event.key === 'End') gotoStep(count - 1);
+    else return;
+    event.preventDefault();
+  });
+
+  var pointerId = null;
+  var pointerStartY = 0;
+  var pointerStartPos = 0;
+
+  root.addEventListener('pointerdown', function (event) {
+    if (event.pointerType === 'touch') return;        // handled above
+    if (event.target.closest('button')) return;       // let buttons be buttons
+    pointerId = event.pointerId;
+    pointerStartY = event.clientY;
+    pointerStartPos = pos;
+    beginGesture();
+  });
+
+  root.addEventListener('pointermove', function (event) {
+    if (pointerId !== event.pointerId || !dragging) return;
+    moveGesture(pointerStartPos + (pointerStartY - event.clientY) / TOUCH_STEP_PX, performance.now());
+  });
+
+  function endPointer(event) {
+    if (pointerId !== event.pointerId) return;
+    pointerId = null;
+    endGesture();
+  }
+  root.addEventListener('pointerup', endPointer);
+  root.addEventListener('pointercancel', endPointer);
+
+  /* ── Sound toggle ────────────────────────────────────────────────────── */
+  var soundOn = false;
+  var audioCtx = null;
+
+  function blip() {
+    if (!soundOn) return;
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      var osc = audioCtx.createOscillator();
+      var gain = audioCtx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.value = 520;
+      gain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.06, audioCtx.currentTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.12);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.14);
+    } catch (error) { /* audio is optional */ }
+  }
+
+  soundBtn.addEventListener('click', function () {
+    soundOn = !soundOn;
+    soundBtn.setAttribute('aria-pressed', soundOn ? 'true' : 'false');
+    soundLabel.textContent = soundOn ? 'Sound on' : 'Sound off';
+    soundSlash.style.opacity = soundOn ? '0' : '1';
+    soundWaves.forEach(function (wave) { wave.style.opacity = soundOn ? '1' : '0.25'; });
+    if (soundOn) blip();
+  });
+
+  /* ── Main loop ───────────────────────────────────────────────────────── */
+  var last = 0;
+
   function frame(now) {
-    if (last === null) last = now;
-    var deltaSeconds = Math.min((now - last) / 1000, 0.1);   // clamp after tab switches
+    var dt = last ? Math.min((now - last) / 1000, 0.05) : 0;
     last = now;
 
-    rigs.forEach(function (rig) {
-      if (!reduceMotion.matches) {
-        rig.angle = (rig.angle + rig.speed * deltaSeconds) % 360;
-      }
-      render(rig);
-    });
+    if (!dragging && Math.abs(target - pos) > 0.0005) {
+      var ease = reduceMotion.matches ? 1 : 1 - Math.exp(-SPRING * dt);
+      pos += (target - pos) * ease;
+      if (Math.abs(target - pos) < 0.0005) pos = target;
+    }
+
+    render();
+
+    var nearest = clamp(Math.round(pos), 0, count - 1);
+    if (!dragging && nearest !== activeIndex && Math.abs(target - pos) < 0.05) {
+      paintCard(nearest, true);
+    }
 
     requestAnimationFrame(frame);
   }
 
+  /* ── Boot ────────────────────────────────────────────────────────────── */
+  var resizeTimer = null;
+  function onResize() {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () { measure(); render(); }, 80);
+  }
+  window.addEventListener('resize', onResize);
+  window.addEventListener('orientationchange', onResize);
+
+  measure();
+  paintCard(0, false);
+  render();
   requestAnimationFrame(frame);
 })();
 </script>
