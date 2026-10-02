@@ -64,10 +64,27 @@ if (-not [string]::IsNullOrWhiteSpace($FirebaseServiceAccountPath)) {
 Require-Value 'FirebaseServiceAccountPath / FIREBASE_SERVICE_ACCOUNT' $FirebaseServiceAccount
 
 try {
-    $null = $FirebaseServiceAccount | ConvertFrom-Json
+    $serviceAccountJson = $FirebaseServiceAccount | ConvertFrom-Json
 } catch {
     throw 'Firebase service account content is not valid JSON.'
 }
+
+# Catch the classic rotation mistake before the secret ever reaches Supabase:
+# a key belonging to a different Firebase project, or a truncated JSON.
+foreach ($field in @('project_id', 'private_key', 'private_key_id', 'client_email')) {
+    if (-not ($serviceAccountJson.PSObject.Properties.Name -contains $field) -or
+        [string]::IsNullOrWhiteSpace($serviceAccountJson.$field)) {
+        throw "Firebase service account JSON is missing the '$field' field."
+    }
+}
+if ($serviceAccountJson.project_id -ne 'agora-application') {
+    throw "Firebase service account belongs to project '$($serviceAccountJson.project_id)'; the push pipeline targets 'agora-application'."
+}
+if (-not $serviceAccountJson.private_key.StartsWith('-----BEGIN PRIVATE KEY-----')) {
+    throw 'Firebase service account private_key is not an unencrypted PKCS#8 PEM ("-----BEGIN PRIVATE KEY-----").'
+}
+
+Write-Host "Firebase service account validated: project '$($serviceAccountJson.project_id)', key id '$($serviceAccountJson.private_key_id)'." -ForegroundColor Cyan
 
 # Do not pass JSON/secret values as command-line arguments. The temporary env file is deleted
 # immediately after the Supabase CLI consumes it.

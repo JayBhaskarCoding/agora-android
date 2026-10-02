@@ -1,8 +1,35 @@
+/**
+ * 🌟 push-notification — Supabase Edge Function (database webhook).
+ *
+ * Triggered by an INSERT on `public.notifications` (see
+ * migrations/…_remote_schema.sql and …_repoint_edge_function_webhooks.sql).
+ * Delivers the row to every device token registered for the recipient via
+ * FCM HTTP v1.
+ *
+ * Hardening added after the service-account rotation:
+ *   • credentials are parsed/normalised/validated once, in `_shared`
+ *     (handles \\n-mangled PEMs, base64 envelopes, wrong-project keys);
+ *   • the OAuth token exchange logs Google's exact status + body on failure;
+ *   • FCM responses are classified (401 / 403 / 404 / 400 …) with remediation;
+ *   • stale device tokens are purged from fcm_tokens → profiles.fcm_token.
+ *
+ * The delivery logic itself lives in ../_shared/deliver-notification.ts so it
+ * is covered by unit tests; this file is only the HTTP adapter.
+ */
+
 import { serve } from "https://deno.land/std@0.192.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.33.1";
-import { JWT } from "npm:google-auth-library@9.0.0";
 
-// Interface matching the Supabase Webhook payload
+import {
+  FIREBASE_PROJECT_ID,
+  loadServiceAccountCredentials,
+  logCredentialsSummary,
+  ServiceAccountConfigError,
+} from "../_shared/firebase-service-account.ts";
+import { GoogleOAuthError } from "../_shared/google-oauth.ts";
+import { deliverNotification } from "../_shared/deliver-notification.ts";
+import type { SupabaseLikeClient } from "../_shared/token-cleanup.ts";
+
 interface WebhookPayload {
   type: "INSERT";
   table: string;
@@ -11,123 +38,138 @@ interface WebhookPayload {
     recipient_id: string;
     title: string;
     body: string;
-    data: any;
+    data: Record<string, unknown> | null;
   };
+}
+
+function jsonResponse(body: Record<string, unknown>, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 serve(async (req) => {
   const expectedWebhookSecret = Deno.env.get("WEBHOOK_SECRET");
   const receivedWebhookSecret = req.headers.get("x-webhook-secret");
 
-  if (!expectedWebhookSecret || receivedWebhookSecret !== expectedWebhookSecret) {
-    return new Response(JSON.stringify({ error: "Unauthorized" }), {
-      status: 401,
-      headers: { "Content-Type": "application/json" },
-    });
+  if (
+    !expectedWebhookSecret || receivedWebhookSecret !== expectedWebhookSecret
+  ) {
+    return jsonResponse({ error: "Unauthorized" }, 401);
   }
 
+  let notificationId: string | undefined;
+
   try {
-    // 1. Parse the incoming webhook payload from Supabase
-    const payload: WebhookPayload = await req.json();
+    const payload = (await req.json()) as WebhookPayload;
     const notification = payload.record;
+    notificationId = notification?.id;
 
-    // 2. Initialize Supabase Client (uses internal admin key for security bypass)
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-    // 3. Fetch the recipient's FCM token from the profiles table
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("fcm_token")
-      .eq("id", notification.recipient_id)
-      .single();
-
-    if (profileError || !profile?.fcm_token) {
-      console.log(`No FCM token found for user: ${notification.recipient_id}`);
-      return new Response("No token found, skipped.", { status: 200 });
+    if (!notification || !notification.recipient_id) {
+      console.warn(
+        "[push-notification] webhook payload without recipient_id — ignored",
+        { notificationId },
+      );
+      return jsonResponse({ skipped: true, reason: "no recipient_id" });
     }
 
-    // 4. Authenticate with Google using your Firebase Service Account JSON
-    const serviceAccountJson = Deno.env.get("FIREBASE_SERVICE_ACCOUNT");
-    if (!serviceAccountJson) {
-      throw new Error("FIREBASE_SERVICE_ACCOUNT environment variable is missing.");
-    }
-    
-    const serviceAccount = JSON.parse(serviceAccountJson);
-    const jwtClient = new JWT({
-      email: serviceAccount.client_email,
-      key: serviceAccount.private_key.replace(/\\n/g, "\n"),
-      scopes: ["https://www.googleapis.com/auth/firebase.messaging"],
-    });
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    ) as unknown as SupabaseLikeClient;
 
-    const tokens = await jwtClient.authorize();
-    const accessToken = tokens.access_token;
+    // Load + validate the rotated service account. A bad secret throws a
+    // ServiceAccountConfigError that names the field and the fix — surface that
+    // verbatim instead of a generic crypto error.
+    const credentials = loadServiceAccountCredentials();
+    // Logged once per worker (and again whenever the deployed key changes).
+    await logCredentialsSummary(credentials, { notificationId });
 
-    // 5. Construct the FCM v1 API Request
-    const fcmUrl = `https://fcm.googleapis.com/v1/projects/${serviceAccount.project_id}/messages:send`;
-    
-    // Safely extract variables from the Supabase webhook 'data' column
-    const customData = notification.data || {};
-    const commentId = customData.comment_id || "";
-
-    const fcmPayload = {
-      message: {
-        token: profile.fcm_token,
-        // Keep the top-level notification block so Android automatically creates the system tray UI
-        notification: {
-          title: notification.title,
-          body: notification.body,
-        },
-        // Interactive data payload parsed for MainActivity interception
-        data: {
-          title: notification.title,
-          body: notification.body,
-          post_id: customData.post_id || "",
-          comment_id: commentId,
-          action: commentId ? "open_comment" : "open_post",
-          author_id: customData.author_id || "",
-          // Forwarded so the Android client can suppress self-action notifications
-          sender_id: customData.sender_id || "",
-          reporter_id: customData.reporter_id || ""
-        },
-        android: {
-          priority: "high",
-          notification: {
-            // Raw HTTP v1 API requires snake_case "channel_id" 
-            channel_id: "agora_notifications_channel"
-          }
-        }
+    const result = await deliverNotification({
+      client: supabase,
+      credentials,
+      notification: {
+        notificationId,
+        recipientId: notification.recipient_id,
+        title: notification.title,
+        body: notification.body,
+        data: notification.data,
       },
-    };
-
-    // 6. Send the Push Notification
-    const fcmResponse = await fetch(fcmUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(fcmPayload),
     });
 
-    const fcmResult = await fcmResponse.json();
-
-    if (!fcmResponse.ok) {
-      console.error("FCM Delivery Failed:", fcmResult);
-      throw new Error("Failed to send notification via FCM");
+    for (const warning of result.warnings) {
+      console.warn(`[push-notification] ${warning}`, { notificationId });
     }
 
-    console.log("Notification sent successfully!", fcmResult);
-    return new Response(JSON.stringify({ success: true, result: fcmResult }), {
-      headers: { "Content-Type": "application/json" },
+    if (result.tokensResolved === 0) {
+      console.log(
+        `[push-notification] no FCM token for user ${notification.recipient_id} — skipped`,
+        { notificationId },
+      );
+      return jsonResponse({
+        skipped: true,
+        reason: "no_token",
+        notificationId,
+      });
+    }
+
+    // Nothing delivered and the failure is a credential/project fault → 502 so
+    // the dashboard shows it (and the webhook is retried once the secret is fixed).
+    if (result.delivered === 0 && result.fatal) {
+      return jsonResponse(
+        {
+          error: result.fatal.kind === "oauth"
+            ? "firebase_oauth_failed"
+            : "fcm_rejected_credentials",
+          message: result.fatal.message,
+          remediation: result.fatal.remediation,
+          status: result.fatal.status,
+          notificationId,
+          outcomes: result.outcomes,
+        },
+        502,
+      );
+    }
+
+    return jsonResponse({
+      success: result.delivered > 0,
+      notificationId,
+      projectId: FIREBASE_PROJECT_ID,
+      delivered: result.delivered,
+      staleTokensRemoved: result.staleTokensRemoved,
+      failed: result.failed,
+      outcomes: result.outcomes,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[push-notification] unhandled error: ${message}`, {
+      notificationId,
     });
 
-  } catch (error: any) {
-    console.error("Error in Edge Function:", error.message);
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    if (error instanceof ServiceAccountConfigError) {
+      return jsonResponse(
+        {
+          error: "firebase_service_account_invalid",
+          message: error.message,
+          hint: error.hint,
+          notificationId,
+        },
+        500,
+      );
+    }
+    if (error instanceof GoogleOAuthError) {
+      return jsonResponse(
+        {
+          error: "firebase_oauth_failed",
+          status: error.status,
+          googleError: error.googleError,
+          hint: error.hint,
+          notificationId,
+        },
+        502,
+      );
+    }
+    return jsonResponse({ error: message, notificationId }, 500);
   }
 });
