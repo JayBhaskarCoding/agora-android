@@ -5,6 +5,7 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.decode.VideoFrameDecoder
 import com.example.agora.data.DeviceIdProvider
+import com.example.agora.data.RecentVerificationStore
 import com.example.agora.data.initializeSupabase
 import com.example.agora.media.MediaHttpClient
 
@@ -21,6 +22,10 @@ class AgoraApplication : Application(), ImageLoaderFactory {
 
         // Per-install device identity for the single-device login policy (one prefs read).
         DeviceIdProvider.init(this)
+
+        // Remembers which account was verified on this device, so a cold start
+        // before onboarding finishes resumes it instead of wiping it.
+        RecentVerificationStore.init(this)
     }
 
     override fun newImageLoader(): ImageLoader {

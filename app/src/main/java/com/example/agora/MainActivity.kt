@@ -36,6 +36,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.agora.data.NotificationRepository
 import com.example.agora.data.supabaseClient
 import com.example.agora.model.FcmTokenUpdate
+import com.example.agora.navigation.AuthCallbackGate
 import com.example.agora.navigation.DeepLinkRouter
 import com.example.agora.service.PushNotificationService
 import com.example.agora.ui.InAppNotificationManager
@@ -45,6 +46,7 @@ import com.example.agora.ui.OnboardingFlowScreen
 import com.example.agora.ui.PasswordResetScreen
 import com.example.agora.ui.RegisterScreen
 import com.example.agora.ui.theme.AgoraTheme
+import com.example.agora.viewmodel.AuthNavTarget
 import com.example.agora.viewmodel.AuthViewModel
 import com.example.agora.viewmodel.ThemeViewModel
 import com.google.firebase.messaging.FirebaseMessaging
@@ -212,6 +214,17 @@ class MainActivity : ComponentActivity() {
         //    detects the duplicate and stands down).
         injectDeepLink(intent)
 
+        /* ★ Arm the auth-callback gate BEFORE the intent reaches Supabase. A magic
+         *   link or email-OTP link creates the session inside handleDeeplinks —
+         *   that is, before AuthViewModel exists (it is built by setContent below).
+         *   The gate is sticky, so the ViewModel still sees it in its init, which is
+         *   what lets it tell "session just created by a link" apart from "session
+         *   restored from storage at cold start". Only fresh starts: on a
+         *   recreation the same intent is replayed and the link was already used. */
+        if (savedInstanceState == null) {
+            AuthCallbackGate.notify(intent)
+        }
+
         intent?.let {
             try {
                 supabaseClient.handleDeeplinks(it)
@@ -231,6 +244,31 @@ class MainActivity : ComponentActivity() {
 
                 val isSigningUpState = remember { mutableStateOf(false) }
                 val isOnboarding by authViewModel.isOnboarding.collectAsState()
+
+                /* ★ Explicit destination emitted by AuthViewModel the instant a
+                 *   session is created (email OTP, magic link, sign-up, Google).
+                 *   null = no instruction yet, so the shell falls back to the
+                 *   reactive isOnboarding flag. */
+                var authDestination by remember { mutableStateOf<AuthNavTarget?>(null) }
+
+                LaunchedEffect(Unit) {
+                    authViewModel.navEvent.collect { target ->
+                        /* ★ Dropping the auth entry here is the state-driven equivalent
+                         *   of `popUpTo(authGraph) { inclusive = true }`: Login /
+                         *   Register can never be composed again once a session
+                         *   exists, so back can never return to them. */
+                        isSigningUpState.value = false
+                        authDestination = target
+                    }
+                }
+
+                // A signed-out shell has no destination to honour.
+                LaunchedEffect(sessionStatus) {
+                    if (sessionStatus !is SessionStatus.Authenticated) {
+                        authDestination = null
+                    }
+                }
+
                 val awaitingOtp by authViewModel.awaitingOtp.collectAsState()
                 val otpEmail by authViewModel.otpEmail.collectAsState()
                 val googleFirstName by authViewModel.googleFirstName.collectAsState()
@@ -266,21 +304,28 @@ class MainActivity : ComponentActivity() {
                 }
 
                 LaunchedEffect(sessionStatus, isOnboarding, awaitingOtp) {
-                    if (sessionStatus is SessionStatus.Authenticated && !isOnboarding && !awaitingOtp) {
+                    if (sessionStatus is SessionStatus.Authenticated) {
+                        /* ★ The auth entry is gone for good the moment a session
+                         *   exists. This used to be gated on `!isOnboarding &&
+                         *   !awaitingOtp`, so a session created by a verification
+                         *   that later dropped bounced the user back to the
+                         *   Register screen instead of resuming onboarding. */
                         isSigningUpState.value = false
 
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            val permissionCheck = ContextCompat.checkSelfPermission(
-                                context,
-                                Manifest.permission.POST_NOTIFICATIONS
-                            )
-                            if (permissionCheck != PackageManager.PERMISSION_GRANTED) {
-                                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        if (!isOnboarding && !awaitingOtp) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                val permissionCheck = ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.POST_NOTIFICATIONS
+                                )
+                                if (permissionCheck != PackageManager.PERMISSION_GRANTED) {
+                                    permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                } else {
+                                    syncFcmTokenAndSubscribeTopics()
+                                }
                             } else {
                                 syncFcmTokenAndSubscribeTopics()
                             }
-                        } else {
-                            syncFcmTokenAndSubscribeTopics()
                         }
                     }
                 }
@@ -342,6 +387,14 @@ class MainActivity : ComponentActivity() {
                         } else {
                             when (sessionStatus) {
                                 is SessionStatus.Authenticated -> {
+                                    /* ★ Prefer the explicit destination emitted when the
+                                     *   session was created; fall back to the reactive
+                                     *   flag for paths that set it directly (Google
+                                     *   sign-in, restored sessions). */
+                                    val routeToOnboarding = authDestination
+                                        ?.let { it is AuthNavTarget.Onboarding }
+                                        ?: isOnboarding
+
                                     if (isCheckingProfileCompleteness) {
                                         Box(
                                             modifier = Modifier.fillMaxSize(),
@@ -365,7 +418,7 @@ class MainActivity : ComponentActivity() {
                                             onNavigateToLogin = { },
                                             initialOtpEmail = otpEmail
                                         )
-                                    } else if (isOnboarding) {
+                                    } else if (routeToOnboarding) {
                                         OnboardingFlowScreen(
                                             initialFirstName = googleFirstName,
                                             initialLastName = googleLastName,
@@ -456,9 +509,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * launchMode="singleTop" means the SAME MainActivity (and the same
+     * AuthViewModel) is reused, so no state is reset here — we only publish the
+     * new intent. The auth-callback gate is a StateFlow, so an already-running
+     * ViewModel is notified too.
+     */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        AuthCallbackGate.notify(intent)
         injectDeepLink(intent)
         try {
             supabaseClient.handleDeeplinks(intent)

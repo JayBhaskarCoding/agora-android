@@ -12,8 +12,10 @@ import androidx.credentials.exceptions.NoCredentialException
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.agora.data.DeviceIdProvider
+import com.example.agora.data.RecentVerificationStore
 import com.example.agora.data.supabaseClient
 import com.example.agora.model.Profile
+import com.example.agora.navigation.AuthCallbackGate
 import com.example.agora.service.SessionConflictRelay
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -44,8 +46,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -62,6 +67,24 @@ import java.time.Instant
 import java.util.UUID
 
 enum class PasswordResetStep { EMAIL, OTP, NEW_PASSWORD }
+
+/**
+ * Where the auth shell ([com.example.agora.MainActivity]) must go once a session
+ * exists.
+ *
+ * Emitted **explicitly** the moment a session is created — email OTP, magic
+ * link, sign-up or Google — instead of leaving the destination to a race between
+ * `sessionStatus` and the onboarding flag. Consuming it also drops the shell's
+ * auth entry (Login / Register) so those screens can never be composed again
+ * without an explicit sign-out.
+ */
+sealed interface AuthNavTarget {
+    /** Verified, but the profile is still a placeholder — collect the details. */
+    data object Onboarding : AuthNavTarget
+
+    /** Verified and the profile is complete — straight to the feed. */
+    data object Home : AuthNavTarget
+}
 
 /** Polling fallback for the single-device claim check (Realtime is the fast path). */
 private const val DEVICE_CLAIM_POLL_INTERVAL_MS = 5_000L
@@ -152,9 +175,50 @@ class AuthViewModel : ViewModel() {
 
     private var hasCompletedColdStartCheck = false
 
+    /**
+     * One-shot routing instruction for the auth shell. `replay = 1` so an event
+     * emitted before the shell starts collecting (or after it is recreated by a
+     * configuration change) is still delivered instead of vanishing.
+     */
+    private val _navEvent = MutableSharedFlow<AuthNavTarget>(replay = 1, extraBufferCapacity = 1)
+    val navEvent: SharedFlow<AuthNavTarget> = _navEvent.asSharedFlow()
+
+    /** Emits an explicit navigation instruction to the auth shell. */
+    private fun sendNav(target: AuthNavTarget) {
+        viewModelScope.launch { _navEvent.emit(target) }
+    }
+
+    /**
+     * True when the current session was established **in this app run** — sign-up,
+     * email OTP, magic link, password recovery or login — as opposed to one
+     * restored from local storage at cold start.
+     *
+     * The abandoned-account cleanup in [verifyProfileCompleteness] must never run
+     * against such a session: a freshly verified profile is a placeholder row by
+     * design (`first_name = "Pending"`, `handle = "user_…"`) until onboarding
+     * finishes, and wiping it deleted the account and bounced the user back to
+     * Login immediately after they verified.
+     */
+    @Volatile
+    private var sessionCreatedInThisRun = false
+
     private val resendTimestamps = mutableListOf<Long>()
 
     init {
+        // ★ A deep link can create the session BEFORE this ViewModel exists:
+        //   MainActivity hands the intent to handleDeeplinks() in onCreate(), and
+        //   setContent() — where this ViewModel is built — only runs afterwards.
+        //   The gate is sticky, so the callback is still visible here; the StateFlow
+        //   also replays it into the collector below for links that arrive later
+        //   through onNewIntent().
+        sessionCreatedInThisRun = AuthCallbackGate.hasSeenAuthCallback()
+
+        viewModelScope.launch {
+            AuthCallbackGate.callbackCount.collect {
+                sessionCreatedInThisRun = true
+            }
+        }
+
         // Global session-revoked events (Realtime or polling) -> flag for the
         // root UI to show the mandatory dialog. The session itself is only
         // cleared after the user acknowledges it ([confirmRemoteLogout]).
@@ -185,6 +249,10 @@ class AuthViewModel : ViewModel() {
                         }
                     }
                     is SessionStatus.NotAuthenticated -> {
+                        // Settled as signed out: from here on any session can only
+                        // have been created in this run (sign-in, sign-up or
+                        // verification) — never restored from storage at cold start.
+                        sessionCreatedInThisRun = true
                         _userState.value = null
                         _isCheckingProfileCompleteness.value = false
                     }
@@ -252,6 +320,31 @@ class AuthViewModel : ViewModel() {
             return
         }
 
+        /* ★ POST-VERIFICATION GUARD — the "verified, then dumped back on Login" bug.
+         *
+         *   Two situations reach this point with a placeholder profile row and are
+         *   NOT abandoned accounts:
+         *     1. the session was created in this run — in-app OTP, magic link,
+         *        sign-up or login ([sessionCreatedInThisRun]);
+         *     2. the email was verified on this device within
+         *        RecentVerificationStore.GRACE_PERIOD_MS, e.g. the user verified,
+         *        the process was killed and the session is now being restored.
+         *
+         *   Both must RESUME ONBOARDING. Falling through to the abandonment wipe
+         *   below deletes the auth user (delete_abandoned_user() cascades to
+         *   profiles and posts) and signs the user out — which is precisely the
+         *   reported behaviour: verify → back to Login, account gone. */
+        if (sessionCreatedInThisRun || RecentVerificationStore.isRecent(userId)) {
+            Log.d(
+                "AuthDiagnostics",
+                "[postAuth] sessionCreatedInThisRun=$sessionCreatedInThisRun " +
+                    "recentVerification=${RecentVerificationStore.isRecent(userId)} " +
+                    "-> resolving destination without any abandonment wipe"
+            )
+            resolveAfterAuthentication(userId, "postAuth")
+            return
+        }
+
         viewModelScope.launch {
             try {
                 _isCheckingProfileCompleteness.value = true
@@ -284,6 +377,57 @@ class AuthViewModel : ViewModel() {
                 signOut()
             } finally {
                 _isCheckingProfileCompleteness.value = false
+            }
+        }
+    }
+
+    /**
+     * Routes a freshly authenticated user — onboarding while the profile row is
+     * still a placeholder, the feed once it is complete — and emits the matching
+     * [AuthNavTarget] so the shell navigates **explicitly** after a successful
+     * verification instead of waiting for reactive state to settle.
+     *
+     * Unlike [verifyProfileCompleteness] this NEVER wipes the account: the session
+     * was just established (or the email was verified on this device moments ago),
+     * so an incomplete profile means "onboarding has not run yet" — not
+     * "abandoned". A transient read failure also defaults to onboarding rather
+     * than destroying a live session.
+     */
+    private fun resolveAfterAuthentication(userId: String, source: String) {
+        viewModelScope.launch {
+            try {
+                _isCheckingProfileCompleteness.value = true
+                hasCompletedColdStartCheck = true
+                Log.d("AuthDiagnostics", "[$source] querying profiles by id for currentUser.id=$userId")
+
+                val profile = withContext(Dispatchers.IO) {
+                    supabaseClient.from("profiles")
+                        .select { filter { eq("id", userId) } }
+                        .decodeSingleOrNull<Profile>()
+                }
+
+                val incomplete = isProfileIncomplete(userId, profile, source)
+                _isOnboarding.value = incomplete
+                _isCheckingProfileCompleteness.value = false
+
+                if (incomplete) {
+                    // Shield the account across process death: a cold start before
+                    // onboarding finishes must resume, never wipe.
+                    RecentVerificationStore.mark(userId)
+                }
+                sendNav(if (incomplete) AuthNavTarget.Onboarding else AuthNavTarget.Home)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.e(
+                    "AuthDiagnostics",
+                    "[$source] profile check FAILED for user=$userId — defaulting to onboarding " +
+                        "(a live session is never wiped on a transient error): ${e.localizedMessage}",
+                    e
+                )
+                _isOnboarding.value = true
+                _isCheckingProfileCompleteness.value = false
+                RecentVerificationStore.mark(userId)
+                sendNav(AuthNavTarget.Onboarding)
             }
         }
     }
@@ -486,6 +630,10 @@ class AuthViewModel : ViewModel() {
         hasCompletedColdStartCheck = true
         _isCheckingProfileCompleteness.value = false
         _isOnboarding.value = false
+        // Profile is complete — the account no longer needs the cold-start shield.
+        RecentVerificationStore.clear()
+        // ★ Explicit route to the feed now that onboarding is done.
+        sendNav(AuthNavTarget.Home)
     }
 
     fun startPasswordReset() {
@@ -546,6 +694,9 @@ class AuthViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 clearError()
+                // ★ A recovery link mints a session too — keep the abandoned-account
+                //   cleanup away from it.
+                sessionCreatedInThisRun = true
                 withContext(Dispatchers.IO) {
                     supabaseClient.auth.verifyEmailOtp(
                         type = OtpType.Email.RECOVERY,
@@ -737,6 +888,7 @@ class AuthViewModel : ViewModel() {
                     // 🌟 CRITICAL: Authenticate with Supabase Auth using Google ID Token via IDToken provider
                     claimDeviceOnNextSession = true
                     hasCompletedColdStartCheck = true
+                    sessionCreatedInThisRun = true
                     withContext(Dispatchers.IO) {
                         supabaseClient.auth.signInWith(IDToken) {
                             idToken = token
@@ -775,6 +927,7 @@ class AuthViewModel : ViewModel() {
                             _isOnboarding.value = false
                             claimDeviceOnNextSession = true
                             startDeviceSession(userId)
+                            sendNav(AuthNavTarget.Home)
                         } else if (isProfileIncomplete(userId, profile, "googleSignIn")) {
                             Log.d("GoogleAuth", "New Google user or incomplete profile. Directing to Onboarding...")
                             val metadata = currentUser.userMetadata
@@ -807,12 +960,14 @@ class AuthViewModel : ViewModel() {
                                 ?: metadata?.get("email")?.jsonPrimitive?.content
                                 ?: ""
                             _isOnboarding.value = true
+                            sendNav(AuthNavTarget.Onboarding)
                         } else {
                             Log.d("GoogleAuth", "Existing Google user with complete profile. Proceeding to Feed...")
                             _isOnboarding.value = false
                             // Claim this device (latest login wins) and start conflict listeners.
                             claimDeviceOnNextSession = true
                             startDeviceSession(userId)
+                            sendNav(AuthNavTarget.Home)
                         }
                     }
 
@@ -899,6 +1054,11 @@ class AuthViewModel : ViewModel() {
                 val tempPassword = UUID.randomUUID().toString() + "A1!a"
                 val tempHandle = "user_" + UUID.randomUUID().toString().substring(0, 8)
 
+                // ★ Auto-confirming projects hand back a session right here, so flag
+                //   the run before the call: the profile check that follows must
+                //   route to onboarding, never wipe the brand-new account.
+                sessionCreatedInThisRun = true
+
                 val response = withContext(Dispatchers.IO) {
                     supabaseClient.auth.signUpWith(Email) {
                         email = cleanEmail
@@ -922,7 +1082,12 @@ class AuthViewModel : ViewModel() {
                 _otpEmail.value = cleanEmail
                 _awaitingOtp.value = true
 
+                // Auto-confirmed projects already have a session here — remember the
+                // account so a cold start before onboarding finishes resumes it.
+                supabaseClient.auth.currentUserOrNull()?.id?.let { RecentVerificationStore.mark(it) }
+
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _errorMessage.value = handleAuthError(e)
             }
         }
@@ -938,6 +1103,15 @@ class AuthViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 clearError()
+
+                /* ★ Mark the session as created in this run BEFORE the network call.
+                 *   GoTrue establishes the session inside verifyEmailOtp, so the
+                 *   sessionStatus collector fires while this coroutine is still
+                 *   suspended — against a brand-new placeholder profile row. Without
+                 *   the flag that collector took the cold-start abandoned-account
+                 *   branch (delete_abandoned_user + signOut) and the user was back on
+                 *   Login the instant their code was accepted. */
+                sessionCreatedInThisRun = true
                 _isOnboarding.value = true
 
                 withContext(Dispatchers.IO) {
@@ -947,8 +1121,24 @@ class AuthViewModel : ViewModel() {
                         token = cleanCode
                     )
                 }
+
+                /* ★ SUCCESS — the session exists. Route explicitly to onboarding and
+                 *   make sure the cold-start check never re-evaluates this session. */
                 _awaitingOtp.value = false
+                hasCompletedColdStartCheck = true
+                _isCheckingProfileCompleteness.value = false
+
+                val verifiedUserId = supabaseClient.auth.currentUserOrNull()?.id
+                if (verifiedUserId != null) {
+                    // Survives process death: a cold start before onboarding
+                    // finishes resumes it instead of wiping the account.
+                    RecentVerificationStore.mark(verifiedUserId)
+                }
+
+                Log.d("AuthDiagnostics", "[verifyOtpCode] verified user=$verifiedUserId -> onboarding")
+                sendNav(AuthNavTarget.Onboarding)
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _isOnboarding.value = false
                 _errorMessage.value = handleAuthError(e)
             }
@@ -1156,6 +1346,8 @@ class AuthViewModel : ViewModel() {
         claimDeviceOnNextSession = false
 
         hasCompletedColdStartCheck = false
+        sessionCreatedInThisRun = false
+        RecentVerificationStore.clear()
         _userState.value = null
         _isOnboarding.value = false
         _awaitingOtp.value = false
