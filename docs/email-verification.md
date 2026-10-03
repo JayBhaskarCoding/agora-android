@@ -78,3 +78,35 @@ On a device against a configured test project:
 - SMTP/rate-limit/network failure → actionable error, no newly opened OTP card.
 - Back/change email → email form, no navigation to create profile without proof.
 - Returning from Gmail without entering a code → remains on the OTP screen.
+
+## Registration UX and password security
+
+- The registration OTP card counts down from 60 seconds using `LaunchedEffect`
+  and a monotonic deadline retained in the ViewModel. Resend is disabled for the
+  full interval. Background time counts; rotation does not restart the timer.
+  A successful resend resets the deadline; a failed resend leaves it expired
+  so the user can retry. The ViewModel also enforces the interval independently
+  of the button, and Supabase must enforce server-side rate limits.
+- Separate bottom actions: **Use a different email** cancels only the local
+  challenge and restores the registration form; **Back to Log In** also clears
+  the registration route. Neither action verifies the email or deletes an account.
+- Password creation is in registration's post-OTP **Secure Account** step
+  (`OnboardingFlowScreen`). The email-only request step remains passwordless.
+  The animated checklist/progress indicator shows all five requirements: eight
+  characters, ASCII uppercase, ASCII lowercase, digit, and a supported punctuation
+  symbol (spaces do not count as symbols). The submit button and ViewModel mutation
+  boundary both use the same `PasswordPolicy`. Password input is disabled while
+  saving to avoid submitting a different value than the visible one.
+- Local Supabase config now requires 8 characters and
+  `lower_upper_letters_digits_symbols`, with a 60-second email send interval.
+  **Apply these settings separately in the hosted Supabase Authentication
+  configuration**; a Git push does not deploy hosted auth settings. Client-side
+  validation is UX/defense-in-depth, not a substitute for server enforcement.
+
+Additional checks: rotate/background the OTP screen at 30s and confirm it doesn't
+restart; verify the exact countdown copy and enabled copy at 0s; successfully
+resend and confirm 60s restarts; fail a resend and confirm retry remains available;
+test each navigation action and Android Back; type passwords missing each individual
+rule and confirm checklist updates and submit stays disabled. Complete registration
+with a valid password and confirm login using that password. Unit tests in
+`PasswordPolicyTest` and `OtpCooldownTest` cover rule boundaries and countdown math.

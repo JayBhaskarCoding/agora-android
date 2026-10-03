@@ -43,6 +43,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import com.example.agora.utils.PasswordPolicy
+import com.example.agora.ui.components.PasswordStrengthChecklist
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -418,7 +420,8 @@ fun OnboardingFlowScreen(
 
                             OutlinedTextField(
                                 value = password,
-                                onValueChange = { password = it },
+                                onValueChange = { password = it; saveError = null },
+                                enabled = !isSavingProfile,
                                 label = { Text("Password *") },
                                 singleLine = true,
                                 shape = RoundedCornerShape(16.dp),
@@ -428,15 +431,14 @@ fun OnboardingFlowScreen(
                                     .fillMaxWidth()
                                     .padding(bottom = 8.dp)
                             )
-                            Text(
-                                text = "Password requires 8+ characters, 1 uppercase, 1 number, and 1 special character.",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                modifier = Modifier.padding(bottom = 32.dp)
+                            PasswordStrengthChecklist(
+                                password = password,
+                                modifier = Modifier.padding(top = 4.dp, bottom = 28.dp)
                             )
 
                             AgoraPrimaryButton(
                                 onClick = {
+                                    if (!PasswordPolicy.isValid(password) || isSavingProfile) return@AgoraPrimaryButton
                                     // Save all user details including avatar selection.
                                     // 🌟 Advance ONLY when the save actually succeeded:
                                     // advancing unconditionally used to let a failed
@@ -463,7 +465,7 @@ fun OnboardingFlowScreen(
                                         }
                                     }
                                 },
-                                enabled = password.length >= 8 && !isSavingProfile,
+                                enabled = PasswordPolicy.isValid(password) && !isSavingProfile,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(54.dp)

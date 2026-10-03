@@ -408,7 +408,10 @@ class MainActivity : ComponentActivity() {
                                         // has finished updating the local UI state.
                                         RegisterScreen(
                                             viewModel = authViewModel,
-                                            onNavigateToLogin = { },
+                                            onNavigateToLogin = {
+                                                isSigningUpState.value = false
+                                                authViewModel.signOut()
+                                            },
                                             initialOtpEmail = otpEmail
                                         )
                                     } else if (routeToOnboarding) {

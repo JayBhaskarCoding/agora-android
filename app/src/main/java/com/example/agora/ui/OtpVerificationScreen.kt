@@ -1,5 +1,10 @@
 package com.example.agora.ui
 
+import com.example.agora.utils.OtpCooldown
+import android.os.SystemClock
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -55,9 +60,29 @@ fun OtpVerificationScreen(
     buttonLabel: String = "Verify & Continue",
     onSubmit: (String) -> Unit = { viewModel.verifyOtpCode(it) },
     onResend: () -> Unit = { viewModel.resendOtp() },
-    isBusy: Boolean = false
+    isBusy: Boolean = false,
+    /** Registration supplies the server-accepted request deadline from its ViewModel. */
+    resendAvailableAt: Long? = null
 ) {
-    var otpCode by remember { mutableStateOf("") }
+    var otpCode by remember(email) { mutableStateOf("") }
+    // Fallback for other users of the shared card (e.g. deletion verification).
+    // Save the deadline, not a decrementing integer, so rotation/background time
+    // cannot restart or pause the cooldown.
+    var localDeadline by rememberSaveable(email) {
+        mutableStateOf(SystemClock.elapsedRealtime() + OtpCooldown.DURATION_MS)
+    }
+    val deadline = resendAvailableAt ?: localDeadline
+    fun remainingSeconds(): Int =
+        OtpCooldown.remainingSeconds(deadline, SystemClock.elapsedRealtime())
+    var secondsRemaining by remember(email, deadline) { mutableStateOf(remainingSeconds()) }
+
+    LaunchedEffect(email, deadline) {
+        secondsRemaining = remainingSeconds()
+        while (secondsRemaining > 0) {
+            delay(250L)
+            secondsRemaining = remainingSeconds()
+        }
+    }
 
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -85,8 +110,9 @@ fun OtpVerificationScreen(
         // 🌟 6-Box OTP UI with translucent background
         BasicTextField(
             value = otpCode,
+            enabled = !isBusy,
             onValueChange = { newValue ->
-                if (newValue.length <= 6 && newValue.all { it.isDigit() }) {
+                if (newValue.length <= 6 && newValue.all { it in '0'..'9' }) {
                     otpCode = newValue
                 }
             },
@@ -147,13 +173,26 @@ fun OtpVerificationScreen(
         }
 
         TextButton(
-            onClick = { onResend() },
-            enabled = !isBusy,
+            onClick = {
+                if (isBusy || secondsRemaining > 0) return@TextButton
+                onResend()
+                // Registration resets only on server acceptance, not on failures.
+                if (resendAvailableAt == null) localDeadline = SystemClock.elapsedRealtime() + OtpCooldown.DURATION_MS
+            },
+            enabled = secondsRemaining == 0 && !isBusy,
             modifier = Modifier.padding(top = 16.dp)
         ) {
             Text(
-                text = "Didn't get the code? Resend OTP",
-                color = MaterialTheme.colorScheme.primary,
+                text = if (secondsRemaining > 0) {
+                    "Didn't receive a code? Send again in ${secondsRemaining}s"
+                } else {
+                    "Didn't receive a code? Send a new code"
+                },
+                color = if (secondsRemaining > 0 || isBusy) {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
                 fontWeight = FontWeight.SemiBold
             )
         }

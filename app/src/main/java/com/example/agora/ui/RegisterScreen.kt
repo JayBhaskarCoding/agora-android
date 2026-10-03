@@ -43,6 +43,7 @@ fun RegisterScreen(
     val awaitingOtp by viewModel.awaitingOtp.collectAsState()
     val otpEmail by viewModel.otpEmail.collectAsState()
     val isEmailOtpBusy by viewModel.isEmailOtpBusy.collectAsState()
+    val resendAvailableAt by viewModel.emailOtpResendAvailableAt.collectAsState()
     var isCheckingEmail by remember { mutableStateOf(false) }
 
     BackHandler(enabled = awaitingOtp) {
@@ -193,14 +194,9 @@ fun RegisterScreen(
                             OtpVerificationScreen(
                                 viewModel = viewModel,
                                 email = otpEmail,
-                                isBusy = isEmailOtpBusy
+                                isBusy = isEmailOtpBusy,
+                                resendAvailableAt = resendAvailableAt
                             )
-                            TextButton(
-                                onClick = { viewModel.cancelEmailVerification() },
-                                enabled = !isEmailOtpBusy
-                            ) {
-                                Text("Change email or return to login")
-                            }
 
                         } else {
                             Text(
@@ -288,9 +284,40 @@ fun RegisterScreen(
                         }
                     }
 
-                    // 🌟 Hidden during the OTP step — the code boxes and the
-                    //    Verify & Continue button are the sole focus there.
-                    if (!awaitingOtp) {
+                    if (awaitingOtp) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(top = 20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            TextButton(
+                                onClick = { viewModel.cancelEmailVerification() },
+                                enabled = !isEmailOtpBusy
+                            ) {
+                                Text(
+                                    "Use a different email",
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            TextButton(
+                                onClick = {
+                                    viewModel.cancelEmailVerification()
+                                    onNavigateToLogin()
+                                },
+                                enabled = !isEmailOtpBusy
+                            ) {
+                                Text(
+                                    "Back to Log In",
+                                    color = if (isEmailOtpBusy) {
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                    } else {
                         TextButton(
                             onClick = { viewModel.clearError(); onNavigateToLogin() },
                             modifier = Modifier.padding(top = 22.dp)

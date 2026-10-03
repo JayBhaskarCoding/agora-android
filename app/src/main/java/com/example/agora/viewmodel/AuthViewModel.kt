@@ -1,6 +1,9 @@
 package com.example.agora.viewmodel
 
 import android.content.Context
+import android.os.SystemClock
+import com.example.agora.utils.PasswordPolicy
+import com.example.agora.utils.OtpCooldown
 import android.util.Log
 import android.util.Patterns
 import androidx.credentials.CredentialManager
@@ -177,6 +180,11 @@ class AuthViewModel : ViewModel() {
 
     private val _isEmailOtpBusy = MutableStateFlow(false)
     val isEmailOtpBusy: StateFlow<Boolean> = _isEmailOtpBusy.asStateFlow()
+
+    // Monotonic time survives recomposition/activity recreation and cannot be
+    // shortened by changing the device's wall clock. Supabase limits still apply.
+    private val _emailOtpResendAvailableAt = MutableStateFlow(0L)
+    val emailOtpResendAvailableAt: StateFlow<Long> = _emailOtpResendAvailableAt.asStateFlow()
 
     private val _passwordResetStep = MutableStateFlow<PasswordResetStep?>(null)
     val passwordResetStep: StateFlow<PasswordResetStep?> = _passwordResetStep.asStateFlow()
@@ -464,7 +472,7 @@ class AuthViewModel : ViewModel() {
     private fun handleAuthError(e: Throwable): String = handleAppError(e)
 
     fun resendOtp() {
-        if (_isEmailOtpBusy.value) return
+        if (_isEmailOtpBusy.value || SystemClock.elapsedRealtime() < _emailOtpResendAvailableAt.value) return
         val now = System.currentTimeMillis()
         val thirtyMinsInMillis = 30 * 60 * 1000L
 
@@ -485,6 +493,7 @@ class AuthViewModel : ViewModel() {
             try {
                 clearError()
                 withContext(Dispatchers.IO) { emailVerification.resend() }
+                _emailOtpResendAvailableAt.value = SystemClock.elapsedRealtime() + OtpCooldown.DURATION_MS
                 resendTimestamps.add(now)
                 _errorMessage.value = "Verification code requested. Please check your inbox and spam folder."
                 Log.d("AuthDiagnostics", "[emailOtp] resend accepted")
@@ -1093,6 +1102,7 @@ class AuthViewModel : ViewModel() {
                 // auto-confirm, or return an obfuscated user without sending mail.
                 Log.d("AuthDiagnostics", "[emailOtp] requesting /auth/v1/otp host=${Uri.parse(BuildConfig.SUPABASE_URL).host}")
                 withContext(Dispatchers.IO) { emailVerification.request(cleanEmail) }
+                _emailOtpResendAvailableAt.value = SystemClock.elapsedRealtime() + OtpCooldown.DURATION_MS
                 pendingEmail = cleanEmail
                 _otpEmail.value = cleanEmail
                 _awaitingOtp.value = true
@@ -1492,6 +1502,11 @@ class AuthViewModel : ViewModel() {
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit = {}
     ) {
+        // Validate again at the mutation boundary, before uploads or profile writes.
+        if (!PasswordPolicy.isValid(realPassword)) {
+            onFailure(PasswordPolicy.ERROR_MESSAGE)
+            return
+        }
         viewModelScope.launch {
             try {
                 clearError()
