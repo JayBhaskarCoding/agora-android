@@ -11,6 +11,9 @@ import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.NoCredentialException
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.agora.BuildConfig
+import com.example.agora.data.EmailOtpGateway
+import com.example.agora.data.EmailVerificationFlow
 import com.example.agora.data.DeviceIdProvider
 import com.example.agora.data.RecentVerificationStore
 import com.example.agora.data.supabaseClient
@@ -24,6 +27,7 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.providers.Google
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.auth.providers.builtin.IDToken
+import io.github.jan.supabase.auth.providers.builtin.OTP
 import kotlinx.coroutines.CancellationException
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.auth.user.UserInfo
@@ -59,9 +63,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
 import kotlinx.serialization.json.put
 import java.time.Instant
 import java.util.UUID
@@ -152,6 +154,29 @@ class AuthViewModel : ViewModel() {
     val otpEmail: StateFlow<String> = _otpEmail.asStateFlow()
 
     private var pendingEmail: String = ""
+
+    private val emailVerification = EmailVerificationFlow(object : EmailOtpGateway {
+        override suspend fun requestCode(email: String, createUser: Boolean) {
+            supabaseClient.auth.signInWith(OTP) {
+                this.email = email
+                this.createUser = createUser
+            }
+        }
+
+        override suspend fun verifyCode(email: String, code: String): String {
+            supabaseClient.auth.verifyEmailOtp(
+                type = OtpType.Email.EMAIL,
+                email = email,
+                token = code
+            )
+            return requireNotNull(supabaseClient.auth.currentUserOrNull()?.id) {
+                "Email verification did not create a session."
+            }
+        }
+    })
+
+    private val _isEmailOtpBusy = MutableStateFlow(false)
+    val isEmailOtpBusy: StateFlow<Boolean> = _isEmailOtpBusy.asStateFlow()
 
     private val _passwordResetStep = MutableStateFlow<PasswordResetStep?>(null)
     val passwordResetStep: StateFlow<PasswordResetStep?> = _passwordResetStep.asStateFlow()
@@ -439,6 +464,7 @@ class AuthViewModel : ViewModel() {
     private fun handleAuthError(e: Throwable): String = handleAppError(e)
 
     fun resendOtp() {
+        if (_isEmailOtpBusy.value) return
         val now = System.currentTimeMillis()
         val thirtyMinsInMillis = 30 * 60 * 1000L
 
@@ -454,21 +480,32 @@ class AuthViewModel : ViewModel() {
             return
         }
 
+        _isEmailOtpBusy.value = true
         viewModelScope.launch {
             try {
                 clearError()
-
-                supabaseClient.auth.resendEmail(
-                    type = OtpType.Email.SIGNUP,
-                    email = pendingEmail
-                )
-
+                withContext(Dispatchers.IO) { emailVerification.resend() }
                 resendTimestamps.add(now)
-                _errorMessage.value = "Verification code resent!"
+                _errorMessage.value = "Verification code requested. Please check your inbox and spam folder."
+                Log.d("AuthDiagnostics", "[emailOtp] resend accepted")
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.e("AuthDiagnostics", "[emailOtp] resend failed", e)
                 _errorMessage.value = handleAuthError(e)
+            } finally {
+                _isEmailOtpBusy.value = false
             }
         }
+    }
+
+    /** Back/edit only clears the local challenge; it never verifies or deletes an account. */
+    fun cancelEmailVerification() {
+        if (_isEmailOtpBusy.value) return
+        emailVerification.cancel()
+        pendingEmail = ""
+        _otpEmail.value = ""
+        _awaitingOtp.value = false
+        clearError()
     }
 
     // =====================================================================================
@@ -1041,106 +1078,75 @@ class AuthViewModel : ViewModel() {
     }
 
     fun startRegistration(emailInput: String) {
+        if (_isEmailOtpBusy.value) return
         val cleanEmail = emailInput.trim()
         if (!Patterns.EMAIL_ADDRESS.matcher(cleanEmail).matches()) {
             _errorMessage.value = "Please enter a valid email address."
             return
         }
 
+        _isEmailOtpBusy.value = true
         viewModelScope.launch {
             try {
                 clearError()
-
-                val tempPassword = UUID.randomUUID().toString() + "A1!a"
-                val tempHandle = "user_" + UUID.randomUUID().toString().substring(0, 8)
-
-                // ★ Auto-confirming projects hand back a session right here, so flag
-                //   the run before the call: the profile check that follows must
-                //   route to onboarding, never wipe the brand-new account.
-                sessionCreatedInThisRun = true
-
-                val response = withContext(Dispatchers.IO) {
-                    supabaseClient.auth.signUpWith(Email) {
-                        email = cleanEmail
-                        password = tempPassword
-
-                        data = buildJsonObject {
-                            put("handle", tempHandle)
-                            put("first_name", "Pending")
-                            put("last_name", "User")
-                        }
-                    }
-                }
-
-                val identities = response?.identities
-                if (identities != null && identities.isEmpty()) {
-                    _errorMessage.value = "An account with this email already exists. Please log in."
-                    return@launch
-                }
-
+                // /otp sends a code for both new and existing users. /signup can
+                // auto-confirm, or return an obfuscated user without sending mail.
+                Log.d("AuthDiagnostics", "[emailOtp] requesting /auth/v1/otp host=${Uri.parse(BuildConfig.SUPABASE_URL).host}")
+                withContext(Dispatchers.IO) { emailVerification.request(cleanEmail) }
                 pendingEmail = cleanEmail
                 _otpEmail.value = cleanEmail
                 _awaitingOtp.value = true
-
-                // Auto-confirmed projects already have a session here — remember the
-                // account so a cold start before onboarding finishes resumes it.
-                supabaseClient.auth.currentUserOrNull()?.id?.let { RecentVerificationStore.mark(it) }
-
+                Log.d("AuthDiagnostics", "[emailOtp] request accepted; awaiting verification")
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
+                Log.e("AuthDiagnostics", "[emailOtp] request failed", e)
                 _errorMessage.value = handleAuthError(e)
+            } finally {
+                _isEmailOtpBusy.value = false
             }
         }
     }
 
     fun verifyOtpCode(otpCode: String) {
+        if (_isEmailOtpBusy.value) return
         val cleanCode = otpCode.trim()
-        if (cleanCode.isBlank()) {
-            _errorMessage.value = "Please enter the verification code."
+        if (cleanCode.length != 6 || !cleanCode.all { it in '0'..'9' }) {
+            _errorMessage.value = "Please enter the 6-digit verification code."
+            return
+        }
+        if (emailVerification.pendingEmail == null) {
+            _errorMessage.value = "No pending email verification found. Please request a new code."
             return
         }
 
+        _isEmailOtpBusy.value = true
         viewModelScope.launch {
             try {
                 clearError()
-
-                /* ★ Mark the session as created in this run BEFORE the network call.
-                 *   GoTrue establishes the session inside verifyEmailOtp, so the
-                 *   sessionStatus collector fires while this coroutine is still
-                 *   suspended — against a brand-new placeholder profile row. Without
-                 *   the flag that collector took the cold-start abandoned-account
-                 *   branch (delete_abandoned_user + signOut) and the user was back on
-                 *   Login the instant their code was accepted. */
+                // Set this BEFORE verification: the session collector can fire
+                // inside the request and must never wipe a placeholder profile.
                 sessionCreatedInThisRun = true
-                _isOnboarding.value = true
-
-                withContext(Dispatchers.IO) {
-                    supabaseClient.auth.verifyEmailOtp(
-                        type = OtpType.Email.SIGNUP,
-                        email = pendingEmail,
-                        token = cleanCode
-                    )
+                val verifiedUserId = withContext(Dispatchers.IO) {
+                    emailVerification.verify(cleanCode)
                 }
-
-                /* ★ SUCCESS — the session exists. Route explicitly to onboarding and
-                 *   make sure the cold-start check never re-evaluates this session. */
+                _isCheckingProfileCompleteness.value = true
                 _awaitingOtp.value = false
+                pendingEmail = ""
+                _otpEmail.value = ""
                 hasCompletedColdStartCheck = true
-                _isCheckingProfileCompleteness.value = false
+                RecentVerificationStore.mark(verifiedUserId)
 
-                val verifiedUserId = supabaseClient.auth.currentUserOrNull()?.id
-                if (verifiedUserId != null) {
-                    // Survives process death: a cold start before onboarding
-                    // finishes resumes it instead of wiping the account.
-                    RecentVerificationStore.mark(verifiedUserId)
-                }
-
-                Log.d("AuthDiagnostics", "[verifyOtpCode] verified user=$verifiedUserId -> onboarding")
-                sendNav(AuthNavTarget.Onboarding)
+                // Returning users may already have a complete profile. Decide
+                // from the persisted profile instead of forcing onboarding.
+                claimDeviceOnNextSession = true
+                startDeviceSession(verifiedUserId)
+                resolveAfterAuthentication(verifiedUserId, "emailOtpVerified")
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _isOnboarding.value = false
+                Log.e("AuthDiagnostics", "[emailOtp] verification failed", e)
                 _errorMessage.value = handleAuthError(e)
+            } finally {
+                _isEmailOtpBusy.value = false
             }
         }
     }
@@ -1359,6 +1365,7 @@ class AuthViewModel : ViewModel() {
         _passwordResetStep.value = null
         _errorMessage.value = null
         _remoteLogoutEvent.value = false
+        emailVerification.cancel()
         pendingEmail = ""
         recoveryEmail = ""
 

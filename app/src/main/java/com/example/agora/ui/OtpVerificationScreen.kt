@@ -36,7 +36,7 @@ import com.example.agora.ui.components.AgoraPrimaryButton
  * ✦ THE SHARED OTP CARD — one implementation for every 6-digit context:
  *  - manual email registration (embedded inside [RegisterScreen]'s card; the
  *    defaults verify through [AuthViewModel.verifyOtpCode] / resendOtp, which
- *    flips `awaitingOtp` off and `isOnboarding` on → enter-details screen), and
+ *    clears the challenge and resolves onboarding versus home), and
  *  - account-deletion reauthentication (hosted by [DeletionOtpScreen] with a
  *    custom title/subtitle/button and [AuthViewModel.verifyDeletionOtp] as the
  *    submission callback).
@@ -51,10 +51,11 @@ fun OtpVerificationScreen(
     email: String,
     modifier: Modifier = Modifier,
     title: String = "Verify Email",
-    subtitle: String = "We sent a 6-digit verification code to $email",
+    subtitle: String = "A 6-digit verification code was requested for $email. Check your inbox and spam folder.",
     buttonLabel: String = "Verify & Continue",
     onSubmit: (String) -> Unit = { viewModel.verifyOtpCode(it) },
-    onResend: () -> Unit = { viewModel.resendOtp() }
+    onResend: () -> Unit = { viewModel.resendOtp() },
+    isBusy: Boolean = false
 ) {
     var otpCode by remember { mutableStateOf("") }
 
@@ -136,7 +137,7 @@ fun OtpVerificationScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(54.dp),
-            enabled = otpCode.length == 6
+            enabled = otpCode.length == 6 && !isBusy
         ) {
             Text(
                 text = buttonLabel,
@@ -147,6 +148,7 @@ fun OtpVerificationScreen(
 
         TextButton(
             onClick = { onResend() },
+            enabled = !isBusy,
             modifier = Modifier.padding(top = 16.dp)
         ) {
             Text(

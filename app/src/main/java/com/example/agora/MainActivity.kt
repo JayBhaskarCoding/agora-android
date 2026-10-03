@@ -403,16 +403,9 @@ class MainActivity : ComponentActivity() {
                                             CircularProgressIndicator()
                                         }
                                     } else if (awaitingOtp) {
-                                        // 🌟 OTP gate for authenticated-but-unverified sessions
-                                        //    (brand-new Google identities): reuse the EXACT
-                                        //    RegisterScreen presentation (join-agora background +
-                                        //    floating glass card) instead of a bare screen.
-                                        //    initialOtpEmail injects the Google payload email and
-                                        //    starts the card straight in verification mode, so the
-                                        //    email form step is never rendered. verifyOtpCode
-                                        //    flips awaitingOtp→false / isOnboarding→true on
-                                        //    success — a state switch, not a back-stack hop, so
-                                        //    back can never return to an irrelevant step.
+                                        // Keep the pending email challenge visible if a
+                                        // session callback arrives before verification
+                                        // has finished updating the local UI state.
                                         RegisterScreen(
                                             viewModel = authViewModel,
                                             onNavigateToLogin = { },

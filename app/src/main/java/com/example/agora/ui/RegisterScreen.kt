@@ -1,5 +1,6 @@
 package com.example.agora.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -34,13 +35,19 @@ import kotlinx.coroutines.launch
 fun RegisterScreen(
     viewModel: AuthViewModel,
     onNavigateToLogin: () -> Unit,
-    /** Non-null → Google OTP gate mode: skip the email/signup form entirely
-     *  and show the verification card immediately, addressed to this email. */
+    /** Preserves the pending address when the auth shell is recomposed. */
     initialOtpEmail: String? = null
 ) {
     var email by remember { mutableStateOf(initialOtpEmail.orEmpty()) }
 
     val awaitingOtp by viewModel.awaitingOtp.collectAsState()
+    val otpEmail by viewModel.otpEmail.collectAsState()
+    val isEmailOtpBusy by viewModel.isEmailOtpBusy.collectAsState()
+    var isCheckingEmail by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = awaitingOtp) {
+        viewModel.cancelEmailVerification()
+    }
     val rawErrorMessage by viewModel.errorMessage.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -185,8 +192,15 @@ fun RegisterScreen(
                             //    shows at MainActivity level).
                             OtpVerificationScreen(
                                 viewModel = viewModel,
-                                email = email
+                                email = otpEmail,
+                                isBusy = isEmailOtpBusy
                             )
+                            TextButton(
+                                onClick = { viewModel.cancelEmailVerification() },
+                                enabled = !isEmailOtpBusy
+                            ) {
+                                Text("Change email or return to login")
+                            }
 
                         } else {
                             Text(
@@ -228,32 +242,45 @@ fun RegisterScreen(
 
                             AgoraPrimaryButton(
                                 onClick = {
+                                    isCheckingEmail = true
                                     coroutineScope.launch {
-                                        val job = launch { snackbarHostState.showSnackbar("Verifying email...", duration = SnackbarDuration.Indefinite) }
-                                        val isReal = EmailValidator.isEmailReal(email)
-                                        job.cancel()
+                                        var lookupStarted = false
+                                        try {
+                                            val job = launch { snackbarHostState.showSnackbar("Verifying email...", duration = SnackbarDuration.Indefinite) }
+                                            val isReal = try {
+                                                EmailValidator.isEmailReal(email.trim())
+                                            } finally {
+                                                job.cancel()
+                                            }
 
-                                        if (!isReal) {
-                                            snackbarHostState.showSnackbar("This email address does not appear to be active.")
-                                            return@launch
-                                        }
+                                            if (!isReal) {
+                                                snackbarHostState.showSnackbar("This email address does not appear to be active.")
+                                                return@launch
+                                            }
 
-                                        // 🌟 Ghost intercept: if this email was attached to a
-                                        //    previously closed account, confirm the historic-post
-                                        //    wipe before the signup OTP is sent.
-                                        viewModel.checkClosedAccountEmail(email) { isGhost ->
-                                            if (isGhost) showGhostDialog = true
-                                            else viewModel.startRegistration(email)
+                                            // 🌟 Ghost intercept: if this email was attached to a
+                                            //    previously closed account, confirm the historic-post
+                                            //    wipe before the signup OTP is sent.
+                                            lookupStarted = true
+                                            viewModel.checkClosedAccountEmail(email) { isGhost ->
+                                                isCheckingEmail = false
+                                                if (isGhost) showGhostDialog = true
+                                                else viewModel.startRegistration(email)
+                                            }
+                                        } finally {
+                                            // The closed-account callback keeps the button
+                                            // disabled until its lookup has completed.
+                                            if (!lookupStarted) isCheckingEmail = false
                                         }
                                     }
                                 },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(54.dp),
-                                enabled = email.isNotBlank()
+                                enabled = email.isNotBlank() && !isEmailOtpBusy && !isCheckingEmail
                             ) {
                                 Text(
-                                    text = "Send Verification Code",
+                                    text = if (isEmailOtpBusy || isCheckingEmail) "Requesting code…" else "Send Verification Code",
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.Bold
                                 )
