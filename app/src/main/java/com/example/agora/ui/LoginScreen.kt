@@ -184,10 +184,26 @@ fun LoginScreen(
                                 fontSize = 12.sp,
                                 modifier = Modifier
                                     .align(Alignment.Start)
-                                    .padding(bottom = 18.dp)
+                                    .padding(bottom = 4.dp)
                             )
-                        } else {
-                            Spacer(modifier = Modifier.height(18.dp))
+                        }
+
+                        // Signed-out recovery: email code first, then a new password.
+                        TextButton(
+                            onClick = {
+                                authViewModel.clearError()
+                                authViewModel.startPasswordReset()
+                            },
+                            modifier = Modifier
+                                .align(Alignment.End)
+                                .padding(bottom = 6.dp)
+                        ) {
+                            Text(
+                                text = "Forgot password?",
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.sp
+                            )
                         }
 
                         AgoraPrimaryButton(

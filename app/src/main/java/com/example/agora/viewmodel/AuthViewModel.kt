@@ -3,6 +3,7 @@ package com.example.agora.viewmodel
 import android.content.Context
 import android.os.SystemClock
 import com.example.agora.utils.PasswordPolicy
+import com.example.agora.utils.PasswordResetRouting
 import com.example.agora.utils.OtpCooldown
 import android.util.Log
 import android.util.Patterns
@@ -72,6 +73,9 @@ import java.time.Instant
 import java.util.UUID
 
 enum class PasswordResetStep { EMAIL, OTP, NEW_PASSWORD }
+
+/** CHANGE = signed-in user changing a known password; RECOVERY = signed-out reset. */
+enum class PasswordResetMode { CHANGE, RECOVERY }
 
 /**
  * Where the auth shell ([com.example.agora.MainActivity]) must go once a session
@@ -188,6 +192,17 @@ class AuthViewModel : ViewModel() {
 
     private val _passwordResetStep = MutableStateFlow<PasswordResetStep?>(null)
     val passwordResetStep: StateFlow<PasswordResetStep?> = _passwordResetStep.asStateFlow()
+
+    private val _passwordResetMode = MutableStateFlow(PasswordResetMode.RECOVERY)
+    val passwordResetMode: StateFlow<PasswordResetMode> = _passwordResetMode.asStateFlow()
+
+    /** Absolute monotonic deadline for the emailed-code countdown (0 = expired). */
+    private val _passwordResetResendAvailableAt = MutableStateFlow(0L)
+    val passwordResetResendAvailableAt: StateFlow<Long> = _passwordResetResendAvailableAt.asStateFlow()
+
+    /** True while a reset request, verification or password update is in flight. */
+    private val _isPasswordResetBusy = MutableStateFlow(false)
+    val isPasswordResetBusy: StateFlow<Boolean> = _isPasswordResetBusy.asStateFlow()
 
     private var recoveryEmail: String = ""
 
@@ -683,7 +698,11 @@ class AuthViewModel : ViewModel() {
     }
 
     fun startPasswordReset() {
-        _passwordResetStep.value = PasswordResetStep.EMAIL
+        val mode = PasswordResetRouting.modeFor(supabaseClient.auth.currentUserOrNull() != null)
+        _passwordResetMode.value = mode
+        _passwordResetResendAvailableAt.value = 0L
+        _passwordResetStep.value = PasswordResetRouting.startStep(mode)
+        clearError()
     }
 
     fun requestPasswordResetOtp(email: String) {
@@ -692,7 +711,16 @@ class AuthViewModel : ViewModel() {
             _errorMessage.value = "Please enter a valid email address."
             return
         }
+        if (_isPasswordResetBusy.value) return
+        // A resend must respect the same 60-second window as the shared OTP card;
+        // the very first send (EMAIL step) is never gated by it.
+        if (_passwordResetStep.value == PasswordResetStep.OTP &&
+            SystemClock.elapsedRealtime() < _passwordResetResendAvailableAt.value
+        ) {
+            return
+        }
 
+        _isPasswordResetBusy.value = true
         viewModelScope.launch {
             try {
                 clearError()
@@ -723,20 +751,27 @@ class AuthViewModel : ViewModel() {
                     supabaseClient.auth.resetPasswordForEmail(cleanEmail)
                 }
                 recoveryEmail = cleanEmail
+                _passwordResetResendAvailableAt.value =
+                    SystemClock.elapsedRealtime() + OtpCooldown.DURATION_MS
                 _passwordResetStep.value = PasswordResetStep.OTP
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _errorMessage.value = handleAuthError(e)
+            } finally {
+                _isPasswordResetBusy.value = false
             }
         }
     }
 
     fun verifyPasswordResetOtp(otpCode: String) {
         val cleanCode = otpCode.trim()
-        if (cleanCode.isBlank()) {
-            _errorMessage.value = "Please enter the verification code."
+        if (cleanCode.length != 6 || !cleanCode.all { it in '0'..'9' }) {
+            _errorMessage.value = "Please enter the 6-digit code from your email."
             return
         }
+        if (_isPasswordResetBusy.value) return
 
+        _isPasswordResetBusy.value = true
         viewModelScope.launch {
             try {
                 clearError()
@@ -752,17 +787,22 @@ class AuthViewModel : ViewModel() {
                 }
                 _passwordResetStep.value = PasswordResetStep.NEW_PASSWORD
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _errorMessage.value = handleAuthError(e)
+            } finally {
+                _isPasswordResetBusy.value = false
             }
         }
     }
 
     fun submitNewPassword(newPassword: String, onSuccess: () -> Unit) {
-        if (newPassword.length < 6) {
-            _errorMessage.value = "Password must be at least 6 characters."
+        if (!PasswordPolicy.isValid(newPassword)) {
+            _errorMessage.value = PasswordPolicy.ERROR_MESSAGE
             return
         }
+        if (_isPasswordResetBusy.value) return
 
+        _isPasswordResetBusy.value = true
         viewModelScope.launch {
             try {
                 clearError()
@@ -781,16 +821,24 @@ class AuthViewModel : ViewModel() {
                     }
                 }
 
+                recoveryEmail = ""
+                _passwordResetResendAvailableAt.value = 0L
                 _passwordResetStep.value = null
                 onSuccess()
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _errorMessage.value = handleAuthError(e)
+            } finally {
+                _isPasswordResetBusy.value = false
             }
         }
     }
 
     fun cancelPasswordReset() {
         _passwordResetStep.value = null
+        _passwordResetResendAvailableAt.value = 0L
+        _isPasswordResetBusy.value = false
+        recoveryEmail = ""
         clearError()
     }
 
@@ -1373,6 +1421,8 @@ class AuthViewModel : ViewModel() {
         _deletionFlowActive.value = false
         _deletionOtpEmail.value = ""
         _passwordResetStep.value = null
+        _passwordResetResendAvailableAt.value = 0L
+        _isPasswordResetBusy.value = false
         _errorMessage.value = null
         _remoteLogoutEvent.value = false
         emailVerification.cancel()
@@ -1433,8 +1483,8 @@ class AuthViewModel : ViewModel() {
     }
 
     fun updatePassword(newPassword: String, onSuccess: () -> Unit) {
-        if (newPassword.length < 6) {
-            _errorMessage.value = "Password must be at least 6 characters."
+        if (!PasswordPolicy.isValid(newPassword)) {
+            _errorMessage.value = PasswordPolicy.ERROR_MESSAGE
             return
         }
 

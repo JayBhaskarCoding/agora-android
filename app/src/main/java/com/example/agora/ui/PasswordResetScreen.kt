@@ -30,11 +30,15 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.agora.ui.components.PasswordStrengthChecklist
 import com.example.agora.ui.components.VibrantGlassBackground
+import com.example.agora.ui.components.rememberOtpResendSeconds
 import com.example.agora.ui.theme.LocalDarkTheme
 import com.example.agora.ui.theme.glassmorphic
 import com.example.agora.viewmodel.AuthViewModel
+import com.example.agora.viewmodel.PasswordResetMode
 import com.example.agora.viewmodel.PasswordResetStep
+import com.example.agora.utils.PasswordPolicy
 import com.example.agora.ui.components.AgoraPrimaryButton
 import kotlinx.coroutines.launch
 
@@ -101,6 +105,12 @@ fun PasswordResetScreen(
 ) {
     val step by viewModel.passwordResetStep.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
+    val mode by viewModel.passwordResetMode.collectAsState()
+    val isBusy by viewModel.isPasswordResetBusy.collectAsState()
+    val resendAvailableAt by viewModel.passwordResetResendAvailableAt.collectAsState()
+
+    // Same 60-second countdown the registration OTP card uses (shared helper).
+    val secondsRemaining = rememberOtpResendSeconds(resendAvailableAt)
 
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
@@ -147,7 +157,13 @@ fun PasswordResetScreen(
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
             topBar = {
                 TopAppBar(
-                    title = { Text("Reset Password", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp) },
+                    title = {
+                        Text(
+                            text = if (mode == PasswordResetMode.CHANGE) "Change Password" else "Reset Password",
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 20.sp
+                        )
+                    },
                     navigationIcon = {
                         IconButton(onClick = {
                             viewModel.cancelPasswordReset()
@@ -270,7 +286,7 @@ fun PasswordResetScreen(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(54.dp),
-                                            enabled = emailInput.isNotBlank()
+                                            enabled = emailInput.isNotBlank() && !isBusy
                                         ) {
                                             Text(
                                                 text = "Send Code",
@@ -315,7 +331,7 @@ fun PasswordResetScreen(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(54.dp),
-                                            enabled = otpInput.length == 6
+                                            enabled = otpInput.length == 6 && !isBusy
                                         ) {
                                             Text(
                                                 text = "Verify Code",
@@ -326,11 +342,20 @@ fun PasswordResetScreen(
 
                                         TextButton(
                                             onClick = { viewModel.requestPasswordResetOtp(emailInput) },
+                                            enabled = secondsRemaining == 0 && !isBusy,
                                             modifier = Modifier.padding(top = 16.dp)
                                         ) {
                                             Text(
-                                                text = "Didn't receive code? Resend",
-                                                color = MaterialTheme.colorScheme.primary,
+                                                text = if (secondsRemaining > 0) {
+                                                    "Send again in ${secondsRemaining}s"
+                                                } else {
+                                                    "Send a new code"
+                                                },
+                                                color = if (secondsRemaining > 0 || isBusy) {
+                                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                                } else {
+                                                    MaterialTheme.colorScheme.primary
+                                                },
                                                 fontWeight = FontWeight.SemiBold
                                             )
                                         }
@@ -358,6 +383,7 @@ fun PasswordResetScreen(
                                         OutlinedTextField(
                                             value = newPasswordInput,
                                             onValueChange = { newPasswordInput = it; viewModel.clearError() },
+                                            enabled = !isBusy,
                                             label = { Text("New Password") },
                                             singleLine = true,
                                             shape = RoundedCornerShape(16.dp),
@@ -389,9 +415,15 @@ fun PasswordResetScreen(
                                             )
                                         )
 
+                                        PasswordStrengthChecklist(
+                                            password = newPasswordInput,
+                                            modifier = Modifier.padding(bottom = 20.dp)
+                                        )
+
                                         OutlinedTextField(
                                             value = confirmPasswordInput,
                                             onValueChange = { confirmPasswordInput = it; viewModel.clearError() },
+                                            enabled = !isBusy,
                                             label = { Text("Confirm New Password") },
                                             singleLine = true,
                                             shape = RoundedCornerShape(16.dp),
@@ -432,15 +464,6 @@ fun PasswordResetScreen(
                                                     .align(Alignment.Start)
                                                     .padding(bottom = 18.dp)
                                             )
-                                        } else if (newPasswordInput.isNotEmpty() && newPasswordInput.length < 8) {
-                                            Text(
-                                                text = "Password must be at least 8 characters.",
-                                                color = MaterialTheme.colorScheme.error,
-                                                fontSize = 12.sp,
-                                                modifier = Modifier
-                                                    .align(Alignment.Start)
-                                                    .padding(bottom = 18.dp)
-                                            )
                                         } else {
                                             Spacer(modifier = Modifier.height(18.dp))
                                         }
@@ -450,7 +473,9 @@ fun PasswordResetScreen(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(54.dp),
-                                            enabled = newPasswordInput.length >= 8 && newPasswordInput == confirmPasswordInput
+                                            enabled = PasswordPolicy.isValid(newPasswordInput) &&
+                                                newPasswordInput == confirmPasswordInput &&
+                                                !isBusy
                                         ) {
                                             Text(
                                                 text = "Update Password",
@@ -464,6 +489,22 @@ fun PasswordResetScreen(
                                 }
                             }
                         }
+                    }
+
+                    TextButton(
+                        onClick = {
+                            viewModel.cancelPasswordReset()
+                            onCancel()
+                        },
+                        enabled = !isBusy,
+                        modifier = Modifier.padding(top = 20.dp)
+                    ) {
+                        Text(
+                            text = if (mode == PasswordResetMode.CHANGE) "Cancel" else "Back to Log In",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 15.sp
+                        )
                     }
                 }
             }
