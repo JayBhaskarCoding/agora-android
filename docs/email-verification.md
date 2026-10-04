@@ -110,3 +110,39 @@ test each navigation action and Android Back; type passwords missing each indivi
 rule and confirm checklist updates and submit stays disabled. Complete registration
 with a valid password and confirm login using that password. Unit tests in
 `PasswordPolicyTest` and `OtpCooldownTest` cover rule boundaries and countdown math.
+
+## Password change and recovery flows
+
+`AuthViewModel.startPasswordReset()` opens one screen in one of two modes
+(`PasswordResetRouting`, unit-tested):
+
+- **CHANGE** — a signed-in user tapped *Change Password* in Account Details.
+  The session JWT already proves identity, so the flow opens directly on the
+  new-password step and calls `updateUser { password = … }`. No emailed code is
+  requested. The bottom action reads **Cancel**.
+- **RECOVERY** — a signed-out user tapped *Forgot password?* on Login. The flow
+  runs email → 6-digit code → new password. Verification calls
+  `verifyEmailOtp(type = OtpType.Email.RECOVERY, email, token)`, which mints the
+  session that authorises `updateUser`. The bottom action reads **Back to Log In**.
+
+Both modes share the flagship styling (dark glassmorphic panel, purple pill CTA)
+and the same password policy as registration: the animated
+`PasswordStrengthChecklist` sits directly under the new-password field, and the
+submit button stays disabled until all five rules pass. The ViewModel re-validates
+with `PasswordPolicy` before mutating credentials.
+
+The reset code countdown reuses `rememberOtpResendSeconds` and the ViewModel's
+monotonic `passwordResetResendAvailableAt`, exactly like the registration card:
+60 seconds, disabled resend, copy reading `Send again in Ns` while running and
+`Send a new code` when finished. A successful resend restarts the window; a failed
+resend leaves the button usable. Requests, verification and updates are blocked
+while `isPasswordResetBusy` is true, and the ViewModel rejects a resend inside the
+cooldown even if the UI is bypassed.
+
+Manual checks: change a password while signed in (completes without email, then
+sign out and sign in with the new password); sign out and use *Forgot password?*
+(recovery email shows a 6-digit code, wrong code shows an error, correct code
+leads to the new-password step); confirm the countdown copy at 60s and 0s, that
+resend is disabled while counting and re-enabled after; rotate the screen mid
+countdown; verify the disabled CTA until all five password rules turn green; and
+confirm Cancel/Back to Log In return to the expected screen.

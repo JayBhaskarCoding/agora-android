@@ -1,10 +1,9 @@
 package com.example.agora.ui
 
 import com.example.agora.utils.OtpCooldown
+import com.example.agora.ui.components.rememberOtpResendSeconds
 import android.os.SystemClock
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.saveable.rememberSaveable
-import kotlinx.coroutines.delay
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -72,17 +71,7 @@ fun OtpVerificationScreen(
         mutableStateOf(SystemClock.elapsedRealtime() + OtpCooldown.DURATION_MS)
     }
     val deadline = resendAvailableAt ?: localDeadline
-    fun remainingSeconds(): Int =
-        OtpCooldown.remainingSeconds(deadline, SystemClock.elapsedRealtime())
-    var secondsRemaining by remember(email, deadline) { mutableStateOf(remainingSeconds()) }
-
-    LaunchedEffect(email, deadline) {
-        secondsRemaining = remainingSeconds()
-        while (secondsRemaining > 0) {
-            delay(250L)
-            secondsRemaining = remainingSeconds()
-        }
-    }
+    val secondsRemaining = rememberOtpResendSeconds(deadline)
 
     Column(
         modifier = modifier.fillMaxWidth(),
