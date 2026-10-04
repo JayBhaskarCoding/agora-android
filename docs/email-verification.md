@@ -146,3 +146,52 @@ leads to the new-password step); confirm the countdown copy at 60s and 0s, that
 resend is disabled while counting and re-enabled after; rotate the screen mid
 countdown; verify the disabled CTA until all five password rules turn green; and
 confirm Cancel/Back to Log In return to the expected screen.
+
+## Recovery routing — the OTP step cannot be skipped
+
+The reset flow is no longer one composable switching on an enum. It is a real
+`NavHost` graph (`ui/PasswordResetScreen.kt`) whose three destinations cannot
+resolve out of order:
+
+```
+password_reset/email ──(code accepted by Supabase)──▶ password_reset/otp
+                     ──(verifyEmailOtp(RECOVERY) ok)──▶ password_reset/new_password
+```
+
+**Root cause of the reported bypass.** The entry point inferred "change" versus
+"reset" from `supabaseClient.auth.currentUserOrNull()`. Any leftover session —
+including the temporary recovery session minted by an *earlier* verification —
+made the Login screen's *Forgot password?* tap resolve as an authenticated
+change and open the new-password step with no code at all.
+
+Fixes:
+
+- **Explicit entry points.** `startChangePassword()` (Account Details) requires a
+  live session and otherwise degrades to recovery; `startPasswordRecovery()`
+  (Login) ALWAYS starts at the email step, whatever session exists.
+- **Ordered verification.** `verifyPasswordResetOtp()` refuses unless a code was
+  accepted for the address (`isRecoveryCodeRequested`), and
+  `submitNewPassword()` refuses unless identity is proven: a live session
+  (CHANGE) or `isRecoverySessionVerified`, which is set only after
+  `verifyEmailOtp(type = OtpType.Email.RECOVERY)` returns successfully.
+- **Destination guards.** Each route re-checks its precondition on composition
+  and bounces to the owning step instead of rendering, so a programmatic
+  navigate (or a future deep link) still cannot reach the new-password screen.
+- **Back stack.** Back walks the steps in reverse (`OTP → EMAIL` reverts the
+  request state) and only exits the flow from the first step; forward moves
+  never leave a completed step on the stack.
+- **Return to Login.** Completing a recovery update calls `signOut()` to end the
+  temporary session, pops the reset destinations, and drops the user back on
+  the Login screen. A signed-in *Change Password* keeps its session and returns
+  to Account Details.
+- Deleted the unreferenced `ResetPasswordViewModel`, whose `verifyOtp()` advanced
+  to the new-password step without calling Supabase — a bypass waiting to be
+  wired up.
+
+Manual checks: from Login, tap *Forgot password?* with a valid session in
+storage and confirm the email step still appears; enter a wrong 6-digit code and
+confirm the flow stays on the code step; kill and reopen the app mid-recovery and
+confirm it does not resume on the new-password step; complete a recovery and
+confirm the app lands on Login with no session; from Account Details confirm
+*Change Password* opens the new-password step directly, keeps the session, and
+returns to Account Details.

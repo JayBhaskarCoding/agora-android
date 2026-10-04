@@ -192,7 +192,7 @@ fun LoginScreen(
                         TextButton(
                             onClick = {
                                 authViewModel.clearError()
-                                authViewModel.startPasswordReset()
+                                authViewModel.startPasswordRecovery()
                             },
                             modifier = Modifier
                                 .align(Alignment.End)

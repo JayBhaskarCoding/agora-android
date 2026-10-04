@@ -745,7 +745,7 @@ fun AccountDetailsScreen(
                     }
 
                     FilledTonalButton(
-                        onClick = { viewModel.startPasswordReset() },
+                        onClick = { viewModel.startChangePassword() },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(16.dp)
                     ) {
