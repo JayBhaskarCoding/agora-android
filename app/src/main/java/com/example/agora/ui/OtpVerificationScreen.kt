@@ -186,7 +186,7 @@ fun OtpVerificationScreen(
                 text = if (secondsRemaining > 0) {
                     "Didn't receive a code? Send again in ${secondsRemaining}s"
                 } else {
-                    "Didn't receive a code? Send a new code"
+                    "Didn't receive a code? Resend code"
                 },
                 color = if (secondsRemaining > 0 || isBusy) {
                     MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
