@@ -4,7 +4,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.TextFieldColors
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.SpanStyle
@@ -68,37 +67,38 @@ fun rememberAgoraWordmark(text: String = "agora") = agoraWordmark(
 @Composable
 fun agoraAuthFieldColors(isDark: Boolean): TextFieldColors {
     val scheme = MaterialTheme.colorScheme
-    return remember(isDark, scheme) {
-        if (isDark) {
-            OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = scheme.primary,
-                unfocusedBorderColor = scheme.outline.copy(alpha = 0.55f),
-                focusedContainerColor = Color.Transparent,
-                unfocusedContainerColor = Color.Transparent,
-                unfocusedLabelColor = scheme.onSurfaceVariant,
-                unfocusedLeadingIconColor = scheme.onSurfaceVariant,
-                unfocusedTrailingIconColor = scheme.onSurfaceVariant,
-                focusedTextColor = scheme.onSurface,
-                unfocusedTextColor = scheme.onSurface
-            )
-        } else {
-            OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = scheme.primary,
-                unfocusedBorderColor = scheme.outline,
-                focusedContainerColor = scheme.surface,
-                unfocusedContainerColor = Color(0xFFF4F5F8),
-                unfocusedLabelColor = Color(0xFF474C57),
-                focusedLabelColor = scheme.primary,
-                unfocusedLeadingIconColor = Color(0xFF474C57),
-                focusedLeadingIconColor = scheme.primary,
-                unfocusedTrailingIconColor = Color(0xFF474C57),
-                focusedTrailingIconColor = scheme.primary,
-                unfocusedTextColor = Color(0xFF14151C),
-                focusedTextColor = Color(0xFF14151C),
-                unfocusedPlaceholderColor = Color(0xFF6B7079),
-                cursorColor = scheme.primary
-            )
-        }
+    // 🌟 OutlinedTextFieldDefaults.colors() is itself @Composable, so it cannot be
+    //    invoked inside remember {} — build the (already cheap) value directly and
+    //    let Compose skip recomposition when the inputs are unchanged.
+    return if (isDark) {
+        OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = scheme.primary,
+            unfocusedBorderColor = scheme.outline.copy(alpha = 0.55f),
+            focusedContainerColor = Color.Transparent,
+            unfocusedContainerColor = Color.Transparent,
+            unfocusedLabelColor = scheme.onSurfaceVariant,
+            unfocusedLeadingIconColor = scheme.onSurfaceVariant,
+            unfocusedTrailingIconColor = scheme.onSurfaceVariant,
+            focusedTextColor = scheme.onSurface,
+            unfocusedTextColor = scheme.onSurface
+        )
+    } else {
+        OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = scheme.primary,
+            unfocusedBorderColor = scheme.outline,
+            focusedContainerColor = scheme.surface,
+            unfocusedContainerColor = Color(0xFFF4F5F8),
+            unfocusedLabelColor = Color(0xFF474C57),
+            focusedLabelColor = scheme.primary,
+            unfocusedLeadingIconColor = Color(0xFF474C57),
+            focusedLeadingIconColor = scheme.primary,
+            unfocusedTrailingIconColor = Color(0xFF474C57),
+            focusedTrailingIconColor = scheme.primary,
+            unfocusedTextColor = Color(0xFF14151C),
+            focusedTextColor = Color(0xFF14151C),
+            unfocusedPlaceholderColor = Color(0xFF6B7079),
+            cursorColor = scheme.primary
+        )
     }
 }
 
