@@ -46,20 +46,23 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.agora.data.supabaseClient
 import com.example.agora.model.Profile
+import com.example.agora.utils.DateOfBirth
 import com.example.agora.viewmodel.AuthViewModel
 import com.example.agora.viewmodel.ThemeViewModel
 import com.example.agora.ui.components.AgoraPrimaryButton
+import com.example.agora.ui.components.DobSelectableDates
+import com.example.agora.ui.components.MinorAccountWarningBanner
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.storage.storage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
 import java.time.Instant
+import java.time.LocalDate
+import java.time.OffsetDateTime
+import java.time.format.DateTimeParseException
 import java.time.temporal.ChronoUnit
-import java.util.Date
-import java.util.Locale
 import java.util.UUID
 
 fun maskEmail(email: String): String {
@@ -72,19 +75,28 @@ fun maskEmail(email: String): String {
 }
 
 fun getTimeAgo(instantString: String?): String {
-    if (instantString == null) return "Never"
+    // 🌟 Accounts start with password_changed_at = NULL and keep it NULL until
+    //    an explicit Change Password / Reset Password completes. A blank value
+    //    is treated the same way: "Never" (never "Just now").
+    val raw = instantString?.trim().orEmpty()
+    if (raw.isEmpty()) return "Never"
     return try {
-        val past = Instant.parse(instantString)
+        // PostgREST may emit either "...Z" or "...+00:00"; accept both.
+        val past = try {
+            Instant.parse(raw)
+        } catch (_: DateTimeParseException) {
+            OffsetDateTime.parse(raw).toInstant()
+        }
         val now = Instant.now()
 
         val days = ChronoUnit.DAYS.between(past, now)
-        if (days > 0) return "$days days ago"
+        if (days > 0) return if (days == 1L) "1 day ago" else "$days days ago"
 
         val hours = ChronoUnit.HOURS.between(past, now)
-        if (hours > 0) return "$hours hours ago"
+        if (hours > 0) return if (hours == 1L) "1 hour ago" else "$hours hours ago"
 
         val minutes = ChronoUnit.MINUTES.between(past, now)
-        if (minutes > 0) return "$minutes minutes ago"
+        if (minutes > 0) return if (minutes == 1L) "1 minute ago" else "$minutes minutes ago"
 
         "Just now"
     } catch (e: Exception) {
@@ -127,7 +139,22 @@ fun AccountDetailsScreen(
 
     var genderDropdownExpanded by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
-    val datePickerState = rememberDatePickerState()
+
+    // 🌟 DOB window: [today − 120 years, today]. The Material 3 picker is
+    //    bounded at BOTH the year and day level; the form state re-validates
+    //    the persisted string before enabling Save.
+    val today = LocalDate.now()
+    val oldestAllowedDob = remember(today) { DateOfBirth.oldestAllowedDate(today) }
+    val dobSelectableDates = remember(today) {
+        DobSelectableDates(oldestAllowed = oldestAllowedDob, newestAllowed = today)
+    }
+    val datePickerState = rememberDatePickerState(
+        yearRange = oldestAllowedDob.year..today.year,
+        selectableDates = dobSelectableDates
+    )
+    val dobError = DateOfBirth.validationError(dob, today)
+    val ageInYears = DateOfBirth.validAgeOrNull(dob, today)
+    val showMinorBanner = ageInYears != null && ageInYears in 0 until DateOfBirth.ADULT_AGE_YEARS
 
     // 🌟 Destructive-action gate: Delete Account must be confirmed before the
     //    reauthentication email is ever sent.
@@ -188,6 +215,18 @@ fun AccountDetailsScreen(
             lastName = fetchedProfile.lastName ?: ""
             gender = fetchedProfile.gender ?: ""
             dob = fetchedProfile.dob ?: ""
+        }
+    }
+
+    // 🌟 Re-opening the picker should land on the saved DOB month so an adult
+    //    doesn't have to page back decades from today.
+    LaunchedEffect(showDatePicker) {
+        if (showDatePicker) {
+            DateOfBirth.parse(dob)?.let { selected ->
+                val millis = DateOfBirth.toUtcMillis(selected)
+                datePickerState.selectedDateMillis = millis
+                datePickerState.displayedMonthMillis = millis
+            }
         }
     }
 
@@ -370,8 +409,9 @@ fun AccountDetailsScreen(
             confirmButton = {
                 TextButton(onClick = {
                     datePickerState.selectedDateMillis?.let { millis ->
-                        val formatter = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-                        dob = formatter.format(Date(millis))
+                        // Picker values are UTC start-of-day; format in UTC so the
+                        // stored yyyy-MM-dd never shifts by a day.
+                        dob = DateOfBirth.formatUtcMillis(millis)
                     }
                     showDatePicker = false
                 }) { Text("OK") }
@@ -380,7 +420,10 @@ fun AccountDetailsScreen(
                 TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
             }
         ) {
-            DatePicker(state = datePickerState)
+            DatePicker(
+                state = datePickerState,
+                showModeToggle = false
+            )
         }
     }
 
@@ -618,22 +661,30 @@ fun AccountDetailsScreen(
                         }
                     }
 
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        OutlinedTextField(
-                            value = dob,
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Date of Birth") },
-                            trailingIcon = { Icon(Icons.Default.DateRange, contentDescription = "Select Date") },
-                            shape = RoundedCornerShape(16.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Spacer(
-                            modifier = Modifier
-                                .matchParentSize()
-                                .clip(RoundedCornerShape(16.dp))
-                                .clickable { showDatePicker = true }
-                        )
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            OutlinedTextField(
+                                value = dob,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Date of Birth") },
+                                trailingIcon = { Icon(Icons.Default.DateRange, contentDescription = "Select Date") },
+                                shape = RoundedCornerShape(16.dp),
+                                isError = dobError != null,
+                                supportingText = dobError?.let { message ->
+                                    { Text(message, color = MaterialTheme.colorScheme.error) }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(
+                                modifier = Modifier
+                                    .matchParentSize()
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .clickable { showDatePicker = true }
+                            )
+                        }
+
+                        MinorAccountWarningBanner(visible = showMinorBanner)
                     }
                 }
             }
@@ -737,7 +788,12 @@ fun AccountDetailsScreen(
                         Column {
                             Text("Password Security", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
                             Text(
-                                "Last changed: ${getTimeAgo(profile?.passwordChangedAt)}",
+                                "Password last updated: ${
+                                    getTimeAgo(
+                                        liveProfile?.passwordChangedAt
+                                            ?: profile?.passwordChangedAt
+                                    )
+                                }",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -764,6 +820,11 @@ fun AccountDetailsScreen(
             ) {
                 AgoraPrimaryButton(
                     onClick = {
+                        // Guard the mutation boundary as well as the button state.
+                        if (dobError != null) {
+                            scope.launch { snackbarHostState.showSnackbar(dobError) }
+                            return@AgoraPrimaryButton
+                        }
                         viewModel.updateProfileDetails(firstName, lastName, gender, dob) {
                             profile = profile?.copy(firstName = firstName, lastName = lastName, gender = gender, dob = dob)
                             scope.launch {
@@ -771,6 +832,7 @@ fun AccountDetailsScreen(
                             }
                         }
                     },
+                    enabled = dobError == null,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(52.dp)

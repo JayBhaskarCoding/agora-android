@@ -1,8 +1,6 @@
 package com.example.agora.ui
 
 import com.example.agora.ui.components.AgoraPrimaryButton
-import android.app.DatePickerDialog
-import android.widget.DatePicker
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -15,12 +13,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.util.Calendar
+import com.example.agora.ui.components.DobSelectableDates
+import com.example.agora.ui.components.MinorAccountWarningBanner
+import com.example.agora.utils.DateOfBirth
+import java.time.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,22 +32,59 @@ fun ProfileSetupScreen(
     var theme by remember { mutableStateOf("System Default") }
 
     var expandedGenderDropdown by remember { mutableStateOf(false) }
+    var showDatePicker by remember { mutableStateOf(false) }
     val genderOptions = listOf("Male", "Female", "Non-binary", "Prefer not to say")
 
-    val context = LocalContext.current
-    val calendar = Calendar.getInstance()
-
-    // Native Android Date Picker
-    val datePickerDialog = DatePickerDialog(
-        context,
-        { _: DatePicker, year: Int, month: Int, dayOfMonth: Int ->
-            // Formats strictly as YYYY-MM-DD for your database
-            dob = String.format("%04d-%02d-%02d", year, month + 1, dayOfMonth)
-        },
-        calendar.get(Calendar.YEAR),
-        calendar.get(Calendar.MONTH),
-        calendar.get(Calendar.DAY_OF_MONTH)
+    // 🌟 DOB is limited to [today − 120 years, today] at the picker level and
+    //    re-validated on the form before submission.
+    val today = LocalDate.now()
+    val oldestAllowedDob = remember(today) { DateOfBirth.oldestAllowedDate(today) }
+    val dobSelectableDates = remember(today) {
+        DobSelectableDates(oldestAllowed = oldestAllowedDob, newestAllowed = today)
+    }
+    val datePickerState = rememberDatePickerState(
+        yearRange = oldestAllowedDob.year..today.year,
+        selectableDates = dobSelectableDates
     )
+    val dobError = DateOfBirth.validationError(dob, today)
+    val ageInYears = DateOfBirth.validAgeOrNull(dob, today)
+    val showMinorBanner = ageInYears != null && ageInYears in 0 until DateOfBirth.ADULT_AGE_YEARS
+
+    LaunchedEffect(showDatePicker) {
+        if (showDatePicker) {
+            DateOfBirth.parse(dob)?.let { selected ->
+                val millis = DateOfBirth.toUtcMillis(selected)
+                datePickerState.selectedDateMillis = millis
+                datePickerState.displayedMonthMillis = millis
+            }
+        }
+    }
+
+    if (showDatePicker) {
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { millis ->
+                            dob = DateOfBirth.formatUtcMillis(millis)
+                        }
+                        showDatePicker = false
+                    }
+                ) {
+                    Text("OK")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
+            }
+        ) {
+            DatePicker(
+                state = datePickerState,
+                showModeToggle = false
+            )
+        }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background
@@ -103,28 +140,36 @@ fun ProfileSetupScreen(
                 }
             }
 
-            // 2. Date of Birth Picker - NOW WRAPPED IN AN OUTER BOX
-            Box(
+            // 2. Date of Birth Picker
+            Column(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)
             ) {
-                OutlinedTextField(
-                    value = dob,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Date of Birth") },
-                    placeholder = { Text("YYYY-MM-DD") },
-                    trailingIcon = {
-                        Icon(Icons.Default.DateRange, contentDescription = "Select Date")
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = dob,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Date of Birth") },
+                        placeholder = { Text("YYYY-MM-DD") },
+                        isError = dobError != null,
+                        supportingText = dobError?.let { message ->
+                            { Text(message, color = MaterialTheme.colorScheme.error) }
+                        },
+                        trailingIcon = {
+                            Icon(Icons.Default.DateRange, contentDescription = "Select Date")
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
 
-                // 🌟 Transparent overlay that catches all clicks and opens the calendar
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .clickable { datePickerDialog.show() }
-                )
+                    // 🌟 Transparent overlay that catches all clicks and opens the calendar
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .clickable { showDatePicker = true }
+                    )
+                }
+
+                MinorAccountWarningBanner(visible = showMinorBanner)
             }
 
             // 3. Theme Selection
@@ -161,8 +206,12 @@ fun ProfileSetupScreen(
             // 4. Submit Button
             AgoraPrimaryButton(
                 text = "Complete Setup",
-                onClick = { onSetupComplete(gender, dob, theme) },
-                enabled = gender.isNotBlank() && dob.isNotBlank(),
+                onClick = {
+                    if (dobError == null) {
+                        onSetupComplete(gender, dob, theme)
+                    }
+                },
+                enabled = gender.isNotBlank() && dob.isNotBlank() && dobError == null,
                 modifier = Modifier.fillMaxWidth()
             )
         }

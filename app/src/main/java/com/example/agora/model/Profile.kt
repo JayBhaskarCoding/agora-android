@@ -14,6 +14,9 @@ data class Profile(
     @SerialName("avatar_url") val avatarUrl: String? = null,
     val gender: String? = null,
     val dob: String? = null,
+    /** 🌟 When the user last completed an explicit Change Password / Reset
+     *  Password flow. NULL means the password has never changed — a brand-new
+     *  account always starts NULL and the UI renders "Never". */
     @SerialName("password_changed_at")
     val passwordChangedAt: String? = null,
     /** Single-device login claim: device id of the device currently allowed to hold the session. */

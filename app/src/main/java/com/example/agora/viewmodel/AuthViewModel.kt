@@ -2,6 +2,7 @@ package com.example.agora.viewmodel
 
 import android.content.Context
 import android.os.SystemClock
+import com.example.agora.utils.DateOfBirth
 import com.example.agora.utils.PasswordPolicy
 import com.example.agora.utils.OtpCooldown
 import android.util.Log
@@ -1410,6 +1411,11 @@ class AuthViewModel : ViewModel() {
     }
 
     fun completeOnboarding(gender: String, dob: String, onSuccess: () -> Unit) {
+        val dobError = DateOfBirth.validationError(dob)
+        if (dobError != null) {
+            _errorMessage.value = dobError
+            return
+        }
         viewModelScope.launch {
             try {
                 clearError()
@@ -1465,6 +1471,13 @@ class AuthViewModel : ViewModel() {
     }
 
     fun updateProfileDetails(firstName: String, lastName: String, gender: String, dob: String, onSuccess: () -> Unit) {
+        // 🌟 Mirror of the inline form validation: a manually entered or stale
+        //    DOB outside [today − 120 years, today] can never reach the database.
+        val dobError = DateOfBirth.validationError(dob)
+        if (dobError != null) {
+            _errorMessage.value = dobError
+            return
+        }
         viewModelScope.launch {
             try {
                 clearError()
@@ -1505,6 +1518,11 @@ class AuthViewModel : ViewModel() {
         // Validate again at the mutation boundary, before uploads or profile writes.
         if (!PasswordPolicy.isValid(realPassword)) {
             onFailure(PasswordPolicy.ERROR_MESSAGE)
+            return
+        }
+        val dobError = DateOfBirth.validationError(dob)
+        if (dobError != null) {
+            onFailure(dobError)
             return
         }
         viewModelScope.launch {
@@ -1551,6 +1569,12 @@ class AuthViewModel : ViewModel() {
                             set("gender", gender.ifBlank { null })
                             set("dob", dob.ifBlank { null })
                             set("email", userEmail)
+                            // 🌟 A brand-new account has NEVER had an explicit
+                            //    password change/reset. Onboarding sets the initial
+                            //    credential, so clear any column default/trigger
+                            //    stamp here; only Change Password / Reset Password
+                            //    are allowed to write this timestamp.
+                            set("password_changed_at", null)
                             if (!finalAvatarUrl.isNullOrBlank()) {
                                 set("avatar_url", finalAvatarUrl)
                             }
@@ -1597,16 +1621,11 @@ class AuthViewModel : ViewModel() {
                         }
                     }
 
-                    // ── STEP 3 (best-effort): stamp password_changed_at ─────────
-                    try {
-                        supabaseClient.from("profiles").update(
-                            mapOf("password_changed_at" to Instant.now().toString())
-                        ) {
-                            filter { eq("id", userId) }
-                        }
-                    } catch (e: Exception) {
-                        Log.w("AuthViewModel", "password_changed_at stamp failed (non-fatal): ${e.localizedMessage}")
-                    }
+                    // ── STEP 3: intentionally NOT stamping password_changed_at ──
+                    // Setting the initial onboarding credential is not a
+                    // "password change": new accounts must surface "Never" in
+                    // Account Details until the user explicitly completes the
+                    // Change Password or Reset Password flow.
                 }
 
                 // Registration finished on this device: claim the single-device session.
