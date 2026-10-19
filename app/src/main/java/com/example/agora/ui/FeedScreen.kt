@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.agora.media.VideoPreloader
+import com.example.agora.navigation.DeepLinkRouter
 import com.example.agora.model.Post
 import com.example.agora.ui.theme.AgoraRingGradient
 import com.example.agora.ui.theme.AgoraType
@@ -1056,7 +1057,7 @@ fun PostCard(
                     modifier = Modifier
                         .clip(CircleShape)
                         .clickable {
-                            val shareUrl = "https://auth-agora.info/post/${post.id}"
+                            val shareUrl = "https://${DeepLinkRouter.WEB_HOST}/post/${post.id}"
                             val sendIntent = Intent(Intent.ACTION_SEND).apply {
                                 putExtra(
                                     Intent.EXTRA_TEXT,

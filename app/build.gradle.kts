@@ -28,6 +28,37 @@ fun requiredLocalProperty(name: String): String =
 fun String.asBuildConfigString(): String =
     "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
+/**
+ * Like [requiredLocalProperty] but returns null instead of failing the build.
+ * Used for values that have a sane, documented fallback.
+ */
+fun optionalLocalProperty(name: String): String? =
+    (localProperties.getProperty(name) ?: providers.gradleProperty(name).orNull)
+        ?.takeIf { it.isNotBlank() }
+
+/**
+ * ✦ GOOGLE WEB CLIENT ID — the `serverClientId` handed to
+ *   `GetGoogleIdOption` / `GetSignInWithGoogleOption`.
+ *
+ * Hard requirements (Google enforces all three):
+ *   1. It must be an OAuth 2.0 client of type **Web application**. An
+ *      Android-type client here produces
+ *      `GetCredentialCancellationException: activity is cancelled by the user`
+ *      the instant the account picker closes.
+ *   2. It must live in the SAME Google Cloud project as `app/google-services.json`
+ *      (project number 1025610780303). A client id's numeric prefix IS its
+ *      project number, so a mismatch is visible in the string itself.
+ *   3. The SAME project must also contain an **Android** OAuth client for
+ *      `applicationId` + the SHA-1 of the certificate that signed the installed
+ *      APK (debug keystore, upload key and Play App Signing key are three
+ *      different certificates).
+ *
+ * Override without touching source: put `GOOGLE_WEB_CLIENT_ID=…` in
+ * local.properties, or pass `-PGOOGLE_WEB_CLIENT_ID=…`.
+ */
+val defaultGoogleWebClientId =
+    "925021938686-kqbu0iv5q4gkkoq1sqbnmrtk1uj83itk.apps.googleusercontent.com"
+
 android {
     // ✦ NAMESPACE stays com.example.agora on purpose: it is the Kotlin/Java
     //   package and the R class package, so the production applicationId can
@@ -71,6 +102,15 @@ android {
             "String",
             "SUPABASE_ANON_KEY",
             requiredLocalProperty("SUPABASE_ANON_KEY").asBuildConfigString()
+        )
+
+        // 🌟 Google Sign-In server client id. One source of truth: the UI no
+        //    longer passes a literal, and the ViewModel default reads this.
+        buildConfigField(
+            "String",
+            "GOOGLE_WEB_CLIENT_ID",
+            (optionalLocalProperty("GOOGLE_WEB_CLIENT_ID") ?: defaultGoogleWebClientId)
+                .asBuildConfigString()
         )
     }
 

@@ -14,7 +14,7 @@ Three workstreams landed together: **(1) notification → post deep-link routing
 | Client → DB | `notifications.data` never contained `post_id` — the Edge Function could never route to a post (`customData.post_id` was always `""`). |
 | Edge Function | `broadcast-post` omitted `post_id` entirely; `push-notification` didn't forward `sender_id`/`reporter_id` (self-action filter dead code). |
 | PendingIntent | Built with `Intent(ACTION_VIEW, https://…)` (implicit-ish, no parent stack), `FLAG_ACTIVITY_CLEAR_TOP/SINGLE_TOP` only — no `TaskStackBuilder`. |
-| `MainActivity` | `injectDeepLink` only read `?post_id=` **query params**, so `https://auth-agora.info/post/{id}` path links parsed to nothing. Warm taps (`onNewIntent`) set `intent.data` but nothing ever told the NavController — hence "opens the home screen". |
+| `MainActivity` | `injectDeepLink` only read `?post_id=` **query params**, so `https://agora.in.net/post/{id}` path links parsed to nothing. Warm taps (`onNewIntent`) set `intent.data` but nothing ever told the NavController — hence "opens the home screen". |
 | `SinglePostScreen` | Looked the post up in `FeedViewModel.posts` only — a cold-start deep link to a post outside the loaded feed showed "Post not found or loading…" forever. |
 
 ### Architecture now
@@ -42,7 +42,7 @@ dialog("post/{postId}?commentId={commentId}") {
   wrapped in `TaskStackBuilder.addNextIntentWithParentStack(...)` so the system
   back stack is preserved. Request codes are `postId.hashCode()` (dedupe instead
   of `currentTimeMillis()`).
-- **NavHost**: `navDeepLink` patterns for `agora://post/{postId}`, the `https://auth-agora.info/post/{postId}`
+- **NavHost**: `navDeepLink` patterns for `agora://post/{postId}`, the `https://agora.in.net/post/{postId}`
   app links and the `commentId` variants are kept; the router is deterministic and
   idempotent on top, so whichever mechanism fires first wins and the other stands down.
 - **ViewModel scoping**: `PostDetailViewModel` is created against the dialog
@@ -298,7 +298,7 @@ media through a third-party mirror is a product/privacy decision, not a library
 default. Recommended order:
 
 1. **Relay through your own backend** (best): a Supabase Edge Function on
-   `auth-agora.info` that streams the object and caches it — user media then never
+   `agora.in.net` that streams the object and caches it — user media then never
    touches a host their ISP may block, and you drop a dependency on Catbox for
    playback entirely. Requires a new Edge Function plus rewriting URLs at upload
    time.
@@ -474,7 +474,7 @@ not by package.
 **Manifest.** `enableOnBackInvokedCallback="true"` (predictive back on 33+),
 `usesCleartextTraffic="false"` (all endpoints are HTTPS; this is a hard floor, not a
 suggestion). `MainActivity` is `exported="true"` because it owns MAIN/LAUNCHER and the
-`agora://` + `https://auth-agora.info/post/` filters; `PushNotificationService` is
+`agora://` + `https://agora.in.net/post/` filters; `PushNotificationService` is
 `exported="false"` because only Play Services may bind to it. No provider exists today —
 if a `FileProvider` is ever added, its authority must be `${applicationId}.fileprovider`,
 never a literal.
@@ -491,3 +491,140 @@ the Google Services plugin resolves either id. The `net.in.agora` entry still po
 the old `mobilesdk_app_id`; register the Android app in the Firebase console and swap in
 the real file before the first production build, otherwise FCM analytics conflate the two
 packages.
+
+---
+
+## 10. Google Sign-In aborts after account selection (error 28444)
+
+### Symptom
+
+The Google account sheet appears, the user picks an account, the sheet closes and
+the app reports:
+
+```
+androidx.credentials.exceptions.GetCredentialCancellationException:
+    activity is cancelled by the user
+```
+
+or, on other Play Services versions, `10: [28444] Developer console is not set up
+correctly` / `16: Account reauth failed`. The user never cancelled anything.
+
+### What the message actually means
+
+Credential Manager has exactly one bucket for "the picker closed without giving
+me a credential", and Google uses it for *both* a real dismissal **and** every
+rejection of the calling app. `[28444]`, `[16] Account reauth failed` and
+`not registered to use OAuth2.0` are all Google refusing to mint a token, not a
+user action — Google deliberately does not tell the app which check failed.
+
+Google validates a Google ID token request against **three independent things**:
+
+| # | Requirement | Where it lives |
+|---|---|---|
+| 1 | `serverClientId` is an OAuth client of type **Web application** | `GOOGLE_WEB_CLIENT_ID` |
+| 2 | It belongs to the **same Google Cloud project** as `google-services.json` | project number `1025610780303` |
+| 3 | That project has an **Android** OAuth client for `applicationId` + the SHA-1 of the certificate that signed the **installed** APK | Google Cloud Console |
+
+Anything wrong in 1–3 produces the "cancel".
+
+### Root cause in this repo (configuration-side)
+
+The code was correct in shape — `GetGoogleIdOption` → `GoogleIdTokenCredential`
+→ `supabase.auth.signInWith(IDToken) { provider = Google }` — but two
+configuration facts made it impossible to succeed:
+
+1. **The Web client id belonged to a different Google Cloud project.** The
+   hardcoded value was `925021938686-…`, while `google-services.json` declares
+   project `1025610780303`. An OAuth client id's numeric prefix *is* its project
+   number, so this is provable from the repository alone.
+2. **The owning project has no OAuth clients at all.** `google-services.json`
+   now carries a real Firebase Android app for `net.in.agora`
+   (`mobilesdk_app_id 1:1025610780303:android:00130b70a449f1bb83aafa`), but its
+   `"oauth_client"` array is still **empty**. That array is populated by the
+   Firebase tooling from the project's OAuth clients, so an empty array means
+   project `1025610780303` holds neither the Web client the app sends nor an
+   Android client for `net.in.agora` + the signing SHA-1. Both halves of the
+   handshake are missing, from the same cause.
+3. **The Android OAuth client was registered for the old package.** OAuth
+   Android clients are keyed on `applicationId` + signing SHA-1. `applicationId`
+   moved from `com.example.agora` to `net.in.agora` (§9), so any client created
+   for the old package stopped matching the moment the id changed.
+
+Neither is fixable in Kotlin. What *was* fixable is that the failure was
+invisible: the catch block mapped every `GetCredentialException` to
+"Google Sign-In was canceled.", and `handleAppError()` returned the generic
+message for the rest.
+
+### Fix
+
+| Layer | Change |
+|---|---|
+| `app/build.gradle.kts` | New `BuildConfig.GOOGLE_WEB_CLIENT_ID`, overridable with `GOOGLE_WEB_CLIENT_ID` in `local.properties` / `-P`. Documents all three requirements next to the value. |
+| `LoginScreen` | No longer passes a literal client id; calls `signInWithGoogle(context)`. |
+| `AuthViewModel.signInWithGoogle` | Default parameter is `BuildConfig.GOOGLE_WEB_CLIENT_ID`. Rejects a non-`*.apps.googleusercontent.com` id *before* the picker. Logs a one-line preflight (package, runtime SHA-1, client id, client project number vs Firebase project number). |
+| `AuthViewModel` error handling | Classifies on the **payload**: `[28444]`, `account reauth failed`, `developer_error`, `not registered to use oauth` → `ErrorMessages.GOOGLE_CONFIG_ERROR` (a real, honest message). Genuine dismissal still says "canceled". `NoCredentialException`, `GetCredentialProviderConfigurationException`, `GetCredentialUnsupportedException`, `GetCredentialInterruptedException` each get their own copy. |
+| `AuthViewModel` session flags | `claimDeviceOnNextSession` / `hasCompletedColdStartCheck` / `sessionCreatedInThisRun` are now set *after* the Supabase exchange succeeds instead of before it. |
+| `proguard-rules.pro` | Added keeps for `com.google.android.gms.auth.api.identity.**` and the `GoogleIdTokenCredential` `CREATOR`/`KEY_*` fields. |
+
+### The client-side fix you must still do (Google Cloud Console)
+
+1. Google Cloud Console → APIs & Services → Credentials, in project
+   **agora-application / 1025610780303**.
+2. Create (or open) an OAuth client of type **Android**:
+   package name `net.in.agora`, plus the SHA-1 of **every** certificate you
+   install with — debug keystore, upload key and **Play App Signing key**
+   (Play Console → App integrity).
+3. Create (or open) an OAuth client of type **Web application**. Use its client
+   id as `GOOGLE_WEB_CLIENT_ID`.
+4. Supabase dashboard → Authentication → Providers → Google: *Authorized Client
+   IDs* must contain that same Web client id (it is the `aud` Supabase verifies).
+5. Wait a few minutes — OAuth client changes are not instant, and a
+   `net.in.agora` client takes up to a few hours to propagate.
+
+### Verify
+
+```bash
+# 1. what the app thinks it is
+adb logcat -c && adb shell am start -n net.in.agora/com.example.agora.MainActivity
+adb logcat -s GoogleAuth
+# -> preflight package=net.in.agora sha1=… serverClientId=…(project …) firebaseProject=1025610780303
+
+# 2. the SHA-1 of the artifact actually installed
+keytool -printcert -jarfile app/build/outputs/apk/debug/app-debug.apk
+# or: ./gradlew signingReport
+
+# 3. token exchange, independent of the app
+curl -s "https://oauth2.googleapis.com/tokeninfo?id_token=<token>" | jq '{aud, azp, email}'
+#    aud  = your WEB client id      (must match GOOGLE_WEB_CLIENT_ID)
+#    azp  = your ANDROID client id  (must exist in the project)
+```
+
+A healthy run logs `preflight …` and then a Supabase session; a broken OAuth
+client now logs `MISCONFIGURATION: … project … but … project …` and shows
+"Google Sign-In isn't available in this build" instead of a fake cancellation.
+
+### Deep-link / domain migration (`agora.in.net`)
+
+Every occurrence of the two legacy `auth-agora` origins was replaced
+repo-wide by `agora.in.net`, and the App Links filter was widened:
+
+- one verified `https://agora.in.net` host, three path prefixes (`/post/`,
+  `/auth-callback`, `/login-callback`) — previously **only** `/post/` was
+  declared, so an `https://` auth redirect could never open the app;
+- **two** custom schemes in the same filter: `agora://` (what the app emits —
+  FCM payloads, notification intents, NavHost deep links, every link already
+  sent to users) and `net.in.agora://` (the applicationId-derived form). A
+  manifest that declares only `net.in.agora` while `MainActivity`,
+  `PushNotificationService` and `MainScreen` still build `agora://` URIs
+  silently orphans every existing notification;
+- Kotlin reads the host from `DeepLinkRouter.WEB_HOST` (single constant);
+- `backend/setup_agora_config.ps1` writes `site_url = https://agora.in.net` and
+  `uri_allow_list = ['agora://**', 'net.in.agora://**', 'https://agora.in.net/**']`.
+
+Operational follow-ups that live outside the repository:
+
+- `https://agora.in.net/.well-known/assetlinks.json` must list `net.in.agora`
+  with the Play App Signing SHA-256, or Android opens the browser.
+- Keep the **previous** web origin in the Supabase redirect allow-list until
+  already-emailed magic links have expired, otherwise those links 404. Only
+  `agora.in.net` is referenced by code, the manifest and the setup script.

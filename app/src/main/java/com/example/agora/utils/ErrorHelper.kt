@@ -28,6 +28,15 @@ object ErrorMessages {
     const val SAME_PASSWORD = "That's already your current password."
     const val EMAIL_NOT_CONFIRMED = "Your email isn't verified yet — check your inbox for the code."
     const val ACCOUNT_UNAVAILABLE = "This account is no longer available."
+
+    /**
+     * Google rejected the *app*, not the user. Credential Manager reports this
+     * as a cancellation (`activity is cancelled by the user`) or as
+     * `[28444] Developer console is not set up correctly`, so without a
+     * dedicated string it looks like the user backed out.
+     */
+    const val GOOGLE_CONFIG_ERROR =
+        "Google Sign-In isn't available in this build. Please use email and password, or try again later."
 }
 
 /**

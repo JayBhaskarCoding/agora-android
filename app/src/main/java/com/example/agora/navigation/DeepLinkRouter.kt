@@ -23,6 +23,20 @@ import kotlinx.coroutines.flow.asStateFlow
  */
 object DeepLinkRouter {
 
+    /**
+     * ✦ The ONE place the public web origin is written in Kotlin.
+     *
+     * Kept in sync with:
+     *   - AndroidManifest.xml (`android:host` of the App Links filter)
+     *   - Supabase dashboard → Authentication → URL Configuration (site_url +
+     *     redirect allow-list, written by backend/setup_agora_config.ps1)
+     *   - https://agora.in.net/.well-known/assetlinks.json
+     *
+     * If this changes, old shared links die — keep the previous host in the
+     * Supabase redirect allow-list for at least one release cycle.
+     */
+    const val WEB_HOST = "agora.in.net"
+
     /** A parsed "open post" request. */
     data class PendingPostLink(
         val postId: String,
@@ -53,7 +67,7 @@ object DeepLinkRouter {
     /**
      * Extracts a post deep link from an [Intent], supporting both shapes:
      *  - `agora://post/{postId}[?commentId=…]` (custom scheme, notification taps)
-     *  - `https://auth-agora.info/post/{postId}[?commentId=…]` (app links / share)
+     *  - `https://agora.in.net/post/{postId}[?commentId=…]` (app links / share)
      * plus the legacy extras `post_id` / `comment_id` placed on the intent.
      *
      * Returns null for any other URI (e.g. Supabase auth callbacks).
@@ -73,7 +87,7 @@ object DeepLinkRouter {
             uri.scheme == "agora" && uri.host == "post" ->
                 uri.pathSegments.firstOrNull()
 
-            uri.host == "auth-agora.info" && uri.pathSegments.firstOrNull() == "post" ->
+            uri.host == WEB_HOST && uri.pathSegments.firstOrNull() == "post" ->
                 uri.pathSegments.getOrNull(1)
 
             else -> null

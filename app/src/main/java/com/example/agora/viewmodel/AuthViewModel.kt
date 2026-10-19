@@ -1,6 +1,8 @@
 package com.example.agora.viewmodel
 
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.SystemClock
 import com.example.agora.utils.DateOfBirth
 import com.example.agora.utils.PasswordPolicy
@@ -11,7 +13,11 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialCustomException
 import androidx.credentials.exceptions.GetCredentialException
+import androidx.credentials.exceptions.GetCredentialInterruptedException
+import androidx.credentials.exceptions.GetCredentialProviderConfigurationException
+import androidx.credentials.exceptions.GetCredentialUnsupportedException
 import androidx.credentials.exceptions.NoCredentialException
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -26,6 +32,8 @@ import com.example.agora.navigation.AuthCallbackGate
 import com.example.agora.service.SessionConflictRelay
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.firebase.FirebaseApp
+import java.security.MessageDigest
 import io.github.jan.supabase.auth.OtpType
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.providers.Google
@@ -48,6 +56,7 @@ import io.github.jan.supabase.realtime.postgresChangeFlow
 import io.github.jan.supabase.realtime.realtime
 import io.github.jan.supabase.storage.storage
 import android.net.Uri
+import com.example.agora.utils.ErrorMessages
 import com.example.agora.utils.ImageUtils
 import com.example.agora.utils.handleAppError
 import kotlinx.coroutines.Dispatchers
@@ -94,6 +103,15 @@ sealed interface AuthNavTarget {
 
 /** Polling fallback for the single-device claim check (Realtime is the fast path). */
 private const val DEVICE_CLAIM_POLL_INTERVAL_MS = 5_000L
+
+/**
+ * Every OAuth 2.0 client of type "Web application" ends with this, and no
+ * Android-type client id does. Used to reject a wrong `serverClientId` *before*
+ * the account picker can fail in a way that looks like a user cancellation.
+ */
+private const val GOOGLE_WEB_CLIENT_SUFFIX = ".apps.googleusercontent.com"
+
+private const val GOOGLE_AUTH_TAG = "GoogleAuth"
 
 class AuthViewModel : ViewModel() {
 
@@ -902,14 +920,45 @@ class AuthViewModel : ViewModel() {
     }
 
     // 🌟 GOOGLE SIGN-IN VIA CREDENTIAL MANAGER & SUPABASE AUTH
+    /**
+     * [webClientId] MUST be the OAuth 2.0 **Web application** client id of the
+     * same Google Cloud project as `app/google-services.json`, and that project
+     * MUST also hold an **Android** OAuth client for `net.in.agora` signed with
+     * the certificate of the *installed* APK.
+     *
+     * When any of those three is wrong, Play Services closes the account sheet
+     * and Credential Manager surfaces
+     * `GetCredentialCancellationException: activity is cancelled by the user`
+     * (or `[28444] Developer console is not set up correctly`). Google never
+     * tells the app which one it was — hence [logGoogleSignInDiagnostics], which
+     * prints every input Google needs on one logcat line.
+     */
     fun signInWithGoogle(
         context: Context,
-        webClientId: String = "925021938686-kqbu0iv5q4gkkoq1sqbnmrtk1uj83itk.apps.googleusercontent.com",
+        webClientId: String = BuildConfig.GOOGLE_WEB_CLIENT_ID,
         onSuccess: () -> Unit = {}
     ) {
         viewModelScope.launch {
             try {
                 clearError()
+
+                /* ✦ FAIL FAST, FAIL HONESTLY.
+                 * An Android-type client id (or a blank one) cannot mint a
+                 * Google ID token. Detecting it here turns a silent
+                 * "user cancelled" into a message that names the real problem. */
+                if (!webClientId.endsWith(GOOGLE_WEB_CLIENT_SUFFIX)) {
+                    _errorMessage.value = ErrorMessages.GOOGLE_CONFIG_ERROR
+                    Log.e(
+                        GOOGLE_AUTH_TAG,
+                        "GOOGLE_WEB_CLIENT_ID is not a Web OAuth client id: '$webClientId'. " +
+                            "It must end with $GOOGLE_WEB_CLIENT_SUFFIX — set " +
+                            "GOOGLE_WEB_CLIENT_ID in local.properties."
+                    )
+                    return@launch
+                }
+
+                logGoogleSignInDiagnostics(context, webClientId)
+
                 val credentialManager = CredentialManager.create(context)
 
                 val googleIdOption = GetGoogleIdOption.Builder()
@@ -932,16 +981,28 @@ class AuthViewModel : ViewModel() {
                     val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
                     val token = googleIdTokenCredential.idToken
 
-                    // 🌟 CRITICAL: Authenticate with Supabase Auth using Google ID Token via IDToken provider
-                    claimDeviceOnNextSession = true
-                    hasCompletedColdStartCheck = true
-                    sessionCreatedInThisRun = true
+                    /* 🌟 CRITICAL: authenticate with Supabase Auth using the
+                     *   Google ID token via the IDToken provider.
+                     *
+                     *   `provider = Google` is what makes GoTrue validate the
+                     *   JWT against Google's issuer/audience; no OAuth redirect
+                     *   and no scopes are involved because the token was minted
+                     *   natively by Play Services.
+                     *
+                     *   ✦ The session flags are set only AFTER the exchange
+                     *   succeeds. They used to be set before it, so a failed
+                     *   exchange still marked this run as "session created
+                     *   here", which defeats the abandoned-account cleanup. */
                     withContext(Dispatchers.IO) {
                         supabaseClient.auth.signInWith(IDToken) {
                             idToken = token
                             provider = Google
                         }
                     }
+
+                    claimDeviceOnNextSession = true
+                    hasCompletedColdStartCheck = true
+                    sessionCreatedInThisRun = true
 
                     val currentUser = supabaseClient.auth.currentUserOrNull()
                     val userId = currentUser?.id
@@ -1023,20 +1084,128 @@ class AuthViewModel : ViewModel() {
                     _errorMessage.value = "Unexpected credential type received"
                 }
             } catch (e: GetCredentialException) {
-                if (e is NoCredentialException) {
-                    _errorMessage.value = "No Google accounts available on device"
-                } else if (e is GetCredentialCancellationException) {
-                    // User backed out of the account picker — not an alarming error.
-                    _errorMessage.value = "Google Sign-In was canceled."
-                } else {
-                    _errorMessage.value = handleAppError(e)
+                /* ✦ Credential Manager collapses several VERY different failures
+                 *   into the same exception family. `GetCredentialCancellationException`
+                 *   is raised both when the user really backs out AND when Google
+                 *   silently rejects the app (`[16] Account reauth failed`,
+                 *   `[28444] Developer console is not set up correctly`,
+                 *   `not registered to use OAuth`). Reporting all of them as
+                 *   "canceled" is precisely how this class of bug survives
+                 *   triage — so classify on the payload, not the exception type. */
+                val detail = credentialFailureDetail(e)
+                when {
+                    e is NoCredentialException ->
+                        _errorMessage.value =
+                            "No Google account is available on this device. Add one in Settings and try again."
+
+                    isGoogleOAuthConfigFailure(detail) ->
+                        _errorMessage.value = ErrorMessages.GOOGLE_CONFIG_ERROR
+
+                    e is GetCredentialCancellationException ->
+                        // Genuine user cancel: the picker was dismissed.
+                        _errorMessage.value = "Google Sign-In was canceled."
+
+                    e is GetCredentialProviderConfigurationException ||
+                        e is GetCredentialUnsupportedException ->
+                        _errorMessage.value = ErrorMessages.GOOGLE_CONFIG_ERROR
+
+                    e is GetCredentialInterruptedException ->
+                        _errorMessage.value = "Google Sign-In was interrupted. Please try again."
+
+                    e is GetCredentialCustomException ->
+                        _errorMessage.value = ErrorMessages.GOOGLE_CONFIG_ERROR
+
+                    else -> _errorMessage.value = handleAppError(e)
                 }
-                Log.e("GoogleAuth", "CredentialManager error: ${e.localizedMessage}", e)
+                Log.e(GOOGLE_AUTH_TAG, "CredentialManager failure [$detail]", e)
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 _errorMessage.value = handleAppError(e)
-                Log.e("GoogleAuth", "Google sign-in error: ${e.localizedMessage}", e)
+                Log.e(GOOGLE_AUTH_TAG, "Google sign-in error: ${e.localizedMessage}", e)
             }
+        }
+    }
+
+    /**
+     * Flattens everything Credential Manager knows about a failure into one
+     * string: exception class + `type` + `errorMessage`. `errorMessage` is the
+     * only place the numeric Google status (`[28444]`, `[16]`, `10:`) survives.
+     */
+    private fun credentialFailureDetail(e: GetCredentialException): String = buildString {
+        append(e.javaClass.simpleName)
+        append(" type=").append(e.type)
+        // GetCredentialException's constructor forwards errorMessage to
+        // Exception(message), so `message` already carries the Google status
+        // ([28444], [16], …) — no reflection or version-specific accessor needed.
+        e.message?.takeIf { it.isNotBlank() }?.let { append(" message=").append(it) }
+    }
+
+    /**
+     * True when a credential failure is really a Google Cloud / OAuth-client
+     * misconfiguration rather than a user action.
+     *
+     * These arrive in three disguises:
+     *  - `[28444] Developer console is not set up correctly` (DEVELOPER_ERROR 10)
+     *  - `[16] Account reauth failed` — what Credential Manager says when the
+     *    signing certificate matches **no registered Android OAuth client**
+     *  - `not registered to use OAuth2.0 … confirm the package name and SHA-1`
+     */
+    private fun isGoogleOAuthConfigFailure(detail: String): Boolean {
+        val text = detail.lowercase()
+        return text.contains("28444") ||
+            text.contains("developer console is not set up") ||
+            text.contains("account reauth failed") ||
+            text.contains("developer_error") ||
+            text.contains("not registered to use oauth")
+    }
+
+    /**
+     * One logcat line containing every input Google validates.
+     *
+     * Google matches the calling app on **package name + signing-certificate
+     * SHA-1** against an Android OAuth client *and* requires the
+     * `serverClientId` to be a Web client of the same project. Printing all of
+     * them — plus the project number embedded in the client id — turns a
+     * silent cancellation into a one-look diagnosis:
+     *
+     *     adb logcat -s GoogleAuth
+     */
+    @Suppress("DEPRECATION")
+    private fun logGoogleSignInDiagnostics(context: Context, webClientId: String) {
+        val sha1 = runCatching {
+            val pm = context.packageManager
+            val pkg = context.packageName
+            val certs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                pm.getPackageInfo(pkg, PackageManager.GET_SIGNING_CERTIFICATES)
+                    .signingInfo?.apkContentsSigners
+            } else {
+                pm.getPackageInfo(pkg, PackageManager.GET_SIGNATURES).signatures
+            }
+            certs?.joinToString(",") { sig ->
+                MessageDigest.getInstance("SHA-1")
+                    .digest(sig.toByteArray())
+                    .joinToString(":") { (it.toInt() and 0xFF).toString(16).padStart(2, '0').uppercase() }
+            }
+        }.getOrNull().orEmpty()
+
+        val firebaseProject = runCatching { FirebaseApp.getInstance().options.gcmSenderId }.getOrNull()
+        val clientProject = webClientId.substringBefore('-')
+
+        Log.i(
+            GOOGLE_AUTH_TAG,
+            "preflight package=${context.packageName} sha1=${sha1.ifBlank { "unavailable" }} " +
+                "serverClientId=$webClientId (project $clientProject) " +
+                "firebaseProject=${firebaseProject ?: "unavailable"}"
+        )
+
+        if (firebaseProject != null && clientProject != firebaseProject) {
+            Log.e(
+                GOOGLE_AUTH_TAG,
+                "MISCONFIGURATION: GOOGLE_WEB_CLIENT_ID belongs to Google Cloud project " +
+                    "$clientProject but this build's google-services.json is project " +
+                    "$firebaseProject. The Web OAuth client and the Android OAuth client must " +
+                    "live in the SAME project as the app."
+            )
         }
     }
 

@@ -200,10 +200,11 @@ fun LoginScreen(
                         OutlinedButton(
                             onClick = {
                                 coroutineScope.launch {
-                                    authViewModel.signInWithGoogle(
-                                        context = context,
-                                        webClientId = "925021938686-kqbu0iv5q4gkkoq1sqbnmrtk1uj83itk.apps.googleusercontent.com"
-                                    )
+                                    // The Web OAuth client id comes from
+                                    // BuildConfig.GOOGLE_WEB_CLIENT_ID — never a
+                                    // literal here, so debug/release/staging can
+                                    // never disagree with the ViewModel.
+                                    authViewModel.signInWithGoogle(context = context)
                                 }
                             },
                             modifier = Modifier

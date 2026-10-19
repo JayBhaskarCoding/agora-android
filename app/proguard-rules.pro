@@ -116,6 +116,19 @@
 -keep interface androidx.credentials.** { *; }
 -keep class com.google.android.libraries.identity.googleid.** { *; }
 
+# The Play-Services-backed CredentialProvider implementation. It is resolved by
+# the credentials library at runtime; without this, release builds can fail with
+# "getCredentialAsync: no provider dependencies found" while debug works.
+-keep class com.google.android.gms.auth.api.identity.** { *; }
+-keep class com.google.android.gms.auth.api.credentials.** { *; }
+
+# GoogleIdTokenCredential is rebuilt from a Bundle, so its CREATOR and the
+# KEY_* constant fields must survive verbatim.
+-keepclassmembers class com.google.android.libraries.identity.googleid.GoogleIdTokenCredential {
+    public static final ** CREATOR;
+    public static final java.lang.String KEY_*;
+}
+
 # ---------------------------------------------------------------------
 # 4. Firebase (Cloud Messaging)
 # ---------------------------------------------------------------------

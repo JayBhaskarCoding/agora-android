@@ -48,7 +48,7 @@ import kotlinx.coroutines.delay
 
 /**
  * Post details screen, opened from the feed or from a notification deep link
- * (`agora://post/{postId}` / `https://auth-agora.info/post/{postId}`).
+ * (`agora://post/{postId}` / `https://agora.in.net/post/{postId}`).
  *
  * All data comes from the destination-scoped [PostDetailViewModel] (nav args are
  * read from its SavedStateHandle), so opening a post from a notification never

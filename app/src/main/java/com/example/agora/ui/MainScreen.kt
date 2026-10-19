@@ -496,10 +496,10 @@ fun MainScreen(
                         ),
                         deepLinks = listOf(
                             navDeepLink {
-                                uriPattern = "https://auth-agora.info/post/{postId}?commentId={commentId}"
+                                uriPattern = "https://${DeepLinkRouter.WEB_HOST}/post/{postId}?commentId={commentId}"
                             },
                             navDeepLink {
-                                uriPattern = "https://auth-agora.info/post/{postId}"
+                                uriPattern = "https://${DeepLinkRouter.WEB_HOST}/post/{postId}"
                             },
                             navDeepLink {
                                 uriPattern = "agora://post/{postId}?commentId={commentId}"

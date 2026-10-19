@@ -9,8 +9,10 @@
         - applicationId is net.in.agora (see app/build.gradle.kts); every
           component below is declared with a RELATIVE class name so it always
           resolves against the Kotlin namespace, independent of the app id.
-        - Any future authority (FileProvider, deep-link host, permission) must be
-          written as "${applicationId}..." so it follows the id automatically.
+        - Any future authority (FileProvider, permission) must be written as
+          "${applicationId}..." so it follows the id automatically.
+        - Public web origin is agora.in.net (App Links + Supabase redirects).
+          It is intentionally independent of the applicationId.
         - exported: MainActivity is the only launcher/deep-link entry point and is
           exported on purpose; the FCM service is exported="false" because only
           Google Play Services may bind to it.
@@ -41,23 +43,62 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Deep Link Filter for Supabase Auth / Password Reset Callbacks -->
+            <!-- ═══════════════════════════════════════════════════════════
+                 CUSTOM-SCHEME FILTER — Supabase Auth callbacks (email OTP,
+                 magic link, password recovery) and in-app notifications.
+
+                 TWO schemes are accepted, for one reason: `agora://` is what
+                 the app already emits everywhere (FCM payloads, notification
+                 intents, NavHost deep links, every link ever sent to a user),
+                 while `net.in.agora://` is the applicationId-derived form some
+                 Supabase templates use. Declaring both means neither an old
+                 notification nor a new browser redirect dead-ends.
+
+                 Whatever scheme is used MUST appear in the Supabase dashboard →
+                 Authentication → URL Configuration → Redirect URLs;
+                 backend/setup_agora_config.ps1 writes both.
+                 ═══════════════════════════════════════════════════════════ -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="agora" />
                 <data android:scheme="net.in.agora" />
             </intent-filter>
 
-            <!-- App Links Filter for Post Deep Links (auth-agora.info) -->
+            <!-- ═══════════════════════════════════════════════════════════
+                 HTTPS APP LINKS — agora.in.net
+
+                 One filter, one verified host, two path prefixes:
+                   /post/...          shared post links + notification taps
+                   /auth-callback...  browser → app return path for
+                   /login-callback... Supabase email / OAuth redirects when
+                                      `redirect_to` is the production origin
+                                      instead of the custom scheme.
+
+                 ⚠️ autoVerify requires
+                   https://agora.in.net/.well-known/assetlinks.json
+                 to list `net.in.agora` (the applicationId, NOT the Kotlin
+                 namespace) with the SHA-256 of the certificate that signed the
+                 INSTALLED apk (Play App Signing key for store builds).
+                 Without it Android opens the browser instead of the app.
+                 ═══════════════════════════════════════════════════════════ -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
                     android:scheme="https"
-                    android:host="auth-agora.info"
+                    android:host="agora.in.net"
                     android:pathPrefix="/post/" />
+                <data
+                    android:scheme="https"
+                    android:host="agora.in.net"
+                    android:pathPrefix="/auth-callback" />
+                <data
+                    android:scheme="https"
+                    android:host="agora.in.net"
+                    android:pathPrefix="/login-callback" />
             </intent-filter>
         </activity>
 
