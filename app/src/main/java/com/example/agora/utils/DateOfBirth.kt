@@ -131,13 +131,31 @@ object DateOfBirth {
     /**
      * Age from a stored DOB string, or `null` when the field is blank or the
      * value is malformed/out of range.
+     *
+     * 🌟 EMPTY MEANS UNKNOWN: a blank string, whitespace, or an unparsable value
+     * returns `null`. That is what keeps the under-18 notice hidden for accounts
+     * that never provided a Date of Birth — a blank value must never be treated
+     * as "age 0".
      */
     fun validAgeOrNull(value: String?, today: LocalDate = LocalDate.now()): Int? {
+        if (value.isNullOrBlank()) return null
+        val date = parse(value) ?: return null
         return when (validate(value, today)) {
-            DobValidation.Empty, DobValidation.Valid ->
-                parse(value)?.let { ageInYears(it, today) }
+            DobValidation.Valid -> ageInYears(date, today)
             else -> null
         }
+    }
+
+    /**
+     * True only when a VALID, non-empty DOB yields an age of 0..17.
+     *
+     * Single predicate shared by every screen so the banner cannot appear for a
+     * `null`/blank/unparsable date, an out-of-range (future / >120y) date, or an
+     * adult.
+     */
+    fun shouldShowMinorNotice(value: String?, today: LocalDate = LocalDate.now()): Boolean {
+        val age = validAgeOrNull(value, today) ?: return false
+        return age in 0 until ADULT_AGE_YEARS
     }
 
     /** Converts a [LocalDate] to the UTC start-of-day millis Material 3 expects. */

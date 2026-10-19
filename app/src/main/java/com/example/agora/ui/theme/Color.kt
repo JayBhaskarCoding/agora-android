@@ -45,9 +45,12 @@ val NoirInsetLight = Color(0xFFF1F2F4)
 val NoirContainerLowLight = Color(0xFFFFFFFF)   // Pure white elevated cards
 val NoirContainerHighLight = Color(0xFFF4F4F7)
 val NoirContainerHighestLight = Color(0xFFECECF0)
-val NoirTextSecondaryLight = Color(0xFF5B5F66)
-val NoirHairlineLight = Color(0xFFE6E6EB)
-val NoirOutlineLight = Color(0xFFD9DAE0)
+// 🌟 Light-mode readability: secondary copy sits on pearl/white surfaces, so it
+//    is deliberately darker than the old #5B5F66 and the outline is a 3:1
+//    boundary rather than a barely-visible hairline.
+val NoirTextSecondaryLight = Color(0xFF4B505A)
+val NoirHairlineLight = Color(0xFFE0E2E8)
+val NoirOutlineLight = Color(0xFFAEB3BF)
 val NoirSecondaryLight = Color(0xFF7C3AED)
 val NoirSecondaryContainerLight = Color(0xFFF3EEFF)
 val NoirOnSecondaryContainerLight = Color(0xFF5B21B6)

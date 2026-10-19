@@ -325,6 +325,9 @@ fun MainScreen(
                         tint = colors.danger,
                         onClick = {
                             coroutineScope.launch { drawerState.close() }
+                            // Log out: drop any explicit theme override so the
+                            // auth screens follow the device theme again.
+                            themeViewModel.resetToSystem()
                             authViewModel.signOut()
                         }
                     )

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import com.example.agora.ui.theme.LocalDarkTheme
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -26,7 +27,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun VibrantGlassBackground(
     modifier: Modifier = Modifier,
-    isDarkTheme: Boolean = true,
+    isDarkTheme: Boolean = LocalDarkTheme.current,
     content: @Composable BoxScope.() -> Unit
 ) {
     Box(
@@ -109,8 +110,8 @@ fun VibrantGlassBackground(
                     .background(
                         brush = Brush.radialGradient(
                             colorStops = arrayOf(
-                                0f to Color(0xFFA5B4FC).copy(alpha = 0.34f),
-                                0.6f to Color(0xFFA5B4FC).copy(alpha = 0.12f),
+                                0f to Color(0xFFA5B4FC).copy(alpha = 0.18f),
+                                0.6f to Color(0xFFA5B4FC).copy(alpha = 0.06f),
                                 1f to Color.Transparent
                             )
                         )
@@ -125,8 +126,8 @@ fun VibrantGlassBackground(
                     .background(
                         brush = Brush.radialGradient(
                             colorStops = arrayOf(
-                                0f to Color(0xFF7DD3FC).copy(alpha = 0.26f),
-                                0.6f to Color(0xFF7DD3FC).copy(alpha = 0.10f),
+                                0f to Color(0xFF7DD3FC).copy(alpha = 0.14f),
+                                0.6f to Color(0xFF7DD3FC).copy(alpha = 0.05f),
                                 1f to Color.Transparent
                             )
                         )

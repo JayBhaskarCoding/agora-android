@@ -1,44 +1,41 @@
 package com.example.agora.viewmodel
 
 import android.app.Application
-import android.content.Context
 import androidx.lifecycle.AndroidViewModel
-import kotlinx.coroutines.flow.MutableStateFlow
+import com.example.agora.data.ThemePreference
+import com.example.agora.data.ThemePreferenceStore
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 
-enum class ThemePreference { LIGHT, DARK, SYSTEM }
-
+/**
+ * Thin, observable facade over [ThemePreferenceStore].
+ *
+ * The ViewModel intentionally holds NO theme state of its own and no derived
+ * "isDark" boolean: the effective dark flag depends on the device configuration
+ * and is resolved in Compose with `isSystemInDarkTheme()`.
+ */
 class ThemeViewModel(application: Application) : AndroidViewModel(application) {
-    private val prefs = application.getSharedPreferences("theme_prefs", Context.MODE_PRIVATE)
 
-    private val savedPrefName = prefs.getString("theme_preference", ThemePreference.SYSTEM.name)
-    private val initialPref = try {
-        ThemePreference.valueOf(savedPrefName ?: ThemePreference.SYSTEM.name)
-    } catch (_: Exception) {
-        ThemePreference.SYSTEM
+    init {
+        ThemePreferenceStore.init(application)
     }
 
-    private val _themePreference = MutableStateFlow(initialPref)
-    val themePreference: StateFlow<ThemePreference> = _themePreference.asStateFlow()
-
-    private val _isDarkMode = MutableStateFlow(prefs.getBoolean("is_dark_mode", true))
-    val isDarkMode: StateFlow<Boolean> = _isDarkMode.asStateFlow()
+    /** The user's explicit choice — [ThemePreference.SYSTEM] means "no override". */
+    val themePreference: StateFlow<ThemePreference> = ThemePreferenceStore.preference
 
     fun setThemePreference(preference: ThemePreference) {
-        _themePreference.value = preference
-        prefs.edit().putString("theme_preference", preference.name).apply()
-        val isDark = when (preference) {
-            ThemePreference.DARK -> true
-            ThemePreference.LIGHT -> false
-            ThemePreference.SYSTEM -> true // Defaults to Dark Mode for system preference baseline
-        }
-        _isDarkMode.value = isDark
-        prefs.edit().putBoolean("is_dark_mode", isDark).apply()
+        ThemePreferenceStore.set(getApplication<Application>(), preference)
     }
 
+    /**
+     * Account Details switch: writing here records an EXPLICIT override
+     * (`LIGHT` / `DARK`), never `SYSTEM`.
+     */
     fun setDarkMode(isDark: Boolean) {
-        val pref = if (isDark) ThemePreference.DARK else ThemePreference.LIGHT
-        setThemePreference(pref)
+        setThemePreference(if (isDark) ThemePreference.DARK else ThemePreference.LIGHT)
+    }
+
+    /** Logout: forget the override so auth screens follow the device again. */
+    fun resetToSystem() {
+        ThemePreferenceStore.resetToSystem(getApplication<Application>())
     }
 }

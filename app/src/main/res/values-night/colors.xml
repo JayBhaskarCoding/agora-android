@@ -3,4 +3,7 @@
     <!-- 🌟 Dark Mode Brand & Foreground Colors -->
     <color name="agora_brand">#6366F1</color>
     <color name="agora_foreground">#F3F4F6</color>
+
+    <!-- 🌟 Window / splash canvas (must match NoirCanvasDark in Color.kt) -->
+    <color name="agora_window_background">#0B0C13</color>
 </resources>

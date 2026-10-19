@@ -33,8 +33,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.agora.viewmodel.AuthViewModel
 import com.example.agora.ui.components.AgoraPrimaryButton
+import com.example.agora.ui.theme.LocalDarkTheme
+import com.example.agora.ui.theme.NoirInsetLight
+import com.example.agora.viewmodel.AuthViewModel
+import androidx.compose.ui.graphics.Color
 
 /**
  * ✦ THE SHARED OTP CARD — one implementation for every 6-digit context:
@@ -63,6 +66,15 @@ fun OtpVerificationScreen(
     /** Registration supplies the server-accepted request deadline from its ViewModel. */
     resendAvailableAt: Long? = null
 ) {
+    val isDark = LocalDarkTheme.current
+    // 🌟 Light Mode: a #E0E2E8 hairline on a white card is effectively invisible.
+    val boxBorder = if (isDark) MaterialTheme.colorScheme.outlineVariant else MaterialTheme.colorScheme.outline
+    val boxFill = if (isDark) {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+    } else {
+        NoirInsetLight
+    }
+
     var otpCode by remember(email) { mutableStateOf("") }
     // Fallback for other users of the shared card (e.g. deletion verification).
     // Save the deadline, not a decrementing integer, so rotation/background time
@@ -89,7 +101,7 @@ fun OtpVerificationScreen(
         )
         Text(
             text = subtitle,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = if (isDark) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF474C57),
             fontSize = 14.sp,
             modifier = Modifier
                 .align(Alignment.Start)
@@ -124,11 +136,11 @@ fun OtpVerificationScreen(
                                 .size(46.dp)
                                 .border(
                                     width = if (isFocused) 2.dp else 1.dp,
-                                    color = if (isFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                    color = if (isFocused) MaterialTheme.colorScheme.primary else boxBorder,
                                     shape = RoundedCornerShape(16.dp)
                                 )
                                 .background(
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                                    color = boxFill,
                                     shape = RoundedCornerShape(16.dp)
                                 ),
                             contentAlignment = Alignment.Center

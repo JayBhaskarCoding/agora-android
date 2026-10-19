@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -54,8 +55,8 @@ object GlassTokens {
 
     val LightBorder: Brush = Brush.linearGradient(
         colors = listOf(
-            Color(0xFFE3E4E9),
-            Color(0xFFEDEEF2)
+            Color(0xFFC3C7D1),
+            Color(0xFFD8DBE3)
         )
     )
 
@@ -72,6 +73,10 @@ object GlassTokens {
  * Applies the Noir card finish: an opaque surface with a faint top sheen and a
  * hairline border, clipped to [shape]. Drop-in replacement for the former
  * frosted-glass treatment — every screen using it now matches the feed cards.
+ *
+ * 🌟 LIGHT MODE: a white card on a pearl canvas disappears without help, so the
+ * light variant adds a soft ambient drop shadow plus a stronger hairline. The
+ * dark variant keeps the flat, glow-free Noir treatment.
  */
 fun Modifier.glassmorphic(
     shape: Shape = RoundedCornerShape(GlassTokens.RadiusLarge),
@@ -79,6 +84,16 @@ fun Modifier.glassmorphic(
     borderWidth: Dp = 1.dp
 ): Modifier {
     var mod = this
+    if (!isDark) {
+        mod = mod.shadow(
+            elevation = 12.dp,
+            shape = shape,
+            clip = false,
+            ambientColor = Color(0x1A1B2233),
+            spotColor = Color(0x241B2233)
+        )
+    }
+    mod = mod
         .clip(shape)
         .background(
             color = if (isDark) GlassTokens.DarkSurface else GlassTokens.LightSurface,

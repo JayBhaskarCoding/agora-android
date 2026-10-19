@@ -11,20 +11,20 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.agora.R
+import com.example.agora.ui.components.AuthWordmarkSizes
 import com.example.agora.ui.components.VibrantGlassBackground
+import com.example.agora.ui.components.agoraAuthFieldColors
+import com.example.agora.ui.components.authSubtitleColor
+import com.example.agora.ui.components.rememberAgoraWordmark
 import com.example.agora.ui.theme.LocalDarkTheme
 import com.example.agora.ui.theme.glassmorphic
 import com.example.agora.viewmodel.AuthViewModel
@@ -81,32 +81,10 @@ fun LoginScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    // ✦ Gradient wordmark — same signature as the feed top bar.
+                    // ✦ Wordmark — crisp ink in Light Mode, glow-free in Dark.
                     Text(
-                        text = buildAnnotatedString {
-                            withStyle(
-                                SpanStyle(
-                                    brush = Brush.linearGradient(
-                                        colors = listOf(
-                                            MaterialTheme.colorScheme.onBackground,
-                                            MaterialTheme.colorScheme.onBackground.copy(alpha = 0.66f)
-                                        )
-                                    ),
-                                    fontWeight = FontWeight.Black
-                                )
-                            ) {
-                                append("agora")
-                            }
-                            withStyle(
-                                SpanStyle(
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.Black
-                                )
-                            ) {
-                                append(".")
-                            }
-                        },
-                        fontSize = 44.sp,
+                        text = rememberAgoraWordmark("agora"),
+                        fontSize = AuthWordmarkSizes.Login,
                         letterSpacing = (-1.2).sp,
                         modifier = Modifier.padding(bottom = 6.dp)
                     )
@@ -114,7 +92,8 @@ fun LoginScreen(
                     Text(
                         text = "Enter the social arena.",
                         fontSize = 15.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Medium,
+                        color = authSubtitleColor(isDark),
                         modifier = Modifier.padding(bottom = 28.dp)
                     )
 
@@ -150,12 +129,7 @@ fun LoginScreen(
                                 .fillMaxWidth()
                                 .padding(bottom = 14.dp),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
-                                focusedContainerColor = Color.Transparent,
-                                unfocusedContainerColor = Color.Transparent
-                            )
+                            colors = agoraAuthFieldColors(isDark)
                         )
 
                         OutlinedTextField(
@@ -169,12 +143,7 @@ fun LoginScreen(
                                 .padding(bottom = 8.dp),
                             visualTransformation = PasswordVisualTransformation(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
-                                focusedContainerColor = Color.Transparent,
-                                unfocusedContainerColor = Color.Transparent
-                            )
+                            colors = agoraAuthFieldColors(isDark)
                         )
 
                         if (password.isNotEmpty() && password.length < 8) {
@@ -229,17 +198,17 @@ fun LoginScreen(
                         ) {
                             HorizontalDivider(
                                 modifier = Modifier.weight(1f),
-                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
+                                color = MaterialTheme.colorScheme.outline.copy(alpha = if (isDark) 0.25f else 0.55f)
                             )
                             Text(
                                 text = "or continue with",
                                 fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = authSubtitleColor(isDark),
                                 modifier = Modifier.padding(horizontal = 12.dp)
                             )
                             HorizontalDivider(
                                 modifier = Modifier.weight(1f),
-                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
+                                color = MaterialTheme.colorScheme.outline.copy(alpha = if (isDark) 0.25f else 0.55f)
                             )
                         }
 
@@ -257,7 +226,13 @@ fun LoginScreen(
                                 .fillMaxWidth()
                                 .height(54.dp),
                             shape = CircleShape,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                            border = BorderStroke(
+                                1.dp,
+                                if (isDark) MaterialTheme.colorScheme.outlineVariant else MaterialTheme.colorScheme.outline
+                            ),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onBackground
+                            )
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,

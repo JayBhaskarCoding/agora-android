@@ -1,11 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Base App Theme -->
-    <style name="Theme.Agora" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- Base App Theme.
+         🌟 windowBackground is the Compose canvas colour so the window behind the
+         first frame never flashes a contrasting colour while Compose initialises.
+         The values-night variant supplies #0B0C13 for dark mode. Status/navigation
+         bar icon appearance is driven at runtime by MainActivity.applyWindowTheme. -->
+    <style name="Theme.Agora" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/agora_window_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
 
-    <!-- 🌟 Native Splash Screen Theme (Light Mode: Pure White #FFFFFF) -->
+    <!-- 🌟 Native Splash Screen Theme (Light Mode: pearl canvas #F8F9FA) -->
     <style name="Theme.App.Starting" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">#FFFFFF</item>
+        <item name="windowSplashScreenBackground">@color/agora_window_background</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/agora_splash</item>
         <item name="windowSplashScreenAnimationDuration">800</item>
         <item name="postSplashScreenTheme">@style/Theme.Agora</item>

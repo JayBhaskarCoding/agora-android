@@ -82,6 +82,45 @@ class DateOfBirthTest {
     }
 
     @Test
+    fun minorNoticeIsHiddenForBlankOrUnparsableDob() {
+        // 🌟 The under-18 banner must never appear without a real date.
+        assertFalse(DateOfBirth.shouldShowMinorNotice(null, today))
+        assertFalse(DateOfBirth.shouldShowMinorNotice("", today))
+        assertFalse(DateOfBirth.shouldShowMinorNotice("   ", today))
+        assertFalse(DateOfBirth.shouldShowMinorNotice("not-a-date", today))
+        assertFalse(DateOfBirth.shouldShowMinorNotice("2000-02-30", today))
+        assertFalse(DateOfBirth.shouldShowMinorNotice("19/10/2015", today))
+    }
+
+    @Test
+    fun minorNoticeIsHiddenForOutOfRangeAndAdultDates() {
+        // Future and >120y values are invalid, so they are not "minor" either.
+        assertFalse(DateOfBirth.shouldShowMinorNotice(DateOfBirth.format(today.plusDays(1)), today))
+        assertFalse(
+            DateOfBirth.shouldShowMinorNotice(
+                DateOfBirth.format(today.minusYears(121)),
+                today
+            )
+        )
+        assertFalse(DateOfBirth.shouldShowMinorNotice(DateOfBirth.format(today.minusYears(18)), today))
+        assertFalse(DateOfBirth.shouldShowMinorNotice(DateOfBirth.format(today.minusYears(40)), today))
+    }
+
+    @Test
+    fun minorNoticeIsShownForAgesZeroThroughSeventeen() {
+        assertTrue(DateOfBirth.shouldShowMinorNotice(DateOfBirth.format(today), today))
+        assertTrue(DateOfBirth.shouldShowMinorNotice(DateOfBirth.format(today.minusYears(10)), today))
+        assertTrue(DateOfBirth.shouldShowMinorNotice(DateOfBirth.format(today.minusYears(17)), today))
+        // One day short of the 18th birthday is still a minor.
+        assertTrue(
+            DateOfBirth.shouldShowMinorNotice(
+                DateOfBirth.format(today.minusYears(18).plusDays(1)),
+                today
+            )
+        )
+    }
+
+    @Test
     fun validAgeIsNullForInvalidOrFutureValues() {
         assertNull(DateOfBirth.validAgeOrNull("", today))
         assertNull(DateOfBirth.validAgeOrNull("not-a-date", today))

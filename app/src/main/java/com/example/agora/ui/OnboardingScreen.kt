@@ -25,8 +25,9 @@ fun OnboardingScreen(viewModel: AuthViewModel, onFinish: () -> Unit) {
     //    [today − 120 years, today], with an informational under-18 notice.
     val today = LocalDate.now()
     val dobError = DateOfBirth.validationError(dob, today)
-    val ageInYears = DateOfBirth.validAgeOrNull(dob, today)
-    val showMinorBanner = ageInYears != null && ageInYears in 0 until DateOfBirth.ADULT_AGE_YEARS
+    // 🌟 Only a VALID, non-empty DOB can raise the under-18 notice: blank,
+    //    unparsable, future or >120-year values all resolve to `false`.
+    val showMinorBanner = DateOfBirth.shouldShowMinorNotice(dob, today)
 
     Column(
         modifier = Modifier

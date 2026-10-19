@@ -11,4 +11,7 @@
     <!-- 🌟 Light Mode Brand & Foreground Colors -->
     <color name="agora_brand">#4F46E5</color>
     <color name="agora_foreground">#111827</color>
+
+    <!-- 🌟 Window / splash canvas (must match NoirCanvasLight in Color.kt) -->
+    <color name="agora_window_background">#F8F9FA</color>
 </resources>
