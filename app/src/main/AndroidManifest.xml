@@ -46,7 +46,7 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="agora" />
+                <data android:scheme="net.in.agora" android:host="login-callback" />
             </intent-filter>
 
             <!-- App Links Filter for Post Deep Links (auth-agora.info) -->
