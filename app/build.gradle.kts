@@ -29,17 +29,34 @@ fun String.asBuildConfigString(): String =
     "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
 android {
+    // ✦ NAMESPACE stays com.example.agora on purpose: it is the Kotlin/Java
+    //   package and the R class package, so the production applicationId can
+    //   change without moving a single source file. R8 keep rules must
+    //   therefore reference the NAMESPACE (com.example.agora.*), never the
+    //   applicationId.
     namespace = "com.example.agora"
+
+    // Compile against the newest stable tooling; what Play validates is
+    // targetSdk, which is pinned to stable API 36 below.
     compileSdk {
         version = release(37)
     }
 
     defaultConfig {
-        applicationId = "com.example.agora"
+        // ✦ Play Store identity. Changing this from com.example.agora makes
+        //   net.in.agora a BRAND-NEW app for Play/Android: existing installs of
+        //   the old id cannot be upgraded in place.
+        applicationId = "net.in.agora"
         minSdk = 26
-        targetSdk = 37
+
+        // ✅ Google Play 2026 policy: new apps must target a STABLE API level.
+        //    API 36 = Android 16. Targeting a preview SDK (e.g. 37) is rejected
+        //    at upload time, so this must stay on the stable level even though
+        //    compileSdk can be newer.
+        targetSdk = 36
+
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -59,9 +76,25 @@ android {
 
     buildTypes {
         release {
-            optimization {
-                enable = false
-            }
+            // ✦ Never ship a debuggable artifact.
+            isDebuggable = false
+
+            // ✦ R8: shrink, obfuscate and optimize the release build. The
+            //   keep rules that protect kotlinx.serialization models,
+            //   Supabase/Ktor, Credential Manager, Google ID and Firebase
+            //   live in app/proguard-rules.pro.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+
+        debug {
+            // Explicit (and the ADT default) — guards against a future
+            // refactor accidentally inheriting release configuration.
+            isDebuggable = true
         }
     }
     compileOptions {

@@ -1,19 +1,28 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Sample data extraction rules file; uncomment and customize as necessary.
-   See https://developer.android.com/about/versions/12/backup-restore#xml-changes
-   for details.
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+   Backup / device-transfer policy for Android 12 (API 31) and higher.
+
+   ✦ Anything that is a credential or a device identity is EXCLUDED on purpose:
+     - agora_session.xml       Supabase access + refresh tokens. Never leave the
+                               device in a cloud backup that can be downloaded.
+     - agora_device.xml        Stable per-install UUID backing the single-device
+                               login policy. Restoring it onto a second handset
+                               would let two devices claim the same identity.
+     - agora_verification.xml  Device-local onboarding grace state; meaningless
+                               (and confusing) on a different phone.
+
+   Preferences that are genuinely user settings (theme_prefs.xml) are still
+   backed up, which is what users expect when they restore to a new device.
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <exclude domain="sharedpref" path="agora_session.xml" />
+        <exclude domain="sharedpref" path="agora_device.xml" />
+        <exclude domain="sharedpref" path="agora_verification.xml" />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <exclude domain="sharedpref" path="agora_session.xml" />
+        <exclude domain="sharedpref" path="agora_device.xml" />
+        <exclude domain="sharedpref" path="agora_verification.xml" />
     </device-transfer>
-    -->
 </data-extraction-rules>

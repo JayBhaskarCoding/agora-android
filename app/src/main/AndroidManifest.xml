@@ -4,6 +4,17 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+        ✦ PRODUCTION MANIFEST NOTES
+        - applicationId is net.in.agora (see app/build.gradle.kts); every
+          component below is declared with a RELATIVE class name so it always
+          resolves against the Kotlin namespace, independent of the app id.
+        - Any future authority (FileProvider, deep-link host, permission) must be
+          written as "${applicationId}..." so it follows the id automatically.
+        - exported: MainActivity is the only launcher/deep-link entry point and is
+          exported on purpose; the FCM service is exported="false" because only
+          Google Play Services may bind to it.
+    -->
     <application
         android:name=".AgoraApplication"
         android:allowBackup="true"
@@ -13,14 +24,18 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.App.Starting" >
+        android:theme="@style/Theme.App.Starting"
+        android:enableOnBackInvokedCallback="true"
+        android:usesCleartextTraffic="false">
+
+        <!-- Launcher + deep links. Exported by necessity. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
             android:label="@string/app_name"
             android:theme="@style/Theme.App.Starting"
-            android:windowSoftInputMode="adjustResize" >
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -46,7 +61,9 @@
             </intent-filter>
         </activity>
 
-        <!-- 🌟 Firebase Cloud Messaging Push Notification Service -->
+        <!-- 🌟 Firebase Cloud Messaging Push Notification Service.
+             Not exported: it is bound by Google Play Services only, and the
+             MESSAGING_EVENT intent filter must never be reachable by other apps. -->
         <service
             android:name=".service.PushNotificationService"
             android:exported="false">

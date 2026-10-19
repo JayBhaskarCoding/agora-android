@@ -318,7 +318,7 @@ block-bodied function relied on a trailing expression) is fixed.
 ### Verify manually
 
 1. Play a Catbox video (feed, post detail, fullscreen). It must render instead of
-   going black; `adb shell run-as com.example.agora ls -l cache/media3_video_cache`
+   going black; `adb shell run-as net.in.agora ls -l cache/media3_video_cache`
    must show non-zero files.
 2. On failure: `adb logcat -s ExoPlayerHelper MediaHttp` prints (a) whether an HTTP
    status existed, and (b) the DNS/probe verdict naming the guilty layer.
@@ -424,3 +424,70 @@ instead of flowing into `Period.between`, and every screen gates the banner thro
 predicate — `DateOfBirth.shouldShowMinorNotice(dob)` — which requires a *valid* date
 inside `[today − 120y, today]` and an age of `0..17`. A blank, malformed, future or
 120-year-plus DOB can never render "Minor account notice". See `DateOfBirthTest`.
+
+---
+
+## 9. Production release configuration (applicationId, targeting, R8)
+
+### What was wrong
+
+| Symptom | Root cause |
+|---|---|
+| Play Console rejects the upload / logcat shows `target_sdk_version=37` | The template was generated against API 37, which is not a shippable stable target. Google Play requires a released API level for `targetSdk`. |
+| App installs as `com.example.agora` | The template default `applicationId` shipped unchanged. `com.example.*` is not an owned namespace and cannot be published. |
+| Release build shrank **nothing** | `buildTypes.release` had `optimization { enable = false }` and there was no `proguard-rules.pro` at all, so the release APK was an unoptimized, unshrunk debug-equivalent artifact. |
+
+### Decisions
+
+**`applicationId = "net.in.agora"`, `namespace` stays `com.example.agora`.**
+The namespace is the Kotlin package *and* the `R` class package. Decoupling it from
+the app id means the Play identity changes without moving a single source file, and
+every `R.id.*` / `BuildConfig.*` reference keeps resolving. The price is one rule that
+must never be forgotten: **R8 keep rules match the namespace, not the applicationId.**
+
+> ⚠️ Changing `applicationId` makes `net.in.agora` a *new* app to Play. Installs of
+> `com.example.agora` cannot be upgraded in place; the old listing must be retired or
+> kept as a separate track.
+
+**`targetSdk = 36`, `compileSdk` stays on 37.** Compiling against the newest platform
+is fine (AGP 9.4 supports up to API 37) — what Play validates is `targetSdk`, which is
+pinned to stable Android 16. Bump this deliberately, never by regenerating the template.
+
+**`versionCode = 1` / `versionName = "1.0.0"`.** Semver for a first store release;
+`versionCode` is monotonic forever, so it only ever increases from here.
+
+**R8 on, release non-debuggable.** `isDebuggable = false`, `isMinifyEnabled = true`,
+`isShrinkResources = true`, with `proguard-android-optimize.txt` (the non-optimizing
+`proguard-android.txt` is rejected outright by AGP 9+). AGP 9.3+ also offers the newer
+`optimization { enable = true }` DSL, but the legacy DSL is still fully supported and is
+the documented way to reference a single `proguard-rules.pro`; the 9.3+ `.keep` source
+set is still experimental.
+
+**Keep rules (`app/proguard-rules.pro`).** The release build must not crash by
+reflection, so the file protects: kotlinx.serialization (`$$serializer`, `Companion`,
+`serializer()`, `@SerialName` fields), `com.example.agora.model.**`, supabase-kt, Ktor,
+Credential Manager + Google ID, and Firebase Messaging. Note there are `@Serializable`
+DTOs outside `model/` (`utils/DisifyResponse`, `viewmodel/PostInsertRequest`,
+`PostUpdateRequest`) — the `@Serializable`-conditional rules cover them by annotation,
+not by package.
+
+**Manifest.** `enableOnBackInvokedCallback="true"` (predictive back on 33+),
+`usesCleartextTraffic="false"` (all endpoints are HTTPS; this is a hard floor, not a
+suggestion). `MainActivity` is `exported="true"` because it owns MAIN/LAUNCHER and the
+`agora://` + `https://auth-agora.info/post/` filters; `PushNotificationService` is
+`exported="false"` because only Play Services may bind to it. No provider exists today —
+if a `FileProvider` is ever added, its authority must be `${applicationId}.fileprovider`,
+never a literal.
+
+**Backups.** `allowBackup` stays `true` so theme settings survive a device restore, but
+`data_extraction_rules.xml` / `backup_rules.xml` now exclude `agora_session.xml`
+(Supabase access/refresh tokens), `agora_device.xml` (the single-device UUID) and
+`agora_verification.xml` (device-local grace state). Backing up a refresh token hands it
+to anyone with access to the user's cloud backup, and restoring the device UUID to a
+second handset would let two devices claim the same install identity.
+
+**Open item — Firebase.** `app/google-services.json` now carries *two* client entries so
+the Google Services plugin resolves either id. The `net.in.agora` entry still points at
+the old `mobilesdk_app_id`; register the Android app in the Firebase console and swap in
+the real file before the first production build, otherwise FCM analytics conflate the two
+packages.

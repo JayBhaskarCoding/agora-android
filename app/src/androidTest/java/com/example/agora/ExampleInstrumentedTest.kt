@@ -19,6 +19,8 @@ class ExampleInstrumentedTest {
     fun useAppContext() {
         // Context of the app under test.
         val appContext = InstrumentationRegistry.getInstrumentation().targetContext
-        assertEquals("com.example.agora", appContext.packageName)
+        // The applicationId is net.in.agora while the Kotlin namespace stays
+        // com.example.agora, so this asserts the *installed* package id.
+        assertEquals("net.in.agora", appContext.packageName)
     }
 }
