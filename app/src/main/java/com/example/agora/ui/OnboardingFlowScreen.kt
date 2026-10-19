@@ -1,8 +1,6 @@
 package com.example.agora.ui
 
-import android.app.DatePickerDialog
 import android.net.Uri
-import android.widget.DatePicker
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -40,10 +38,12 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import com.example.agora.utils.DateOfBirth
 import com.example.agora.utils.PasswordPolicy
+import com.example.agora.ui.components.DobSelectableDates
+import com.example.agora.ui.components.MinorAccountWarningBanner
 import com.example.agora.ui.components.PasswordStrengthChecklist
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -52,7 +52,7 @@ import coil.compose.AsyncImage
 import com.example.agora.viewmodel.ThemePreference
 import com.example.agora.viewmodel.ThemeViewModel
 import com.example.agora.ui.components.AgoraPrimaryButton
-import java.util.Calendar
+import java.time.LocalDate
 
 fun generateUniqueHandle(firstName: String, lastName: String): String {
     val first = firstName.trim().lowercase().replace("\\s+".toRegex(), "")
@@ -111,7 +111,23 @@ fun OnboardingFlowScreen(
     var gender by remember { mutableStateOf("") }
     var dob by remember { mutableStateOf("") }
     var expandedGenderDropdown by remember { mutableStateOf(false) }
+    var showDatePicker by remember { mutableStateOf(false) }
     val genderOptions = listOf("Male", "Female", "Non-binary", "Prefer not to say")
+
+    // 🌟 DOB window: [today − 120 years, today]. The picker cannot page into or
+    //    select outside this range, and the same rules gate the form state.
+    val today = LocalDate.now()
+    val oldestAllowedDob = remember(today) { DateOfBirth.oldestAllowedDate(today) }
+    val dobSelectableDates = remember(today) {
+        DobSelectableDates(oldestAllowed = oldestAllowedDob, newestAllowed = today)
+    }
+    val datePickerState = rememberDatePickerState(
+        yearRange = oldestAllowedDob.year..today.year,
+        selectableDates = dobSelectableDates
+    )
+    val dobError = DateOfBirth.validationError(dob, today)
+    val ageInYears = DateOfBirth.validAgeOrNull(dob, today)
+    val showMinorBanner = ageInYears != null && ageInYears in 0 until DateOfBirth.ADULT_AGE_YEARS
 
     // Step 2: Password State
     var password by remember { mutableStateOf("") }
@@ -121,15 +137,43 @@ fun OnboardingFlowScreen(
     // Step 3: Theme State
     val currentThemePref by themeViewModel.themePreference.collectAsState()
 
-    val context = LocalContext.current
-    val calendar = Calendar.getInstance()
-    val datePickerDialog = DatePickerDialog(
-        context,
-        { _: DatePicker, year: Int, month: Int, dayOfMonth: Int ->
-            dob = String.format("%04d-%02d-%02d", year, month + 1, dayOfMonth)
-        },
-        calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH)
-    )
+    // 🌟 Re-opening the picker should land on the already-selected DOB month
+    //    (not "today", which could be decades away for an adult).
+    LaunchedEffect(showDatePicker) {
+        if (showDatePicker) {
+            DateOfBirth.parse(dob)?.let { selected ->
+                val millis = DateOfBirth.toUtcMillis(selected)
+                datePickerState.selectedDateMillis = millis
+                datePickerState.displayedMonthMillis = millis
+            }
+        }
+    }
+
+    if (showDatePicker) {
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { millis ->
+                            dob = DateOfBirth.formatUtcMillis(millis)
+                        }
+                        showDatePicker = false
+                    }
+                ) {
+                    Text("OK")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
+            }
+        ) {
+            DatePicker(
+                state = datePickerState,
+                showModeToggle = false
+            )
+        }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background
@@ -367,30 +411,41 @@ fun OnboardingFlowScreen(
                                 }
                             }
 
-                            Box(
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(bottom = 28.dp)
                             ) {
-                                OutlinedTextField(
-                                    value = dob,
-                                    onValueChange = {},
-                                    readOnly = true,
-                                    label = { Text("Date of Birth (Optional)") },
-                                    shape = RoundedCornerShape(16.dp),
-                                    trailingIcon = { Icon(Icons.Default.DateRange, contentDescription = "Date") },
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                                Box(
-                                    modifier = Modifier
-                                        .matchParentSize()
-                                        .clickable { datePickerDialog.show() }
-                                )
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    OutlinedTextField(
+                                        value = dob,
+                                        onValueChange = {},
+                                        readOnly = true,
+                                        label = { Text("Date of Birth (Optional)") },
+                                        shape = RoundedCornerShape(16.dp),
+                                        isError = dobError != null,
+                                        supportingText = dobError?.let { message ->
+                                            { Text(message, color = MaterialTheme.colorScheme.error) }
+                                        },
+                                        trailingIcon = { Icon(Icons.Default.DateRange, contentDescription = "Date") },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .matchParentSize()
+                                            .clickable { showDatePicker = true }
+                                    )
+                                }
+
+                                MinorAccountWarningBanner(visible = showMinorBanner)
                             }
 
                             AgoraPrimaryButton(
-                                onClick = { currentStep = 2 },
-                                enabled = firstName.isNotBlank() && handle.isNotBlank(),
+                                onClick = {
+                                    if (dobError != null) return@AgoraPrimaryButton
+                                    currentStep = 2
+                                },
+                                enabled = firstName.isNotBlank() && handle.isNotBlank() && dobError == null,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(54.dp)
@@ -439,6 +494,11 @@ fun OnboardingFlowScreen(
                             AgoraPrimaryButton(
                                 onClick = {
                                     if (!PasswordPolicy.isValid(password) || isSavingProfile) return@AgoraPrimaryButton
+                                    // Last line of defence: never persist an out-of-range DOB.
+                                    if (dobError != null) {
+                                        saveError = dobError
+                                        return@AgoraPrimaryButton
+                                    }
                                     // Save all user details including avatar selection.
                                     // 🌟 Advance ONLY when the save actually succeeded:
                                     // advancing unconditionally used to let a failed
@@ -465,7 +525,7 @@ fun OnboardingFlowScreen(
                                         }
                                     }
                                 },
-                                enabled = PasswordPolicy.isValid(password) && !isSavingProfile,
+                                enabled = PasswordPolicy.isValid(password) && !isSavingProfile && dobError == null,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(54.dp)
