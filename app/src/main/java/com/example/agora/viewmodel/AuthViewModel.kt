@@ -1709,7 +1709,10 @@ class AuthViewModel : ViewModel() {
                             //    credential, so clear any column default/trigger
                             //    stamp here; only Change Password / Reset Password
                             //    are allowed to write this timestamp.
-                            set("password_changed_at", null)
+                            // The explicit type is required: postgrest-kt exposes
+                            // set(String, String?/Int?/Long?/…/T?) overloads, so a
+                            // bare `null` literal is ambiguous.
+                            set("password_changed_at", null as String?)
                             if (!finalAvatarUrl.isNullOrBlank()) {
                                 set("avatar_url", finalAvatarUrl)
                             }
