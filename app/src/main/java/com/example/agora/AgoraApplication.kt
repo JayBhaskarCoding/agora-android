@@ -6,6 +6,7 @@ import coil.ImageLoaderFactory
 import coil.decode.VideoFrameDecoder
 import com.example.agora.data.DeviceIdProvider
 import com.example.agora.data.RecentVerificationStore
+import com.example.agora.data.ThemePreferenceStore
 import com.example.agora.data.initializeSupabase
 import com.example.agora.media.MediaHttpClient
 
@@ -26,6 +27,10 @@ class AgoraApplication : Application(), ImageLoaderFactory {
         // Remembers which account was verified on this device, so a cold start
         // before onboarding finishes resumes it instead of wiping it.
         RecentVerificationStore.init(this)
+
+        // 🌟 Load the theme choice before the first Activity is created so the
+        //    splash/window background and the first Compose frame agree.
+        ThemePreferenceStore.init(this)
     }
 
     override fun newImageLoader(): ImageLoader {

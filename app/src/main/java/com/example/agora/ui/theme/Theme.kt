@@ -1,6 +1,8 @@
 package com.example.agora.ui.theme
 
 import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -9,15 +11,15 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
-import com.example.agora.viewmodel.ThemePreference
+import com.example.agora.data.ThemePreference
 
-val LocalDarkTheme = staticCompositionLocalOf { true }
+val LocalDarkTheme = staticCompositionLocalOf { false }
 
 // ✦ Noir corner-radius scale (shared by Shapes + explicit screen styling)
 private val Shape8 = RoundedCornerShape(8.dp)
@@ -55,6 +57,8 @@ private val LightColorScheme = lightColorScheme(
     surfaceContainerHighest = NoirContainerHighestLight,
     error = NoirDangerLight,
     onError = White,
+    // 🌟 Outline is the border token for inputs/dividers. The old #D9DAE0 was
+    //    almost invisible on the pearl canvas; NoirOutlineLight keeps a ~3:1 boundary.
     outline = NoirOutlineLight,
     outlineVariant = NoirHairlineLight
 )
@@ -99,19 +103,30 @@ private val AgoraShapes = Shapes(
     extraLarge = Shape28
 )
 
+/**
+ * Theme entry point for a stored [ThemePreference].
+ *
+ * [ThemePreference.SYSTEM] follows the device; LIGHT/DARK are explicit
+ * overrides. This is the overload every caller should prefer.
+ */
 @Composable
 fun AgoraTheme(
     themePreference: ThemePreference,
     content: @Composable () -> Unit
 ) {
-    val darkTheme = when (themePreference) {
-        ThemePreference.LIGHT -> false
-        ThemePreference.DARK -> true
-        ThemePreference.SYSTEM -> isSystemInDarkTheme()
-    }
-    AgoraTheme(darkTheme = darkTheme, content = content)
+    AgoraTheme(
+        darkTheme = themePreference.resolveIsDark(isSystemInDarkTheme()),
+        content = content
+    )
 }
 
+/**
+ * Theme entry point for an already-resolved dark flag.
+ *
+ * Also keeps the system bars in sync: the status/navigation bar ICON colour is
+ * re-applied on every change of [darkTheme] (including OS theme changes while
+ * the app is in the foreground) so icons never clash with the background.
+ */
 @Composable
 fun AgoraTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
@@ -120,15 +135,24 @@ fun AgoraTheme(
     val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
     val view = LocalView.current
 
-    // 🌟 System Bar Insets Controller: Sets dark status bar icons in Light Mode, white in Dark Mode
     if (!view.isInEditMode) {
-        SideEffect {
-            val window = (view.context as? Activity)?.window
-            if (window != null) {
-                val insetsController = WindowCompat.getInsetsController(window, view)
-                insetsController.isAppearanceLightStatusBars = !darkTheme
-                insetsController.isAppearanceLightNavigationBars = !darkTheme
-            }
+        // Keyed on [darkTheme] so the window is touched only when the resolved
+        // theme actually changes, not on every recomposition.
+        LaunchedEffect(darkTheme) {
+            // Dialogs/previews can wrap the view context — walk the chain instead
+            // of assuming LocalView.context is the Activity itself.
+            val window = view.context.findActivity()?.window ?: return@LaunchedEffect
+            val insetsController = WindowCompat.getInsetsController(window, view)
+            insetsController.isAppearanceLightStatusBars = !darkTheme
+            insetsController.isAppearanceLightNavigationBars = !darkTheme
+
+            // Keep the window background in lockstep with the resolved theme so
+            // rotation/recreation never flashes the opposite canvas colour.
+            window.setBackgroundDrawable(
+                android.graphics.drawable.ColorDrawable(
+                    (if (darkTheme) 0xFF0B0C13 else 0xFFF8F9FA).toInt()
+                )
+            )
         }
     }
 
@@ -140,4 +164,11 @@ fun AgoraTheme(
             content = content
         )
     }
+}
+
+/** Unwraps [ContextWrapper]s until the hosting [Activity] is found. */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

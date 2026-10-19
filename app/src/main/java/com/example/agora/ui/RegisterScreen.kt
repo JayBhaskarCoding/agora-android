@@ -1,29 +1,26 @@
 package com.example.agora.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.agora.ui.components.AuthWordmarkSizes
 import com.example.agora.ui.components.VibrantGlassBackground
+import com.example.agora.ui.components.agoraAuthFieldColors
+import com.example.agora.ui.components.authSubtitleColor
+import com.example.agora.ui.components.rememberAgoraWordmark
 import com.example.agora.ui.theme.LocalDarkTheme
 import com.example.agora.ui.theme.glassmorphic
 import com.example.agora.utils.EmailValidator
@@ -142,30 +139,8 @@ fun RegisterScreen(
                 ) {
                     // ✦ Gradient wordmark — same signature as the feed top bar.
                     Text(
-                        text = buildAnnotatedString {
-                            withStyle(
-                                SpanStyle(
-                                    brush = Brush.linearGradient(
-                                        colors = listOf(
-                                            MaterialTheme.colorScheme.onBackground,
-                                            MaterialTheme.colorScheme.onBackground.copy(alpha = 0.66f)
-                                        )
-                                    ),
-                                    fontWeight = FontWeight.Black
-                                )
-                            ) {
-                                append("join agora")
-                            }
-                            withStyle(
-                                SpanStyle(
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.Black
-                                )
-                            ) {
-                                append(".")
-                            }
-                        },
-                        fontSize = 40.sp,
+                        text = rememberAgoraWordmark("join agora"),
+                        fontSize = AuthWordmarkSizes.Register,
                         letterSpacing = (-1.1).sp,
                         modifier = Modifier.padding(bottom = 6.dp)
                     )
@@ -173,7 +148,8 @@ fun RegisterScreen(
                     Text(
                         text = "Connect, create, and share your world.",
                         fontSize = 15.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Medium,
+                        color = authSubtitleColor(isDark),
                         modifier = Modifier.padding(bottom = 28.dp)
                     )
 
@@ -212,7 +188,7 @@ fun RegisterScreen(
                             Text(
                                 text = "Enter your email to verify and begin.",
                                 fontSize = 14.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = authSubtitleColor(isDark),
                                 modifier = Modifier
                                     .align(Alignment.Start)
                                     .padding(bottom = 20.dp)
@@ -228,12 +204,7 @@ fun RegisterScreen(
                                     .fillMaxWidth()
                                     .padding(bottom = 24.dp),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
-                                    focusedContainerColor = Color.Transparent,
-                                    unfocusedContainerColor = Color.Transparent
-                                )
+                                colors = agoraAuthFieldColors(isDark)
                             )
 
                             AgoraPrimaryButton(

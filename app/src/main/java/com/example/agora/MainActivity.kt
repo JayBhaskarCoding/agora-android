@@ -16,6 +16,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.AlertDialog
@@ -31,9 +32,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.agora.data.NotificationRepository
+import com.example.agora.data.ThemePreferenceStore
 import com.example.agora.data.supabaseClient
 import com.example.agora.model.FcmTokenUpdate
 import com.example.agora.navigation.AuthCallbackGate
@@ -137,6 +140,14 @@ fun syncFcmTokenAndSubscribeTopics() {
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        /** App canvas in dark mode (#0B0C13) — matches NoirCanvasDark. */
+        private const val WINDOW_BACKGROUND_DARK = 0xFF0B0C13.toInt()
+
+        /** App canvas in light mode (#F8F9FA) — matches NoirCanvasLight. */
+        private const val WINDOW_BACKGROUND_LIGHT = 0xFFF8F9FA.toInt()
+    }
+
     /**
      * Splash is released as soon as the auth session resolves (see the
      * LaunchedEffect in [setContent]) instead of for a fixed delay — this used to
@@ -231,11 +242,27 @@ class MainActivity : ComponentActivity() {
             } catch (_: Exception) {}
         }
 
+        // 🌟 FIRST-FRAME THEME: resolve the effective theme BEFORE the first frame
+        //    so the window background behind Compose already matches the canvas
+        //    the user is about to see. Without this, a Light-mode launch painted
+        //    the dark window background for a frame (white → black flash).
+        applyWindowTheme(ThemePreferenceStore.resolveIsDark(this))
+
         setContent {
             val themeViewModel: ThemeViewModel = viewModel()
-            val isDarkMode by themeViewModel.isDarkMode.collectAsState()
+            val themePreference by themeViewModel.themePreference.collectAsState()
 
-            AgoraTheme(darkTheme = isDarkMode) {
+            // 🌟 EFFECTIVE THEME = explicit override ?: system setting. The
+            //    preference is reactive, and `isSystemInDarkTheme()` re-reads the
+            //    device configuration, so an OS theme change applies live.
+            val systemInDarkTheme = isSystemInDarkTheme()
+            val isDarkTheme = themePreference.resolveIsDark(systemInDarkTheme)
+
+            // Keep the window (status/navigation bar icon appearance + window
+            // background) in lockstep on every effective-theme change.
+            LaunchedEffect(isDarkTheme) { applyWindowTheme(isDarkTheme) }
+
+            AgoraTheme(darkTheme = isDarkTheme) {
                 val authViewModel: AuthViewModel = viewModel()
 
                 val sessionStatus by authViewModel.sessionStatus.collectAsState()
@@ -267,6 +294,23 @@ class MainActivity : ComponentActivity() {
                     if (sessionStatus !is SessionStatus.Authenticated) {
                         authDestination = null
                     }
+                }
+
+                /* 🌟 LOGOUT THEME RESET: an authenticated session may carry an
+                 *   explicit LIGHT/DARK override from Account Details or the
+                 *   onboarding picker. On the transition Authenticated → signed
+                 *   out (manual Log Out from the drawer/Account Details, a remote
+                 *   "logged in elsewhere" kick, or session expiry) the override is
+                 *   dropped so the unauthenticated Login/Registration screens
+                 *   follow the device theme again. Cold starts with no session are
+                 *   untouched: only a real transition triggers this. */
+                var hadAuthenticatedSession by remember { mutableStateOf(false) }
+                LaunchedEffect(sessionStatus) {
+                    val authenticated = sessionStatus is SessionStatus.Authenticated
+                    if (hadAuthenticatedSession && !authenticated) {
+                        themeViewModel.resetToSystem()
+                    }
+                    if (authenticated) hadAuthenticatedSession = true
                 }
 
                 val awaitingOtp by authViewModel.awaitingOtp.collectAsState()
@@ -347,6 +391,7 @@ class MainActivity : ComponentActivity() {
                                 onClick = {
                                     clearLocalUserCaches(applicationContext)
                                     isSigningUpState.value = false
+                                    themeViewModel.resetToSystem()
                                     authViewModel.confirmRemoteLogout()
                                 }
                             ) {
@@ -359,6 +404,7 @@ class MainActivity : ComponentActivity() {
                         delay(5000)
                         clearLocalUserCaches(applicationContext)
                         isSigningUpState.value = false
+                        themeViewModel.resetToSystem()
                         authViewModel.confirmRemoteLogout()
                     }
                 }
@@ -480,8 +526,27 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Clears user-scoped local state after a remote logout. Theme preferences and
-     * the persistent device id are device-scoped and intentionally preserved.
+     * Applies the resolved theme to the SYSTEM WINDOW: light/dark status-bar and
+     * navigation-bar icons plus the window background. Called before the first
+     * frame and again on every effective-theme change, so the bars never clash
+     * with the canvas underneath them.
+     */
+    private fun applyWindowTheme(isDark: Boolean) {
+        window.setBackgroundDrawable(
+            android.graphics.drawable.ColorDrawable(
+                if (isDark) WINDOW_BACKGROUND_DARK else WINDOW_BACKGROUND_LIGHT
+            )
+        )
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !isDark
+            isAppearanceLightNavigationBars = !isDark
+        }
+    }
+
+    /**
+     * Clears user-scoped local state after a remote logout. The persistent device
+     * id stays (device-scoped); the theme override is reset separately by the
+     * Log Out actions so the auth screens follow the device again.
      */
     private fun clearLocalUserCaches(context: Context) {
         // Supabase session snapshot (auth.signOut also clears it; be explicit).

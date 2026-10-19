@@ -72,6 +72,9 @@ private val MinorBannerBody = Color(0xFFF7EDDC)
  * Informational only: it never blocks registration. Styled as a dark,
  * translucent glass card with an amber hairline + warning icon so it reads as
  * a caution without competing with the form's primary action.
+ *
+ * [visible] MUST already be false for blank/invalid DOBs — every caller derives
+ * it from [DateOfBirth.shouldShowMinorNotice], which requires a parseable date.
  */
 @Composable
 fun MinorAccountWarningBanner(

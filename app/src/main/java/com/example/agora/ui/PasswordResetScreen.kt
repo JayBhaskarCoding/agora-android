@@ -31,6 +31,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.agora.ui.components.VibrantGlassBackground
+import com.example.agora.ui.components.agoraAuthFieldColors
+import com.example.agora.ui.components.authSubtitleColor
 import com.example.agora.ui.theme.LocalDarkTheme
 import com.example.agora.ui.theme.glassmorphic
 import com.example.agora.viewmodel.AuthViewModel
@@ -184,7 +186,12 @@ fun PasswordResetScreen(
                         text = "Agora",
                         fontSize = 36.sp,
                         fontWeight = FontWeight.Black,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = if (isDark) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            // Indigo on pearl: keep the brand hue readable.
+                            Color(0xFF4338CA)
+                        },
                         modifier = Modifier.padding(bottom = 20.dp)
                     )
 
@@ -222,7 +229,7 @@ fun PasswordResetScreen(
                                         Text(
                                             text = "Enter your email to receive a 6-digit security code.",
                                             fontSize = 14.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            color = authSubtitleColor(isDark),
                                             modifier = Modifier
                                                 .align(Alignment.Start)
                                                 .padding(bottom = 24.dp)
@@ -254,15 +261,10 @@ fun PasswordResetScreen(
                                                 Icon(
                                                     Icons.Default.Email,
                                                     contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    tint = if (isDark) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF474C57)
                                                 )
                                             },
-                                            colors = OutlinedTextFieldDefaults.colors(
-                                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
-                                                focusedContainerColor = Color.Transparent,
-                                                unfocusedContainerColor = Color.Transparent
-                                            )
+                                            colors = agoraAuthFieldColors(isDark)
                                         )
 
                                         AgoraPrimaryButton(
@@ -295,7 +297,7 @@ fun PasswordResetScreen(
                                         Text(
                                             text = "We sent a 6-digit security code to $emailInput.",
                                             fontSize = 14.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            color = authSubtitleColor(isDark),
                                             modifier = Modifier
                                                 .align(Alignment.Start)
                                                 .padding(bottom = 24.dp)
@@ -349,7 +351,7 @@ fun PasswordResetScreen(
                                         Text(
                                             text = "Enter your strong new password.",
                                             fontSize = 14.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            color = authSubtitleColor(isDark),
                                             modifier = Modifier
                                                 .align(Alignment.Start)
                                                 .padding(bottom = 24.dp)
@@ -370,7 +372,7 @@ fun PasswordResetScreen(
                                                 Icon(
                                                     Icons.Default.Lock,
                                                     contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    tint = if (isDark) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF474C57)
                                                 )
                                             },
                                             trailingIcon = {
@@ -381,12 +383,7 @@ fun PasswordResetScreen(
                                                     )
                                                 }
                                             },
-                                            colors = OutlinedTextFieldDefaults.colors(
-                                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
-                                                focusedContainerColor = Color.Transparent,
-                                                unfocusedContainerColor = Color.Transparent
-                                            )
+                                            colors = agoraAuthFieldColors(isDark)
                                         )
 
                                         OutlinedTextField(
@@ -404,7 +401,7 @@ fun PasswordResetScreen(
                                                 Icon(
                                                     Icons.Default.Lock,
                                                     contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    tint = if (isDark) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF474C57)
                                                 )
                                             },
                                             trailingIcon = {
@@ -415,12 +412,7 @@ fun PasswordResetScreen(
                                                     )
                                                 }
                                             },
-                                            colors = OutlinedTextFieldDefaults.colors(
-                                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
-                                                focusedContainerColor = Color.Transparent,
-                                                unfocusedContainerColor = Color.Transparent
-                                            )
+                                            colors = agoraAuthFieldColors(isDark)
                                         )
 
                                         if (confirmPasswordInput.isNotEmpty() && confirmPasswordInput != newPasswordInput) {

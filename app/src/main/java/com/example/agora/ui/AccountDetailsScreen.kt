@@ -10,6 +10,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -47,6 +48,7 @@ import coil.compose.AsyncImage
 import com.example.agora.data.supabaseClient
 import com.example.agora.model.Profile
 import com.example.agora.utils.DateOfBirth
+import com.example.agora.data.ThemePreference
 import com.example.agora.viewmodel.AuthViewModel
 import com.example.agora.viewmodel.ThemeViewModel
 import com.example.agora.ui.components.AgoraPrimaryButton
@@ -120,7 +122,15 @@ fun AccountDetailsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val errorMessage by viewModel.errorMessage.collectAsState()
 
-    val isDarkMode by themeViewModel.isDarkMode.collectAsState()
+    /* 🌟 EFFECTIVE THEME for the switch: an explicit override wins, otherwise
+     *   the device setting decides — `userOverride ?: isSystemInDarkTheme()`.
+     *   Toggling writes an explicit LIGHT/DARK override via setDarkMode(). */
+    val themePreference by themeViewModel.themePreference.collectAsState()
+    val isDarkMode = when (themePreference) {
+        ThemePreference.LIGHT -> false
+        ThemePreference.DARK -> true
+        ThemePreference.SYSTEM -> isSystemInDarkTheme()
+    }
 
     var profile by remember { mutableStateOf<Profile?>(null) }
     var isUploading by remember { mutableStateOf(false) }
@@ -153,8 +163,9 @@ fun AccountDetailsScreen(
         selectableDates = dobSelectableDates
     )
     val dobError = DateOfBirth.validationError(dob, today)
-    val ageInYears = DateOfBirth.validAgeOrNull(dob, today)
-    val showMinorBanner = ageInYears != null && ageInYears in 0 until DateOfBirth.ADULT_AGE_YEARS
+    // 🌟 Only a VALID, non-empty DOB can raise the under-18 notice: blank,
+    //    unparsable, future or >120-year values all resolve to `false`.
+    val showMinorBanner = DateOfBirth.shouldShowMinorNotice(dob, today)
 
     // 🌟 Destructive-action gate: Delete Account must be confirmed before the
     //    reauthentication email is ever sent.
@@ -733,7 +744,11 @@ fun AccountDetailsScreen(
                         Column {
                             Text("Dark Mode", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
                             Text(
-                                "Toggle app color theme",
+                                if (themePreference == ThemePreference.SYSTEM) {
+                                    "Following system theme"
+                                } else {
+                                    "Manual override"
+                                },
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -891,7 +906,12 @@ fun AccountDetailsScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             OutlinedButton(
-                onClick = { viewModel.signOut() },
+                onClick = {
+                    // Log out: drop any explicit theme override so the auth
+                    // screens follow the device theme again.
+                    themeViewModel.resetToSystem()
+                    viewModel.signOut()
+                },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp),

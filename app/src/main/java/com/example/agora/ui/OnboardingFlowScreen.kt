@@ -49,7 +49,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.example.agora.viewmodel.ThemePreference
+import com.example.agora.data.ThemePreference
 import com.example.agora.viewmodel.ThemeViewModel
 import com.example.agora.ui.components.AgoraPrimaryButton
 import java.time.LocalDate
@@ -126,8 +126,9 @@ fun OnboardingFlowScreen(
         selectableDates = dobSelectableDates
     )
     val dobError = DateOfBirth.validationError(dob, today)
-    val ageInYears = DateOfBirth.validAgeOrNull(dob, today)
-    val showMinorBanner = ageInYears != null && ageInYears in 0 until DateOfBirth.ADULT_AGE_YEARS
+    // 🌟 Only a VALID, non-empty DOB can raise the under-18 notice: blank,
+    //    unparsable, future or >120-year values all resolve to `false`.
+    val showMinorBanner = DateOfBirth.shouldShowMinorNotice(dob, today)
 
     // Step 2: Password State
     var password by remember { mutableStateOf("") }
@@ -575,8 +576,8 @@ fun OnboardingFlowScreen(
                             )
 
                             ThemeOptionCard(
-                                title = "System Default",
-                                subtitle = "Follows your device system settings",
+                                title = "Follow System",
+                                subtitle = "Match your device's Light or Dark appearance",
                                 icon = Icons.Default.SettingsBrightness,
                                 isSelected = currentThemePref == ThemePreference.SYSTEM,
                                 onClick = { themeViewModel.setThemePreference(ThemePreference.SYSTEM) }

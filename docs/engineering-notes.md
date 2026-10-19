@@ -373,3 +373,54 @@ Recommended migration:
 2. Add a `MediaStorage` seam so the upload target is one decision in one file.
 3. Backfill: posts whose `media_urls` still reference `files.catbox.moe` can be re-hosted
    lazily on first successful fetch, or left to whatever `HOST_REWRITES` route is chosen.
+
+---
+
+## 7. Theme follows the device, and Light Mode is readable
+
+### Symptom
+
+A fresh install opened in Dark Mode on a phone set to Light Mode; after Log Out the
+Login/Registration screens kept whatever theme the account last used; and in Light Mode
+the auth cards, input borders, labels and the "Enter the social arena." subtitle were
+washed out to near-invisibility.
+
+### Root cause
+
+`ThemeViewModel` persisted **two** values: a `theme_preference` string (default `SYSTEM`)
+and a boolean `is_dark_mode` that defaulted to `true` and was the only thing
+`MainActivity` actually read. `SYSTEM` also mapped to `true` inside
+`setThemePreference`. So "no preference" and "follow system" both resolved to dark, and
+the boolean outlived logout because nothing cleared it.
+
+Light Mode contrast was a token problem: `outline` was `#D9DAE0` (≈1.3:1 on white),
+fields used `outline @ 40%`, subtitles used the same muted grey as dark mode, and the
+`agora` wordmark faded to 66% alpha on a near-white canvas.
+
+### Fix
+
+| Layer | Change |
+|---|---|
+| `data/ThemePreference.kt` | New single source of truth. `SYSTEM` = **no stored key** = follow the device; only `LIGHT`/`DARK` are explicit overrides. The legacy `is_dark_mode` key is deleted on first read. |
+| `ThemeViewModel` | Pure facade over the store — no duplicated state, no derived `isDarkMode` flow. |
+| `MainActivity` | Effective theme = `preference.resolveIsDark(isSystemInDarkTheme())`; `applyWindowTheme()` sets `isAppearanceLightStatusBars`/`NavigationBars` **and** the window background before the first frame and on every change. |
+| Logout | Drawer, Account Details, remote-logout dialog and the `Authenticated → signed-out` transition all call `resetToSystem()`. Cold starts never reset. |
+| `Theme.kt` / tokens | Light outline `#AEB3BF`, secondary text `#4B505A`; light cards get a soft shadow; auth fields get an inset fill + solid border; wordmark is solid ink in Light Mode. |
+| `res/values*` | `windowBackground` / splash background come from `agora_window_background` (#F8F9FA light, #0B0C13 dark) so launch → first Compose frame never flashes. |
+
+### Verify manually
+
+1. Fresh install on a Light-mode device → Login renders light, status bar icons dark.
+2. Toggle to Dark in Account Details → bars flip, then Log Out → back to Light.
+3. Change the OS theme while the app is foregrounded (no override) → UI and bars follow.
+4. Light mode: field borders, labels and both subtitles are legible at a glance.
+
+---
+
+## 8. Under-18 banner must require a real Date of Birth
+
+`DateOfBirth.validAgeOrNull()` now returns `null` for `null`/blank/unparsable values
+instead of flowing into `Period.between`, and every screen gates the banner through one
+predicate — `DateOfBirth.shouldShowMinorNotice(dob)` — which requires a *valid* date
+inside `[today − 120y, today]` and an age of `0..17`. A blank, malformed, future or
+120-year-plus DOB can never render "Minor account notice". See `DateOfBirthTest`.

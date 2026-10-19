@@ -1,8 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 🌟 Native Splash Screen Theme (Dark Mode: #0F172A - Same as Dark Feed Background) -->
+    <!-- 🌟 Native Splash / window theme (Dark Mode) — #0B0C13 matches the Compose
+         Noir canvas so the launch → first-frame handover has no flash. -->
+    <style name="Theme.Agora" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/agora_window_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
     <style name="Theme.App.Starting" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">#0F172A</item>
+        <item name="windowSplashScreenBackground">@color/agora_window_background</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/agora_splash</item>
         <item name="windowSplashScreenAnimationDuration">800</item>
         <item name="postSplashScreenTheme">@style/Theme.Agora</item>
