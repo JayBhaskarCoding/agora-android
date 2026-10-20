@@ -1,30 +1,16 @@
 package net.agora.app.viewmodel
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.ImageDecoder
 import android.net.Uri
-import android.os.Build
-import androidx.annotation.OptIn
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.media3.common.MediaItem
-import androidx.media3.common.MimeTypes
 import android.util.Log
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.effect.Presentation
-import androidx.media3.transformer.Composition
-import androidx.media3.transformer.EditedMediaItem
-import androidx.media3.transformer.Effects
-import androidx.media3.transformer.ExportException
-import androidx.media3.transformer.ExportResult
-import androidx.media3.transformer.Transformer
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import net.agora.app.data.CloudinaryClient
+import net.agora.app.media.MediaCompressor
 import net.agora.app.data.supabaseClient
 import net.agora.app.model.Comment
 import net.agora.app.model.CommentInsertRequest
@@ -62,16 +48,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import java.io.ByteArrayOutputStream
-import java.io.File
 import java.util.UUID
-import kotlin.coroutines.resume
 import kotlin.time.Duration.Companion.milliseconds
 
 @Immutable
@@ -583,88 +565,17 @@ class FeedViewModel : ViewModel() {
         }
     }
 
-    // 🌟 TASK 1: CLIENT-SIDE IMAGE COMPRESSION (WEBP / 80% QUALITY)
-    suspend fun compressImage(context: Context, uri: Uri): ByteArray = withContext(Dispatchers.IO) {
-        try {
-            val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val source = ImageDecoder.createSource(context.contentResolver, uri)
-                ImageDecoder.decodeBitmap(source)
-            } else {
-                context.contentResolver.openInputStream(uri)?.use { stream ->
-                    BitmapFactory.decodeStream(stream)
-                }
-            } ?: return@withContext context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
+    /**
+     * Client-side image preparation. The implementation lives in
+     * [MediaCompressor] so the post pipeline and the avatar pipeline share one
+     * downscale/temp-file policy instead of drifting apart.
+     */
+    suspend fun compressImage(context: Context, uri: Uri): ByteArray =
+        MediaCompressor.compressImage(context, uri)
 
-            val outputStream = ByteArrayOutputStream()
-            val format = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                Bitmap.CompressFormat.WEBP_LOSSY
-            } else {
-                @Suppress("DEPRECATION")
-                Bitmap.CompressFormat.WEBP
-            }
-            bitmap.compress(format, 80, outputStream)
-            outputStream.toByteArray()
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
-        }
-    }
-
-    // 🌟 TASK 2: CLIENT-SIDE VIDEO COMPRESSION (MEDIA3 TRANSFORMER / 720P / H.264)
-    @OptIn(UnstableApi::class)
-    suspend fun compressVideo(context: Context, uri: Uri): ByteArray = withContext(Dispatchers.IO) {
-        try {
-            val outputFile = File(context.cacheDir, "compressed_upload_${UUID.randomUUID()}.mp4")
-            val outputUri = Uri.fromFile(outputFile)
-
-            val resultUri = suspendCancellableCoroutine<Uri?> { continuation ->
-                val mediaItem = MediaItem.fromUri(uri)
-                val editedMediaItem = EditedMediaItem.Builder(mediaItem)
-                    .setEffects(Effects(emptyList(), listOf(Presentation.createForHeight(720))))
-                    .build()
-
-                val transformer = Transformer.Builder(context)
-                    .setVideoMimeType(MimeTypes.VIDEO_H264)
-                    .setAudioMimeType(MimeTypes.AUDIO_AAC)
-                    .addListener(object : Transformer.Listener {
-                        override fun onCompleted(composition: Composition, exportResult: ExportResult) {
-                            if (continuation.isActive) continuation.resume(outputUri)
-                        }
-
-                        override fun onError(
-                            composition: Composition,
-                            exportResult: ExportResult,
-                            exportException: ExportException
-                        ) {
-                            if (continuation.isActive) continuation.resume(null)
-                        }
-                    })
-                    .build()
-
-                try {
-                    transformer.start(editedMediaItem, outputFile.absolutePath)
-                } catch (e: Exception) {
-                    if (continuation.isActive) continuation.resume(null)
-                }
-
-                continuation.invokeOnCancellation {
-                    try { transformer.cancel() } catch (_: Exception) {}
-                }
-            }
-
-            if (resultUri != null && outputFile.exists()) {
-                val bytes = outputFile.readBytes()
-                outputFile.delete() // 🌟 Delete temporary local file to prevent storage leaks
-                bytes
-            } else {
-                if (outputFile.exists()) outputFile.delete()
-                context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
-        }
-    }
+    /** Client-side video preparation; see [MediaCompressor.compressVideo]. */
+    suspend fun compressVideo(context: Context, uri: Uri): ByteArray =
+        MediaCompressor.compressVideo(context, uri)
 
     suspend fun uploadPostImage(context: Context, imageUri: Uri): String? {
         val bytes = compressImage(context, imageUri)
@@ -819,11 +730,35 @@ class FeedViewModel : ViewModel() {
         createPost(context, content, imageUris, onSuccess)
     }
 
+    /**
+     * Deletes a post: the Supabase row **and** every photo/video it owns in
+     * Cloudinary.
+     *
+     * ── ORDER MATTERS ───────────────────────────────────────────────────────
+     * 1. capture the media URLs *before* the row disappears (afterwards there is
+     *    nothing left that knows which assets belonged to the post — this is
+     *    exactly how the orphans were created);
+     * 2. delete the row, because that is the user's intent and must succeed even
+     *    if Cloudinary is unreachable;
+     * 3. destroy the assets, best-effort, one failure never aborting the rest.
+     *
+     * Cloudinary cleanup is deliberately not awaited by the UI: a delete that
+     * took 3 network round-trips would feel broken. Each destroyed asset logs
+     * under `CloudinaryDelete`, so a failure is diagnosable rather than silent.
+     */
     fun deletePost(postId: String) {
         viewModelScope.launch {
             try {
                 val userId = currentUserId ?: return@launch
 
+                // 1. Snapshot the media list while the post is still known.
+                val mediaUrls = _posts.value
+                    .firstOrNull { it.id == postId }
+                    ?.imageUrls
+                    .orEmpty()
+                    .filter { it.isNotBlank() }
+
+                // 2. Remove the database row.
                 withContext(Dispatchers.IO) {
                     supabaseClient.from("posts").delete {
                         filter {
@@ -833,7 +768,25 @@ class FeedViewModel : ViewModel() {
                     }
                 }
 
+                // Update the UI immediately — the user asked for the post to go.
+                _posts.update { list -> list.filterNot { it.id == postId } }
                 fetchPostsFromCloud()
+
+                // 3. Destroy the Cloudinary assets that row pointed at.
+                if (mediaUrls.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        mediaUrls.forEach { url ->
+                            val destroyed = CloudinaryClient.deleteFromCloudinary(url)
+                            if (!destroyed) {
+                                Log.w(
+                                    "FeedViewModel",
+                                    "Cloudinary cleanup skipped/failed for post=$postId url=$url " +
+                                        "(asset may be orphaned)"
+                                )
+                            }
+                        }
+                    }
+                }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 Log.e("FeedViewModel", "deletePost failed: ${e.localizedMessage}", e)

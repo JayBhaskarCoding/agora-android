@@ -130,7 +130,7 @@ object MediaHttpClient {
 
     /**
      * Upstream factory for [VideoCache]'s `CacheDataSource`, so cache misses and
-     * [VideoPreloader]'s writes both go through [okHttpClient].
+     * ExoPlayer's reads and the cache's writes both go through [okHttpClient].
      *
      * OkHttp follows cross-protocol (http → https) redirects itself via `followSslRedirects`,
      * so no extra flag is needed here as it would be on `DefaultHttpDataSource`.

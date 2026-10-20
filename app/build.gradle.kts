@@ -122,6 +122,25 @@ android {
 
         // 🌟 Google Sign-In server client id. One source of truth: the UI no
         //    longer passes a literal, and the ViewModel default reads this.
+        // ✦ CLOUDINARY SIGNED DELETION
+        //   Used only by CloudinaryClient.deleteFromCloudinary() to authenticate
+        //   the REST "destroy" call. Optional on purpose: a build without them
+        //   still compiles and runs — deletion logs a clear warning instead of
+        //   silently orphaning assets.
+        //
+        //   ⚠️ A shipped APK cannot keep a secret. See docs §13: production
+        //      should proxy this through a Supabase Edge Function.
+        buildConfigField(
+            "String",
+            "CLOUDINARY_API_KEY",
+            (optionalLocalProperty("CLOUDINARY_API_KEY") ?: "").asBuildConfigString()
+        )
+        buildConfigField(
+            "String",
+            "CLOUDINARY_API_SECRET",
+            (optionalLocalProperty("CLOUDINARY_API_SECRET") ?: "").asBuildConfigString()
+        )
+
         buildConfigField(
             "String",
             "GOOGLE_WEB_CLIENT_ID",

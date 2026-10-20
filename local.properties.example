@@ -10,3 +10,16 @@ SUPABASE_ANON_KEY=replace-with-the-Agora-Backup-anon-key
 # account picker. Optional: app/build.gradle.kts falls back to a documented
 # default when this is absent.
 GOOGLE_WEB_CLIENT_ID=000000000000-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com
+
+# Cloudinary signed deletion (optional).
+# Required only so that deleting a post also destroys its photos/videos in
+# Cloudinary. Without them the app still builds and deletes the database row;
+# it logs a warning and the assets are left orphaned.
+# Dashboard -> Settings -> API Keys: "API Key" and "API Secret".
+#
+# ⚠️ These end up in BuildConfig and therefore in the APK. Anyone can extract
+#    them and call the destroy API on your whole account. Use a dedicated key
+#    restricted to the "delete" action, or (better) proxy the call through a
+#    Supabase Edge Function — see docs/engineering-notes.md §13.
+CLOUDINARY_API_KEY=
+CLOUDINARY_API_SECRET=

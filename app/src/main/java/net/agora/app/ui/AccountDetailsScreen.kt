@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import net.agora.app.data.supabaseClient
+import net.agora.app.media.MediaCompressor
 import net.agora.app.model.Profile
 import net.agora.app.utils.DateOfBirth
 import net.agora.app.data.ThemePreference
@@ -107,6 +108,33 @@ fun getTimeAgo(instantString: String?): String {
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Deletes the storage object behind [previousUrl] after an avatar replacement.
+ *
+ * Supabase public URLs look like
+ * `https://<project>.supabase.co/storage/v1/object/public/avatars/<path>`; the
+ * object key is everything after the bucket name. Best-effort by design: the
+ * new avatar is already live, so a cleanup failure must never surface as an
+ * upload error — it is logged for later reconciliation instead.
+ */
+private suspend fun deleteReplacedAvatar(previousUrl: String?, newUrl: String) {
+    val old = previousUrl?.takeIf { it.isNotBlank() && it != newUrl } ?: return
+    val marker = "/object/public/avatars/"
+    val path = old.substringAfter(marker, missingDelimiterValue = "").substringBefore('?')
+    if (path.isBlank()) return
+    try {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            supabaseClient.storage.from("avatars").remove(path)
+        }
+    } catch (e: Exception) {
+        android.util.Log.w(
+            "AvatarCleanup",
+            "could not delete replaced avatar '$path': ${e.localizedMessage}",
+            e
+        )
+    }
+}
+
 @Composable
 fun AccountDetailsScreen(
     viewModel: AuthViewModel,
@@ -199,16 +227,27 @@ fun AccountDetailsScreen(
             scope.launch {
                 isUploading = true
                 try {
-                    val bytes = withContext(Dispatchers.IO) {
-                        context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                    }
+                    // ✦ Same policy as post media: downscale to 1440 px and
+                    //   re-encode at 80 % before the bytes leave the device. An
+                    //   avatar is displayed at 40–160 dp, so uploading a 12 MP
+                    //   camera JPEG wastes the user's data for no visible gain.
+                    val bytes = MediaCompressor.compressImage(context, uri)
 
-                    if (bytes != null) {
-                        val fileName = "${currentUser.id}/${UUID.randomUUID()}.jpg"
+                    if (bytes.isNotEmpty()) {
+                        val previousUrl = profile?.avatarUrl
+                        val fileName = "${currentUser.id}/${UUID.randomUUID()}.webp"
                         supabaseClient.storage.from("avatars").upload(fileName, bytes)
                         val newAvatarUrl = supabaseClient.storage.from("avatars").publicUrl(fileName)
                         supabaseClient.from("profiles").update(mapOf("avatar_url" to newAvatarUrl)) { filter { eq("id", currentUser.id) } }
                         profile = profile?.copy(avatarUrl = newAvatarUrl)
+
+                        // ✦ REPLACEMENT, not addition: without this every new
+                        //   picture leaves the previous object in the bucket
+                        //   forever (the Supabase Storage equivalent of the
+                        //   Cloudinary orphans). Best-effort — a failed cleanup
+                        //   must never fail the upload the user just made.
+                        deleteReplacedAvatar(previousUrl, newAvatarUrl)
+
                         snackbarHostState.showSnackbar("Profile picture updated")
                     }
                 } catch (e: Exception) {

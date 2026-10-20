@@ -27,6 +27,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
+import net.agora.app.media.CloudinaryUrlHelper
 import net.agora.app.media.ExoPlayerHelper
 import net.agora.app.media.VideoCache
 
@@ -40,11 +41,17 @@ fun ExpandedVideoScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
+    // ✦ The player exists only while this screen is on screen, and it streams
+    //   Cloudinary's 720p/~2 Mbps rendition rather than the uploaded original.
+    //   This is the only place a feed video player is ever created — the feed
+    //   cells themselves are poster-only (see FeedVideoPlayer).
+    val streamUrl = remember(videoUrl) { CloudinaryUrlHelper.optimizedVideoUrl(videoUrl) }
+
     // 🌟 Cached ExoPlayer instance configured for Autoplay with Audio and Unisoc Codec Fallback
-    val exoPlayer = remember(context, videoUrl) {
+    val exoPlayer = remember(context, streamUrl) {
         val mediaSource = ProgressiveMediaSource.Factory(
             VideoCache.getCacheDataSourceFactory(context)
-        ).createMediaSource(MediaItem.fromUri(videoUrl))
+        ).createMediaSource(MediaItem.fromUri(streamUrl))
 
         ExoPlayerHelper.createExoPlayer(context).apply {
             setMediaSource(mediaSource)

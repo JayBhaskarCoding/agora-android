@@ -12,7 +12,19 @@ import java.io.File
 @OptIn(UnstableApi::class)
 object VideoCache {
 
-    private const val MAX_CACHE_SIZE_BYTES: Long = 200 * 1024 * 1024 // 200MB Cache Limit
+    /**
+     * Hard ceiling for on-disk video bytes.
+     *
+     * 35 MB is deliberate: Coil's image cache is capped at 25 MB
+     * (`AgoraApplication`), so total media cache tops out at ~60 MB on every
+     * device. The previous 200 MB ceiling is what let three short clips plus
+     * prefetching push `cacheDir` past 85 MB — the evictor cannot shrink a cache
+     * it is allowed to grow.
+     *
+     * [LeastRecentlyUsedCacheEvictor] trims to this size on every write, at
+     * cache open, and after a crash, so the limit holds without manual cleanup.
+     */
+    private const val MAX_CACHE_SIZE_BYTES: Long = 35L * 1024 * 1024 // 35 MB
 
     @Volatile
     private var simpleCache: SimpleCache? = null

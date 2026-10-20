@@ -51,7 +51,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
-import net.agora.app.media.VideoPreloader
 import net.agora.app.navigation.DeepLinkRouter
 import net.agora.app.model.Post
 import net.agora.app.ui.theme.AgoraRingGradient
@@ -77,7 +76,7 @@ import kotlin.time.Duration.Companion.milliseconds
  *    gallery-plate media and a divided action bar,
  *  - spring-driven micro-interactions (item reveal, morphing like counts).
  *
- * All data behavior is untouched: FeedViewModel collection, VideoPreloader
+ * All data behavior is untouched: FeedViewModel collection, thumbnail-first media
  * prefetching, pull-to-refresh, comment/reactor sheets, edit/delete/report
  * flows and the full-screen media viewer work exactly as before.
  */
@@ -113,19 +112,6 @@ fun GlobalFeedScreen(
     val isScrolled by remember {
         derivedStateOf {
             listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 8
-        }
-    }
-
-    // 🌟 Pre-cache the next 1-2 videos in the list so they start instantly when
-    //    scrolled into view (or opened fullscreen). Re-triggered per scroll position.
-    val firstVisibleIndex by remember { derivedStateOf { listState.firstVisibleItemIndex } }
-    LaunchedEffect(firstVisibleIndex, posts) {
-        val upcomingVideos = posts
-            .drop(firstVisibleIndex + 1)
-            .take(2)
-            .flatMap { post -> post.imageUrls.filter { isFeedVideoUrl(it) } }
-        if (upcomingVideos.isNotEmpty()) {
-            VideoPreloader.prefetch(context, upcomingVideos)
         }
     }
 
@@ -790,7 +776,7 @@ internal fun PostOptionsSheet(
  *  - an action bar separated by a hairline: reaction button + counts on the
  *    left, share on the right.
  *
- * Media plumbing (ExoPlayer pool, SubcomposeAsyncImage + error logging) is
+ * Media plumbing (Cloudinary posters, SubcomposeAsyncImage + error logging) is
  * entirely delegated and unchanged.
  */
 @Composable

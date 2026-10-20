@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import net.agora.app.media.CloudinaryUrlHelper
 
 /**
  * 🌟 The ONE fullscreen media viewer dialog — verbatim behavior of the feed's
@@ -69,7 +70,11 @@ fun FullscreenMediaViewerDialog(
                 contentAlignment = Alignment.Center
             ) {
                 AsyncImage(
-                    model = mediaUrl,
+                    // ✦ 1440 px rendition: sharp when zoomed (up to 5x) without
+                    //   transferring the original upload. The feed only ever
+                    //   requested the 600 px thumbnail, so this is the one place
+                    //   the high-resolution asset is fetched — on demand, on tap.
+                    model = CloudinaryUrlHelper.fullImageUrl(mediaUrl),
                     contentDescription = "Expanded Image",
                     modifier = Modifier
                         .fillMaxSize()

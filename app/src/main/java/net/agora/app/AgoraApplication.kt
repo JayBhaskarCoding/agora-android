@@ -4,11 +4,13 @@ import android.app.Application
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.decode.VideoFrameDecoder
+import coil.disk.DiskCache
 import net.agora.app.data.DeviceIdProvider
 import net.agora.app.data.RecentVerificationStore
 import net.agora.app.data.ThemePreferenceStore
 import net.agora.app.data.initializeSupabase
 import net.agora.app.media.MediaHttpClient
+import net.agora.app.media.TempFileSweeper
 
 class AgoraApplication : Application(), ImageLoaderFactory {
 
@@ -31,6 +33,11 @@ class AgoraApplication : Application(), ImageLoaderFactory {
         // 🌟 Load the theme choice before the first Activity is created so the
         //    splash/window background and the first Compose frame agree.
         ThemePreferenceStore.init(this)
+
+        // 🌟 Reclaim cache accidentally left behind by a previous run that was
+        //    killed mid-upload (a 720p transcode can leave tens of MB behind,
+        //    invisible in cacheDir). Off the main thread; never blocks startup.
+        TempFileSweeper.sweepAsync(this)
     }
 
     override fun newImageLoader(): ImageLoader {
@@ -42,6 +49,18 @@ class AgoraApplication : Application(), ImageLoaderFactory {
             .okHttpClient(MediaHttpClient.okHttpClient)
             .components {
                 add(VideoFrameDecoder.Factory())
+            }
+            // ✦ HARD DISK CEILING — 25 MB.
+            //   Cloudinary URLs are requested as ~30 KB thumbnails, so this holds
+            //   hundreds of feed images. Together with VideoCache's 35 MB the
+            //   app can never exceed ~60 MB of media on disk, on any device.
+            //   An explicit cache also stops Coil's default (2% of free space,
+            //   up to 250 MB) from growing on a large-storage phone.
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("image_cache"))
+                    .maxSizeBytes(25L * 1024 * 1024)
+                    .build()
             }
             .crossfade(true)
             .build()

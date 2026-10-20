@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
+import net.agora.app.media.CloudinaryUrlHelper
 import net.agora.app.ui.theme.rememberAgoraColors
 
 private const val TAG = "PostMedia"
@@ -64,7 +65,7 @@ private val PlateCornerRadius = 22.dp
  * of floating at arbitrary heights.
  *
  * The underlying media components are deliberately untouched:
- *  - videos still render through [FeedVideoPlayer] (pooled ExoPlayer),
+ *  - videos render a Cloudinary poster frame through [FeedVideoPlayer]; no
  *  - images still load through [PostMediaImage] (SubcomposeAsyncImage with
  *    explicit loading/error slots and Coil error logging).
  */
@@ -101,8 +102,7 @@ fun PostMediaCarousel(
                     FeedVideoPlayer(
                         videoUrl = url,
                         onVideoClick = { onMediaClick(url) },
-                        modifier = Modifier.fillMaxSize(),
-                        cornerRadius = PlateCornerRadius
+                        modifier = Modifier.fillMaxSize()
                     )
                 } else {
                     PostMediaImage(
@@ -169,9 +169,12 @@ private fun PostMediaImage(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val request = remember(context, url) {
+    // ✦ ~30 KB thumbnail instead of the full asset. The tap target hands the
+    //   RAW url to the fullscreen viewer, which requests the 1440 px version.
+    val thumbUrl = remember(url) { CloudinaryUrlHelper.feedImageUrl(url) }
+    val request = remember(context, thumbUrl, url) {
         ImageRequest.Builder(context)
-            .data(url)
+            .data(thumbUrl)
             .listener(onError = { _, result ->
                 // Coil 2.x hands the callback a Result wrapper, not the Throwable itself.
                 val throwable = result.throwable

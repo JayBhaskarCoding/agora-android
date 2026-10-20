@@ -915,3 +915,136 @@ set `clipToOutline` to the container's shape — or it must not use
 4. Play/pause, mute toggle, rotation during playback, scroll the post away and
    back (pool reuse) — no black flash, no second surface, no stale frame.
 5. Tap the preview: fullscreen player opens with controls, `fit`, unaffected.
+
+---
+
+## 13. Media pipeline: thumbnails, compression, deletion, cache ceilings
+
+### The three symptoms and what actually caused them
+
+| Symptom | Root cause |
+|---|---|
+| Cache hit 85 MB after three short videos | Two independent amplifiers. `VideoPreloader` read the first 3 MB of each of the next two videos on **every scroll position** — pure download with no user intent. Worse, `FeedPlayerPool.acquire()` was called from composition and immediately `prepare()`d a `ProgressiveMediaSource`, so every video cell that became *visible* pulled its MP4 container plus a decoder frame. Both wrote into `SimpleCache`, which was allowed to grow to **200 MB**, so nothing ever evicted. |
+| Deleting a post left assets in Cloudinary | `FeedViewModel.deletePost` was `supabase.from("posts").delete { … }` and nothing else. The row was the only place the media URLs existed; once it was gone, the assets were unreachable *by design*. |
+| Full-size media uploaded / downloaded | `compressImage` re-encoded at 80 % but never **downscaled** (a 12 MP photo stayed 12 MP), and every viewer rendered the original URL. No derived renditions existed anywhere. |
+
+### 1. Thumbnail-first feed
+
+`CloudinaryUrlHelper` turns one raw upload URL into the four renditions the UI
+needs, by rewriting the segment after `/upload/`:
+
+| Purpose | Transform | Served as |
+|---|---|---|
+| feed image | `f_auto,q_auto:eco,w_600` | ~30 KB WebP |
+| full-screen image | `f_auto,q_auto:good,w_1440` | sharp at 5× zoom |
+| video poster | `so_auto,f_auto,q_auto:eco,w_600` | ~20–40 KB **still** |
+| video stream | `f_auto,q_auto:good,vc_auto,w_720,br_2m` | 720p H.264, ~2 Mbps |
+
+Two properties are load-bearing:
+
+- **The video poster is an image request, not a video request.** Cloudinary
+  derives a frame server-side; the device receives a WebP. That is what makes
+  "poster-only feed" cost ~30 KB instead of megabytes.
+- **Transforms are idempotent and replace, never stack.** Applying
+  `feedImageUrl` twice yields the same URL, and upgrading to the 1440 px variant
+  replaces `w_600` rather than producing `w_600,w_1440`.
+
+`FeedVideoPlayer` is now a `SubcomposeAsyncImage` of the poster plus a play
+button. It contains **no player, no `PlayerView`, no ExoPlayer** — tapping calls
+`onVideoClick`, which opens `ExpandedVideoScreen`; that screen builds its own
+player against the compressed stream URL and releases it on dispose. A player
+therefore exists only while someone is watching.
+
+**Removed because they were the cache bug:** `VideoPreloader`, `FeedPlayerPool`,
+the scroll-triggered prefetch in `FeedScreen`, the now-unused inline `PlayerView`
+layout (`view_inline_video_player.xml`) and its contract test, plus two more dead
+files (`PostVideoPlayer`, `CatboxClient`).
+
+### 2. Compression before upload
+
+`MediaCompressor` is the single entry point for both posts and avatars:
+
+- **images** decode with `inSampleSize` (never a full-size bitmap), scale so the
+  longest edge is ≤ **1440 px**, and re-encode to WebP at **80 %**;
+- **videos** go through Media3 `Transformer` → H.264/AAC, height ≤ **720**;
+- both fall back to the original bytes on failure — compression is an
+  optimisation, never a reason a post fails.
+
+**Temp files are deleted in a `finally`**, not on the success path. The old code
+deleted after a successful export and again in the `catch`, which left the file
+behind whenever the coroutine was cancelled — precisely when a user backs out of
+a long transcode. `TempFileSweeper.sweepAsync()` runs at startup and removes
+`upload_*` / `compressed_*` files older than an hour, covering the one case a
+`finally` cannot: the process being killed mid-export.
+
+### 3. Deleting the Cloudinary asset
+
+`CloudinaryClient.deleteFromCloudinary(url)` calls
+`POST https://api.cloudinary.com/v1_1/<cloud>/<resource_type>/destroy` with
+`public_id`, `timestamp`, `invalidate=true`, `api_key` and a SHA-1 signature.
+
+- `public_id` comes from `CloudinaryUrlHelper.publicId`, which strips the
+  transform segment, the `v1234/` version and the extension, and keeps folder
+  prefixes. It is careful about lookalikes: `…/upload/my_photo.jpg` is a
+  `public_id`, not a transformation.
+- `resource_type` is read from the path (`/image/`, `/video/`, `/raw/`), never
+  guessed from the extension.
+- **`invalidate` is included in the signature.** Cloudinary signs every
+  parameter that is sent; adding `invalidate=true` to the body without signing it
+  produces `Invalid Signature`, which is the classic "deletion silently does
+  nothing" failure.
+- `"not found"` is treated as success — the desired end state already holds.
+
+`deletePost` now: snapshots the media URLs **before** the row disappears →
+deletes the row → updates the feed → destroys the assets best-effort. A
+Cloudinary failure never blocks the user's delete and is logged under
+`CloudinaryDelete` for reconciliation.
+
+Avatar replacement does the same for Supabase Storage: the previous object is
+removed after the new URL is committed (best-effort, logged as `AvatarCleanup`).
+
+### 4. Cache ceilings
+
+| Cache | Ceiling | Where |
+|---|---|---|
+| Coil image disk cache | **25 MB** | `AgoraApplication.newImageLoader()` |
+| Media3 `SimpleCache` | **35 MB** | `VideoCache.MAX_CACHE_SIZE_BYTES` |
+| total | **~60 MB** | worst case, any device |
+
+Coil's default is 2 % of free space (up to 250 MB), which on a 128 GB phone is
+by itself larger than the whole cache budget — the explicit `DiskCache` is what
+makes the ceiling real rather than incidental.
+
+### ⚠️ Security: the Cloudinary secret in the APK
+
+`deleteFromCloudinary` signs requests on-device, so `CLOUDINARY_API_SECRET` ends
+up in `BuildConfig` and therefore in the APK. **Anyone can extract it and call
+the destroy API on the entire Cloudinary account.** This is shipped because it
+was requested and it is functionally correct, but it is not safe for production
+at scale:
+
+- short term: use a dedicated API key restricted in the Cloudinary console
+  (Settings → Upload → restricted actions) so a leak cannot do more than delete
+  post media;
+- correct fix: move the signing to a **Supabase Edge Function** that holds the
+  secret server-side and verifies the caller's JWT owns the post before
+  destroying. The app then calls the function, and the APK contains no secret.
+
+Keys are optional on purpose: without them the build still succeeds, deletion
+logs `CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET are not set …` and the assets
+are orphaned (visible in `adb logcat -s CloudinaryDelete`).
+
+### Verify by hand
+
+1. Cold start, scroll a feed with three videos: `adb shell du -sh cache` stays in
+   the low-MB range; `adb logcat -s CloudinaryDelete` is silent (nothing to
+   destroy).
+2. Kill the network and scroll: posters fail into the black plate, the play
+   button remains, nothing crashes.
+3. Tap a video: fullscreen starts quickly (720p rendition) and `dumpsys media.player`
+   shows one player; back out → it is released.
+4. Post a photo > 1440 px: the uploaded `secure_url` reports `w_1440` and the
+   size is a fraction of the original.
+5. Delete that post: `CloudinaryDelete: destroyed image/…` in logcat, and the
+   asset is gone from the Cloudinary media library.
+6. `adb shell ls cache/` after a cancelled upload shows no `compressed_*` files.
