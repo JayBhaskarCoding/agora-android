@@ -8,8 +8,8 @@ app never sees the intent — no crash, no logcat entry, nothing to debug.
 |---|---|---|
 | 1 | An exported activity declares `https` + `host="agora.in.net"` + `pathPrefix="/post/"` with `autoVerify="true"` | `app/src/main/AndroidManifest.xml` ✅ |
 | 2 | `https://agora.in.net/.well-known/assetlinks.json` is served over HTTPS, `200`, `Content-Type: application/json`, **no redirects** | this folder — ⬜ not deployed yet |
-| 3 | That file lists `net.in.agora` (both the applicationId and the Kotlin namespace since
-the package migration — see engineering-notes §9) with the SHA-256 of the certificate that signed the **installed** APK | ⬜ |
+| 3 | That file lists `net.in.agora` (the applicationId — **not** the Kotlin namespace, which
+must stay `com.example.agora` because `in` is a Kotlin keyword; §9) with the SHA-256 of the certificate that signed the **installed** APK | ⬜ |
 | 4 | The user (or Play) has not disabled link handling for the app | Play Console / device settings |
 
 ## Deploy the file

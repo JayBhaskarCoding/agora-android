@@ -460,29 +460,64 @@ without the black card, and `isDark` is a parameter (defaulting to
 
 ### Decisions
 
-**`applicationId = "net.in.agora"` and `namespace = "net.in.agora"`.**
-These were decoupled for one release (app id moved, namespace stayed at the template
-value) purely to keep the Play-identity change reviewable on its own. They are now
-unified, because a `com.example.*` Kotlin package cannot be published or defended:
+**`applicationId = "net.in.agora"`, `namespace = "com.example.agora"` — they cannot
+be the same, and that is a language constraint, not a preference.**
 
-- every source tree lives under `app/src/{main,test,androidTest}/java/net/in/agora/**`
-  and every declaration reads `package net.in.agora…`;
-- `R` and `BuildConfig` are generated into `net.in.agora`, which is why files in
-  `net.in.agora.ui` import `net.in.agora.R` explicitly (it is a sibling package, not
-  a parent — that import existed before the rename too, pointing at the old root);
+> ⚠️ `net.in.agora` is **not a legal Kotlin package**. `in` is a *hard keyword*, so
+> `package net.in.agora` fails to parse:
+>
+> ```
+> AgoraApplication.kt:1:13 Syntax error:
+> Package name must be a '.'-separated identifier list.
+> ```
+>
+> Column 13 is the `i` of `in`. Every `import net.in.agora.…` is rejected the same
+> way. Java accepts the identical name (it is not a Java keyword), which is why the
+> applicationId `net.in.agora` is perfectly valid and ships — the restriction applies
+> only to the Kotlin-visible package. The only workarounds are backticks in every
+> package and import line (``package net.`in`.agora``, ~400 sites, and every future
+> file must remember) or a different package. Neither is worth it for a name users
+> never see.
+>
+> **This is not catchable by source inspection or grammar parsers.** tree-sitter
+> parsed all 98 files as valid — `in` is lexed as an ordinary `identifier`; keyword
+> rejection is a compiler rule. `PackageDeclarationContractTest` now encodes it so
+> the mistake fails in `./gradlew test` rather than at the first line of the first
+> file.
+
+So the two values are deliberately decoupled:
+
+| value | what it is | why |
+|---|---|---|
+| `applicationId = "net.in.agora"` | the public identity: Play listing, device package, `<data android:scheme>`, OAuth Android client, FCM registration | plain string; `in` is legal here |
+| `namespace = "com.example.agora"` | internal only: `R`, `BuildConfig`, Kotlin class names, R8 rule matching | must be a compileable Kotlin package |
+
+Consequences to keep in mind:
+
+- sources live under `app/src/{main,test,androidTest}/java/com/example/agora/**` and
+  read `package com.example.agora…`;
+- `R` and `BuildConfig` are generated into `com.example.agora`, so files in
+  `com.example.agora.ui` import `com.example.agora.R` explicitly (sibling package,
+  not a parent);
 - manifest components stay **relative** (`.MainActivity`), so they resolve against
-  the namespace and would survive another divergence;
+  the namespace regardless of the app id;
 - **R8 keep rules must follow the namespace.** `proguard-rules.pro` matches
-  `net.in.agora.**`; a stale prefix does not fail the build — it silently removes the
-  shrunk-away `$$serializer` classes and throws `SerializationException` at runtime,
-  in release only.
+  `com.example.agora.**`. A stale prefix does not fail the build — it silently drops
+  the `$$serializer` classes and throws `SerializationException` at runtime, in
+  release only. (A mechanical rename left exactly one such rule behind; the
+  verification grep caught it, which is why the check exists.)
 
-Rename mechanics, for the next time: `git mv` the three package directories (git
-detects the renames and keeps blame), rewrite `com.example.agora` → `net.in.agora`
-across `*.kt`, then assert **zero** package/path mismatches by comparing each file's
-`package` line with its directory. Update `proguard-rules.pro`, `namespace`, and any
-fully-qualified reference in docs/tests in the same commit — a namespace change is
-never a two-line diff.
+If a "prettier" package is ever wanted, the only legal options are a name without the
+`in` segment (`net.agora.app`), or backticks. Both are a mechanical, whole-repo change:
+`git mv` the three trees, rewrite package/import/KDoc references, update `namespace`
+and every rule in `proguard-rules.pro`, then assert **zero** package/path mismatches
+and **zero** hard-keyword segments before committing. Caveat: the namespace is baked
+into the APK's class names, so changing it later is cheap only *before* the first
+release; crash-report symbolication history is tied to it.
+
+> ⚠️ Changing `applicationId` makes `net.in.agora` a *new* app to Play. Installs of
+> `com.example.agora` cannot be upgraded in place; the old listing must be retired or
+> kept as a separate track.
 
 > ⚠️ Changing `applicationId` makes `net.in.agora` a *new* app to Play. Installs of
 > `com.example.agora` cannot be upgraded in place; the old listing must be retired or
@@ -586,9 +621,10 @@ configuration facts made it impossible to succeed:
    handshake are missing, from the same cause.
 3. **The Android OAuth client was registered for the old package.** OAuth
    Android clients are keyed on `applicationId` + signing SHA-1. `applicationId`
-   moved from `com.example.agora` to `net.in.agora` (§9; the namespace followed
-   later, but OAuth clients only ever key on the applicationId), so any client
-   created for the old package stopped matching the moment the id changed.
+   moved from `com.example.agora` to `net.in.agora` (§9). OAuth clients key on the
+   applicationId only, so any client created for the old package stopped matching
+   the moment the id changed — the Kotlin namespace, which stayed
+   `com.example.agora`, is irrelevant to Google.
 
 Neither is fixable in Kotlin. What *was* fixable is that the failure was
 invisible: the catch block mapped every `GetCredentialException` to
@@ -625,7 +661,8 @@ message for the rest.
 
 ```bash
 # 1. what the app thinks it is
-adb logcat -c && adb shell am start -n net.in.agora/net.in.agora.MainActivity
+adb logcat -c && adb shell am start -n net.in.agora/com.example.agora.MainActivity
+#                                  ^app id        ^namespace (they differ: §9)
 adb logcat -s GoogleAuth
 # -> preflight package=net.in.agora sha1=… serverClientId=…(project …) firebaseProject=1025610780303
 
@@ -867,13 +904,13 @@ set `clipToOutline` to the container's shape — or it must not use
 - `app/src/main/res/layout/view_inline_video_player.xml` — new; `PlayerView`
   with `surface_type="texture_view"`, `use_controller="false"`, black
   background, rationale in comments.
-- `app/src/main/java/net/in/agora/ui/FeedVideoPlayer.kt` — inflates that
+- `app/src/main/java/com/example/agora/ui/FeedVideoPlayer.kt` — inflates that
   layout, keeps `RESIZE_MODE_ZOOM`, adds `clipToOutline` +
   `roundedOutline(cornerRadius)`, new optional `cornerRadius: Dp = 22.dp`
   parameter.
-- `app/src/main/java/net/in/agora/ui/PostMediaCarousel.kt` — `PlateCornerRadius`
+- `app/src/main/java/com/example/agora/ui/PostMediaCarousel.kt` — `PlateCornerRadius`
   constant shared by the plate shape and the player.
-- `app/src/main/java/net/in/agora/ui/PostVideoPlayer.kt` — unused, now
+- `app/src/main/java/com/example/agora/ui/PostVideoPlayer.kt` — unused, now
   documented so it cannot be wired up with the same bug.
 
 ### Verify by hand

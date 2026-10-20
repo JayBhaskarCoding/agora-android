@@ -62,15 +62,22 @@ val defaultGoogleWebClientId =
 android {
     // ✦ NAMESPACE = the Kotlin/Java package, the R + BuildConfig package and
     //   the base for every relative class name in AndroidManifest.xml
-    //   (".MainActivity" -> net.in.agora.MainActivity).
+    //   (".MainActivity" -> com.example.agora.MainActivity).
     //
-    //   It now matches `applicationId` exactly. Sources live under
-    //   app/src/*/java/net/in/agora/** and every declaration reads
-    //   `package net.in.agora…`; R8 keep rules in proguard-rules.pro use the
-    //   same prefix. The two must be changed together — changing only this
-    //   line leaves R and BuildConfig unreachable and every relative manifest
-    //   component pointing at a class that does not exist.
-    namespace = "net.in.agora"
+    //   ⚠️ It CANNOT be net.in.agora, even though that is the applicationId.
+    //   `in` is a HARD KEYWORD in Kotlin, so `package net.in.agora` is a
+    //   syntax error ("Package name must be a '.'-separated identifier list"),
+    //   and every `import net.in.agora.…` is rejected with it. Java would
+    //   accept the same name; Kotlin does not. The only ways around it are
+    //   backticks in every package/import line (`package net.`in`.agora`) or a
+    //   different package — neither is worth it for a name users never see.
+    //
+    //   So the two are deliberately decoupled: `applicationId` below is the
+    //   public identity (Play, device, deep-link scheme, OAuth clients), and
+    //   this namespace is internal only (R, BuildConfig, class names).
+    //   Consequence to remember: R8 keep rules match the NAMESPACE, not the
+    //   applicationId — see proguard-rules.pro.
+    namespace = "com.example.agora"
 
     // Compile against the newest stable tooling; what Play validates is
     // targetSdk, which is pinned to stable API 36 below.
