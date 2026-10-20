@@ -57,7 +57,7 @@ fun optionalLocalProperty(name: String): String? =
  * local.properties, or pass `-PGOOGLE_WEB_CLIENT_ID=…`.
  */
 val defaultGoogleWebClientId =
-    "925021938686-kqbu0iv5q4gkkoq1sqbnmrtk1uj83itk.apps.googleusercontent.com"
+    "1025610780303-rmoc5h0pioc8799psr750orvp00rj597.apps.googleusercontent.com"
 
 android {
     // ✦ NAMESPACE stays com.example.agora on purpose: it is the Kotlin/Java
