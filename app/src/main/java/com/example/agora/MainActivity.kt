@@ -5,8 +5,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.verify.domain.DomainVerificationUserState
 import android.content.pm.PackageManager
+import android.content.pm.verify.domain.DomainVerificationManager
+import android.content.pm.verify.domain.DomainVerificationUserState
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -218,11 +219,15 @@ class MainActivity : ComponentActivity() {
      *   verdict for `agora.in.net` once per process (debug builds only):
      *
      *     adb logcat -s DeepLink
-     *     D DeepLink: app-links agora.in.net=verified (link handling allowed=true)
-     *     D DeepLink: app-links agora.in.net=denied   (link handling allowed=true)
+     *     D DeepLink: app-links allowed=true hosts=[agora.in.net=verified]
      *
-     *   `denied` / `unverified` means assetlinks.json is missing, stale or
-     *   signed with a different certificate than the installed APK.
+     *   `unverified` / `approved-by-user` means assetlinks.json is missing,
+     *   stale or signed with a different certificate than the installed APK —
+     *   `approved-by-user` additionally means the user picked the app by hand.
+     *
+     *   The state comes from [DomainVerificationManager] (API 31+), NOT from
+     *   PackageManager: `PackageManager.getDomainVerificationUserState` is not
+     *   public API, which is why this used to fail to compile.
      */
     private fun logAppLinkVerification() {
         if (!BuildConfig.DEBUG) return
@@ -230,9 +235,21 @@ class MainActivity : ComponentActivity() {
             Log.d(TAG_DEEP_LINK, "app-links verification state requires API 31+")
             return
         }
+        logAppLinkVerificationS()
+    }
+
+    /** API 31+ body, split out so the version guard satisfies lint's NewApi. */
+    @RequiresApi(Build.VERSION_CODES.S)
+    private fun logAppLinkVerificationS() {
         try {
-            @Suppress("DEPRECATION")
-            val state = packageManager.getDomainVerificationUserState(packageName)
+            val manager = getSystemService(DomainVerificationManager::class.java)
+            if (manager == null) {
+                Log.d(TAG_DEEP_LINK, "app-links DomainVerificationManager unavailable")
+                return
+            }
+            // Returns null when the package declares no http(s) domains at all —
+            // i.e. the manifest lost its App Links filter.
+            val state = manager.getDomainVerificationUserState(packageName)
             if (state == null) {
                 Log.d(TAG_DEEP_LINK, "app-links no domain verification state for $packageName")
                 return
@@ -245,7 +262,9 @@ class MainActivity : ComponentActivity() {
                 "app-links allowed=${state.isLinkHandlingAllowed} hosts=[$hosts]"
             )
         } catch (e: Exception) {
-            Log.d(TAG_DEEP_LINK, "app-links verification lookup failed: ${e.message}")
+            // PackageManager.NameNotFoundException, or an OEM build without the
+            // service. Diagnostics must never be able to crash the launch path.
+            Log.d(TAG_DEEP_LINK, "app-links verification lookup failed: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
 

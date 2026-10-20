@@ -266,39 +266,45 @@ object DeepLinkRouter {
         return parsed.toString().equals(value, ignoreCase = true)
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Small JVM-only helpers (kept here so the parser stays testable)
-    // ─────────────────────────────────────────────────────────────────────────
+}
 
-    private fun parseQuery(rawQuery: String?): Map<String, String> {
-        if (rawQuery.isNullOrBlank()) return emptyMap()
-        return rawQuery.split('&')
-            .mapNotNull { pair ->
-                if (pair.isEmpty()) return@mapNotNull null
-                val key = pair.substringBefore('=', "")
-                if (key.isEmpty()) return@mapNotNull null
-                val value = pair.substringAfter('=', "")
-                decodeQueryValue(key) to decodeQueryValue(value)
-            }
-            .toMap()
+// ─────────────────────────────────────────────────────────────────────────────
+// Small JVM-only helpers.
+//
+// Deliberately file-level `private` rather than members of DeepLinkRouter:
+// PendingPostLink (a nested class) calls encodeQueryValue from toRoute(), and a
+// top-level private function is unambiguously visible to every declaration in
+// this file — no reliance on nested-class access to the enclosing object.
+// ─────────────────────────────────────────────────────────────────────────────
+
+private fun parseQuery(rawQuery: String?): Map<String, String> {
+    if (rawQuery.isNullOrBlank()) return emptyMap()
+    return rawQuery.split('&')
+        .mapNotNull { pair ->
+            if (pair.isEmpty()) return@mapNotNull null
+            val key = pair.substringBefore('=', "")
+            if (key.isEmpty()) return@mapNotNull null
+            val value = pair.substringAfter('=', "")
+            decodeQueryValue(key) to decodeQueryValue(value)
+        }
+        .toMap()
+}
+
+private fun decodeQueryValue(value: String): String =
+    try {
+        URLDecoder.decode(value, "UTF-8")
+    } catch (_: Exception) {
+        value
     }
 
-    private fun decodeQueryValue(value: String): String =
-        try {
-            URLDecoder.decode(value, "UTF-8")
-        } catch (_: Exception) {
-            value
-        }
-
-    /**
-     * Percent-encodes a query value for the NavHost route. `URLEncoder` emits
-     * `+` for spaces, which a URI parser reads as a literal plus, so it is
-     * converted back to `%20`.
-     */
-    private fun encodeQueryValue(value: String): String =
-        try {
-            URLEncoder.encode(value, "UTF-8").replace("+", "%20")
-        } catch (_: Exception) {
-            value
-        }
-}
+/**
+ * Percent-encodes a query value for the NavHost route. `URLEncoder` emits `+`
+ * for spaces, which a URI parser reads as a literal plus, so it is converted
+ * back to `%20`.
+ */
+private fun encodeQueryValue(value: String): String =
+    try {
+        URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+    } catch (_: Exception) {
+        value
+    }

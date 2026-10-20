@@ -692,7 +692,10 @@ an on-device `DeepLinkIntentTest` (10 cases) that proves both overloads agree.
   single line separates the two failures above definitively.
 - Debug builds also log Android's verification verdict
   (`app-links allowed=true hosts=[agora.in.net=verified]`), so an `assetlinks`
-  problem is visible without `adb shell pm get-app-links`.
+  problem is visible without `adb shell pm get-app-links`. The state comes from
+  `DomainVerificationManager` (API 31+, via `getSystemService`) — there is no
+  public `PackageManager.getDomainVerificationUserState`, so that call does not
+  compile.
 - Cold-start injection is gated on `savedInstanceState == null`: a rotation
   replays the original `ACTION_VIEW` intent, and re-submitting it could stack a
   second copy of the post screen on top of the restored one.
