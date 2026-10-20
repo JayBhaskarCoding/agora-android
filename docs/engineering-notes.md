@@ -425,6 +425,27 @@ predicate — `DateOfBirth.shouldShowMinorNotice(dob)` — which requires a *val
 inside `[today − 120y, today]` and an age of `0..17`. A blank, malformed, future or
 120-year-plus DOB can never render "Minor account notice". See `DateOfBirthTest`.
 
+### The banner was dark-only
+
+`MinorAccountWarningBanner` shipped with four hardcoded dark-mode colours and no
+light branch: a 95%-opaque `#1A1710` surface, cream `#F7EDDC` body text, a
+`#FFD48A` title and an 8dp shadow. On the pearl canvas it rendered as a black
+slab with an amber halo — the one element on the screen belonging to the other
+theme. It is now theme-resolved through `MinorBannerPalette` exactly the way
+`authSubtitleColor(isDark)` / `agoraAuthFieldColors(isDark)` handle the split:
+
+| token | dark | light |
+|---|---|---|
+| surface | `#1A1710` @ 95% | `#FFF7E6` cream |
+| accent (border · icon) | amber-500 `#F59E0B` | amber-700 `#B45309` |
+| title | `#FFD48A` | amber-800 `#92400E` (6.7:1) |
+| body | `#F7EDDC` | warm ink `#5A4A32` (8.1:1) |
+| shadow | 8 dp | 2 dp |
+
+Dark mode is byte-for-byte unchanged. Light mode keeps the notice legible
+without the black card, and `isDark` is a parameter (defaulting to
+`LocalDarkTheme.current`) so a preview can force either mode.
+
 ---
 
 ## 9. Production release configuration (applicationId, targeting, R8)

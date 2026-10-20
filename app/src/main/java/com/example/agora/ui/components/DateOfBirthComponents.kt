@@ -32,8 +32,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.agora.ui.theme.LocalDarkTheme
 import com.example.agora.utils.DateOfBirth
 import java.time.LocalDate
 
@@ -61,17 +63,64 @@ class DobSelectableDates(
         year in oldestAllowed.year..newestAllowed.year
 }
 
-private val MinorBannerAmber = Color(0xFFF59E0B)
-private val MinorBannerSurface = Color(0xF21A1710)
-private val MinorBannerTitle = Color(0xFFFFD48A)
-private val MinorBannerBody = Color(0xFFF7EDDC)
+/**
+ * 🌟 CAUTION PALETTE — resolved per theme.
+ *
+ * The banner used to be a fixed dark card (`#1A1710` surface, cream text) that
+ * rendered identically in both modes. On the pearl canvas that is a black slab
+ * with a glowing amber halo: legible, but it is the only element on the screen
+ * that belongs to another theme, so it reads as a bug next to the light cards,
+ * fields and hairlines around it.
+ *
+ * Amber is not a Material 3 colour role in this app (tertiary is cyan), so the
+ * two ramps are declared here, mirroring how `authSubtitleColor(isDark)` and
+ * `agoraAuthFieldColors(isDark)` already handle the light/dark split:
+ *
+ * | token  | dark      | light     | notes                                   |
+ * |--------|-----------|-----------|-----------------------------------------|
+ * | surface| `#1A1710` | `#FFF7E6` | 95% black glass → warm cream wash       |
+ * | border | amber     | amber-700 | hairline at 55% / 45%                   |
+ * | title  | `#FFD48A` | `#92400E` | amber-800 → 6.7:1 on the cream          |
+ * | body   | `#F7EDDC` | `#5A4A32` | warm ink → 8.1:1 on the cream           |
+ * | shadow | 8dp       | 2dp       | a cream block must not cast a black box |
+ */
+@Immutable
+private data class MinorBannerPalette(
+    val surface: Color,
+    val accent: Color,
+    val title: Color,
+    val body: Color,
+    val shadowElevation: Dp
+)
+
+private val MinorBannerPaletteDark = MinorBannerPalette(
+    surface = Color(0xF21A1710),              // translucent obsidian glass
+    accent = Color(0xFFF59E0B),               // amber-500
+    title = Color(0xFFFFD48A),
+    body = Color(0xFFF7EDDC),
+    shadowElevation = 8.dp
+)
+
+private val MinorBannerPaletteLight = MinorBannerPalette(
+    surface = Color(0xFFFFF7E6),              // warm cream, sits under pearl
+    accent = Color(0xFFB45309),               // amber-700
+    title = Color(0xFF92400E),                // amber-800
+    body = Color(0xFF5A4A32),                 // warm ink
+    shadowElevation = 2.dp
+)
+
+/** Picks the palette for the active theme; [isDark] can be forced in previews. */
+@Composable
+private fun minorBannerPalette(isDark: Boolean = LocalDarkTheme.current): MinorBannerPalette =
+    if (isDark) MinorBannerPaletteDark else MinorBannerPaletteLight
 
 /**
  * 🌟 Under-18 notice shown directly below the Date of Birth field.
  *
- * Informational only: it never blocks registration. Styled as a dark,
- * translucent glass card with an amber hairline + warning icon so it reads as
- * a caution without competing with the form's primary action.
+ * Informational only: it never blocks registration. Reads as a caution without
+ * competing with the form's primary action — a tinted card with an amber
+ * hairline and warning icon, warm cream on light canvases and translucent glass
+ * on dark ones (see [MinorBannerPalette]).
  *
  * [visible] MUST already be false for blank/invalid DOBs — every caller derives
  * it from [DateOfBirth.shouldShowMinorNotice], which requires a parseable date.
@@ -80,7 +129,10 @@ private val MinorBannerBody = Color(0xFFF7EDDC)
 fun MinorAccountWarningBanner(
     visible: Boolean,
     modifier: Modifier = Modifier,
+    isDark: Boolean = LocalDarkTheme.current
 ) {
+    val palette = minorBannerPalette(isDark)
+
     AnimatedVisibility(
         visible = visible,
         modifier = modifier,
@@ -92,9 +144,12 @@ fun MinorAccountWarningBanner(
                 .fillMaxWidth()
                 .padding(top = 10.dp),
             shape = RoundedCornerShape(16.dp),
-            color = MinorBannerSurface,
-            border = BorderStroke(1.dp, MinorBannerAmber.copy(alpha = 0.55f)),
-            shadowElevation = 8.dp
+            color = palette.surface,
+            border = BorderStroke(
+                1.dp,
+                palette.accent.copy(alpha = if (isDark) 0.55f else 0.45f)
+            ),
+            shadowElevation = palette.shadowElevation
         ) {
             Row(
                 modifier = Modifier
@@ -106,13 +161,16 @@ fun MinorAccountWarningBanner(
                     modifier = Modifier
                         .size(32.dp)
                         .clip(CircleShape)
-                        .background(MinorBannerAmber.copy(alpha = 0.16f)),
+                        // Light mode keeps a LOWER alpha plate so the cream
+                        // stays warm instead of going orange; amber-700 on the
+                        // resulting #F4E0C7 still clears 3:1 for the icon.
+                        .background(palette.accent.copy(alpha = if (isDark) 0.16f else 0.14f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.WarningAmber,
                         contentDescription = null,
-                        tint = MinorBannerAmber,
+                        tint = palette.accent,
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -122,7 +180,7 @@ fun MinorAccountWarningBanner(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Minor account notice (Under 18)",
-                        color = MinorBannerTitle,
+                        color = palette.title,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.1.sp
@@ -132,7 +190,7 @@ fun MinorAccountWarningBanner(
                         text = "Because you are under 18, certain features, content, " +
                             "and social interactions may be restricted to help keep " +
                             "your experience safe.",
-                        color = MinorBannerBody,
+                        color = palette.body,
                         fontSize = 12.sp,
                         lineHeight = 17.sp
                     )
