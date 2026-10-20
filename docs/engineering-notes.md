@@ -318,7 +318,7 @@ block-bodied function relied on a trailing expression) is fixed.
 ### Verify manually
 
 1. Play a Catbox video (feed, post detail, fullscreen). It must render instead of
-   going black; `adb shell run-as net.in.agora ls -l cache/media3_video_cache`
+   going black; `adb shell run-as net.agora.app ls -l cache/media3_video_cache`
    must show non-zero files.
 2. On failure: `adb logcat -s ExoPlayerHelper MediaHttp` prints (a) whether an HTTP
    status existed, and (b) the DNS/probe verdict naming the guilty layer.
@@ -460,68 +460,61 @@ without the black card, and `isDark` is a parameter (defaulting to
 
 ### Decisions
 
-**`applicationId = "net.in.agora"`, `namespace = "com.example.agora"` — they cannot
-be the same, and that is a language constraint, not a preference.**
+**`applicationId = "net.agora.app"` and `namespace = "net.agora.app"` — one identity,
+and it has to be a legal Kotlin package.**
 
-> ⚠️ `net.in.agora` is **not a legal Kotlin package**. `in` is a *hard keyword*, so
-> `package net.in.agora` fails to parse:
+> ⚠️ The identity **cannot** be `net.in.agora`, the domain-derived spelling. `in` is a
+> *hard keyword* in Kotlin, so `package net.in.agora` fails to parse:
 >
 > ```
 > AgoraApplication.kt:1:13 Syntax error:
 > Package name must be a '.'-separated identifier list.
 > ```
 >
-> Column 13 is the `i` of `in`. Every `import net.in.agora.…` is rejected the same
-> way. Java accepts the identical name (it is not a Java keyword), which is why the
-> applicationId `net.in.agora` is perfectly valid and ships — the restriction applies
-> only to the Kotlin-visible package. The only workarounds are backticks in every
-> package and import line (``package net.`in`.agora``, ~400 sites, and every future
-> file must remember) or a different package. Neither is worth it for a name users
-> never see.
+> Column 13 is the `i` of `in`, and every `import net.in.agora.…` fails the same way.
+> Java accepts the identical name (it is not a Java keyword), which is why an
+> applicationId of `net.in.agora` would be perfectly valid — the restriction applies
+> only to the Kotlin-visible package. Since the namespace must be a real package and
+> the app should have **one** identity, both are now `net.agora.app`.
 >
 > **This is not catchable by source inspection or grammar parsers.** tree-sitter
 > parsed all 98 files as valid — `in` is lexed as an ordinary `identifier`; keyword
-> rejection is a compiler rule. `PackageDeclarationContractTest` now encodes it so
-> the mistake fails in `./gradlew test` rather than at the first line of the first
-> file.
+> rejection is a compiler rule. `PackageDeclarationContractTest` encodes it so the
+> mistake fails in `./gradlew test` instead of at the first line of the first file.
 
-So the two values are deliberately decoupled:
+What `net.agora.app` is and what it is not:
 
-| value | what it is | why |
+| | value | why |
 |---|---|---|
-| `applicationId = "net.in.agora"` | the public identity: Play listing, device package, `<data android:scheme>`, OAuth Android client, FCM registration | plain string; `in` is legal here |
-| `namespace = "com.example.agora"` | internal only: `R`, `BuildConfig`, Kotlin class names, R8 rule matching | must be a compileable Kotlin package |
+| public origin | `https://agora.in.net` | the web contract; independent of the app id |
+| app identity | `net.agora.app` | `namespace` **and** `applicationId`; inverts the domain and drops the un-representable `in` segment |
+| custom scheme | `net.agora.app://` | derived from the app identity, mirrors it exactly |
+| retired | `com.example.agora`, `net.in.agora`, `auth-agora.info`, `auth-agora.online` | must not reappear |
 
-Consequences to keep in mind:
+Consequences that follow from having one identity:
 
-- sources live under `app/src/{main,test,androidTest}/java/com/example/agora/**` and
-  read `package com.example.agora…`;
-- `R` and `BuildConfig` are generated into `com.example.agora`, so files in
-  `com.example.agora.ui` import `com.example.agora.R` explicitly (sibling package,
-  not a parent);
-- manifest components stay **relative** (`.MainActivity`), so they resolve against
-  the namespace regardless of the app id;
-- **R8 keep rules must follow the namespace.** `proguard-rules.pro` matches
-  `com.example.agora.**`. A stale prefix does not fail the build — it silently drops
-  the `$$serializer` classes and throws `SerializationException` at runtime, in
-  release only. (A mechanical rename left exactly one such rule behind; the
-  verification grep caught it, which is why the check exists.)
+- sources live under `app/src/{main,test,androidTest}/java/net/agora/app/**` and read
+  `package net.agora.app…`;
+- `R` and `BuildConfig` are generated into `net.agora.app`, so files in
+  `net.agora.app.ui` import `net.agora.app.R` explicitly (sibling package, not parent);
+- manifest components stay **relative** (`.MainActivity`) and resolve against the
+  namespace;
+- **R8 keep rules match the namespace**, which is now the same string as the app id —
+  `proguard-rules.pro` uses `net.agora.app.**`. A stale prefix does not fail the build;
+  it silently drops the `$$serializer` classes and throws `SerializationException` in
+  release only.
 
-If a "prettier" package is ever wanted, the only legal options are a name without the
-`in` segment (`net.agora.app`), or backticks. Both are a mechanical, whole-repo change:
-`git mv` the three trees, rewrite package/import/KDoc references, update `namespace`
-and every rule in `proguard-rules.pro`, then assert **zero** package/path mismatches
-and **zero** hard-keyword segments before committing. Caveat: the namespace is baked
-into the APK's class names, so changing it later is cheap only *before* the first
-release; crash-report symbolication history is tied to it.
-
-> ⚠️ Changing `applicationId` makes `net.in.agora` a *new* app to Play. Installs of
-> `com.example.agora` cannot be upgraded in place; the old listing must be retired or
-> kept as a separate track.
-
-> ⚠️ Changing `applicationId` makes `net.in.agora` a *new* app to Play. Installs of
-> `com.example.agora` cannot be upgraded in place; the old listing must be retired or
-> kept as a separate track.
+> ⚠️ **This changes the Play identity again.** `net.agora.app` is a *new* app to Play
+> and Android: nothing installed under `com.example.agora` or `net.in.agora` can be
+> upgraded in place. Do this before the first store upload and it costs nothing;
+> after it, everything below must be recreated:
+>
+> | external identity | action |
+> |---|---|
+> | `app/google-services.json` | add an **Android app for `net.agora.app`** in the Firebase console (project 1025610780303) and download the new file — the plugin fails the build with *"No matching client found for package name 'net.agora.app'"* until then. **Never hand-edit this file.** |
+> | Google OAuth **Android** client | recreate with package name `net.agora.app` + the SHA-1 of every signing certificate (§10) |
+> | `/.well-known/assetlinks.json` | list `net.agora.app`, not the old ids (`docs/app-links/`) |
+> | Supabase redirect allow-list | `net.agora.app://**` (the setup script already writes it) |
 
 **`targetSdk = 36`, `compileSdk` stays on 37.** Compiling against the newest platform
 is fine (AGP 9.4 supports up to API 37) — what Play validates is `targetSdk`, which is
@@ -539,7 +532,7 @@ set is still experimental.
 
 **Keep rules (`app/proguard-rules.pro`).** The release build must not crash by
 reflection, so the file protects: kotlinx.serialization (`$$serializer`, `Companion`,
-`serializer()`, `@SerialName` fields), `net.in.agora.model.**`, supabase-kt, Ktor,
+`serializer()`, `@SerialName` fields), `net.agora.app.model.**`, supabase-kt, Ktor,
 Credential Manager + Google ID, and Firebase Messaging. Note there are `@Serializable`
 DTOs outside `model/` (`utils/DisifyResponse`, `viewmodel/PostInsertRequest`,
 `PostUpdateRequest`) — the `@Serializable`-conditional rules cover them by annotation,
@@ -561,7 +554,7 @@ to anyone with access to the user's cloud backup, and restoring the device UUID 
 second handset would let two devices claim the same install identity.
 
 **Open item — Firebase.** `app/google-services.json` now carries *two* client entries so
-the Google Services plugin resolves either id. The `net.in.agora` entry still points at
+the Google Services plugin resolves either id. The app now ships as `net.agora.app`, and
 the old `mobilesdk_app_id`; register the Android app in the Firebase console and swap in
 the real file before the first production build, otherwise FCM analytics conflate the two
 packages.
@@ -612,19 +605,19 @@ configuration facts made it impossible to succeed:
    project `1025610780303`. An OAuth client id's numeric prefix *is* its project
    number, so this is provable from the repository alone.
 2. **The owning project has no OAuth clients at all.** `google-services.json`
-   now carries a real Firebase Android app for `net.in.agora`
+   now carries a real Firebase Android app for the installed applicationId
    (`mobilesdk_app_id 1:1025610780303:android:00130b70a449f1bb83aafa`), but its
    `"oauth_client"` array is still **empty**. That array is populated by the
    Firebase tooling from the project's OAuth clients, so an empty array means
    project `1025610780303` holds neither the Web client the app sends nor an
-   Android client for `net.in.agora` + the signing SHA-1. Both halves of the
+   Android client for the installed applicationId + the signing SHA-1. Both halves of the
    handshake are missing, from the same cause.
 3. **The Android OAuth client was registered for the old package.** OAuth
    Android clients are keyed on `applicationId` + signing SHA-1. `applicationId`
-   moved from `com.example.agora` to `net.in.agora` (§9). OAuth clients key on the
-   applicationId only, so any client created for the old package stopped matching
-   the moment the id changed — the Kotlin namespace, which stayed
-   `com.example.agora`, is irrelevant to Google.
+   changed twice, ending at `net.agora.app` (§9). OAuth clients key on the
+   applicationId only, so every client created for `com.example.agora` or
+   `net.in.agora` stopped matching the moment the id changed — the Kotlin
+   namespace is irrelevant to Google, but the app id is the whole key.
 
 Neither is fixable in Kotlin. What *was* fixable is that the failure was
 invisible: the catch block mapped every `GetCredentialException` to
@@ -647,7 +640,7 @@ message for the rest.
 1. Google Cloud Console → APIs & Services → Credentials, in project
    **agora-application / 1025610780303**.
 2. Create (or open) an OAuth client of type **Android**:
-   package name `net.in.agora`, plus the SHA-1 of **every** certificate you
+   package name `net.agora.app`, plus the SHA-1 of **every** certificate you
    install with — debug keystore, upload key and **Play App Signing key**
    (Play Console → App integrity).
 3. Create (or open) an OAuth client of type **Web application**. Use its client
@@ -655,16 +648,16 @@ message for the rest.
 4. Supabase dashboard → Authentication → Providers → Google: *Authorized Client
    IDs* must contain that same Web client id (it is the `aud` Supabase verifies).
 5. Wait a few minutes — OAuth client changes are not instant, and a
-   `net.in.agora` client takes up to a few hours to propagate.
+   `net.agora.app` client takes up to a few hours to propagate.
 
 ### Verify
 
 ```bash
 # 1. what the app thinks it is
-adb logcat -c && adb shell am start -n net.in.agora/com.example.agora.MainActivity
-#                                  ^app id        ^namespace (they differ: §9)
+adb logcat -c && adb shell am start -n net.agora.app/net.agora.app.MainActivity
+#                                  ^app id and namespace are the same (see §9)
 adb logcat -s GoogleAuth
-# -> preflight package=net.in.agora sha1=… serverClientId=…(project …) firebaseProject=1025610780303
+# -> preflight package=net.agora.app sha1=… serverClientId=…(project …) firebaseProject=1025610780303
 
 # 2. the SHA-1 of the artifact actually installed
 keytool -printcert -jarfile app/build/outputs/apk/debug/app-debug.apk
@@ -690,13 +683,13 @@ are no longer emitted anywhere. The App Links filter was widened:
   `/post/` was declared, so an `https://` auth redirect could never open the app;
 - **two** custom schemes in the same filter: `agora://` (what the app emits —
   FCM payloads, notification intents, NavHost deep links, every link already
-  sent to users) and `net.in.agora://` (the applicationId-derived form). A
-  manifest that declares only `net.in.agora` while `MainActivity`,
+  sent to users) and `net.agora.app://` (the applicationId-derived form). A
+  manifest that declares only `net.agora.app` while `MainActivity`,
   `PushNotificationService` and `MainScreen` still build `agora://` URIs
   silently orphans every existing notification;
 - Kotlin reads the host from `DeepLinkRouter.WEB_HOST` (single constant);
 - `backend/setup_agora_config.ps1` writes `site_url = https://agora.in.net` and
-  `uri_allow_list = ['agora://**', 'net.in.agora://**', 'https://agora.in.net/**']`.
+  `uri_allow_list = ['agora://**', 'net.agora.app://**', 'https://agora.in.net/**']`.
 
 **`/p/{id}` — short alias.** Added to the verified filter (and to `DeepLinkRouter`
 and the NavHost patterns) because a post link is pasted into chats, SMS and QR
@@ -705,31 +698,30 @@ codes, where the four characters of `/post/` are pure overhead. It is web-only:
 | shape | accepted |
 |---|---|
 | `https://agora.in.net/p/{uuid}` | ✅ |
-| `https://auth-agora.info/p/{uuid}` | ✅ (legacy host, fallback) |
-| `agora://p/{uuid}` · `net.in.agora://p/{uuid}` | ⛔ — `p` would become the authority; the custom-scheme grammar stays `post`-only |
+| `https://auth-agora.info/p/{uuid}` | ⛔ null — retired, see below |
+| `agora://p/{uuid}` · `net.agora.app://p/{uuid}` | ⛔ — `p` would become the authority; the custom-scheme grammar stays `post`-only |
 
-**Legacy host `auth-agora.info` — accepted, never emitted.** A link that has left
-the device cannot be recalled, so pre-migration URLs stay routable forever:
+**Retired origins — rejected, not routed.** `auth-agora.info` was accepted for one
+release as a courtesy to links already in circulation. It is now removed from the
+parser and from the manifest:
 
-- `DeepLinkRouter.WEB_HOSTS` contains it, so the parser resolves those links like
-  any other;
-- the manifest declares it in its **own, non-`autoVerify`** filter. This is the
-  subtle part: on Android 8–11 domain verification is all-or-nothing **per
-  filter**, so putting a retired host that serves no `assetlinks.json` into the
-  verified filter would un-verify `agora.in.net` for every user on those
-  versions. A separate filter makes the app a *candidate* for the URL (chooser on
-  a stock device) without endangering the verified host;
-- nothing generates it: `DeepLinkRouter.WEB_HOST`, the share action, Supabase
-  `site_url` and the setup script all still point at `agora.in.net`.
+- `DeepLinkRouter.WEB_HOSTS` is `{agora.in.net, www.agora.in.net}` — nothing else;
+- no legacy filter exists in `AndroidManifest.xml`, so only one verified host is
+  declared (which also keeps Android 8–11 domain verification safe: one
+  unverifiable host in an `autoVerify` filter un-verifies every host in it);
+- a link to a retired origin is the **server's** problem, not the app's: the domain
+  must 301 to `agora.in.net`. That is one redirect for every platform at once, and
+  it does not require shipping a build;
+- `auth-agora.online` was never public and stays rejected.
 
 Operational follow-ups that live outside the repository:
 
-- `https://agora.in.net/.well-known/assetlinks.json` must list `net.in.agora`
+- `https://agora.in.net/.well-known/assetlinks.json` must list `net.agora.app`
   with the Play App Signing SHA-256, or Android opens the browser.
 - Keep the **previous** web origin in the Supabase redirect allow-list until
   already-emailed magic links have expired, otherwise those links 404. Only
   `agora.in.net` is referenced by code, the manifest and the setup script.
-- The legacy `auth-agora.info` domain should keep serving a redirect to
+- The retired `auth-agora.info` domain must keep serving a 301 redirect to
   `agora.in.net` for as long as those links are in circulation; the app-side
   filter is the safety net, not a substitute.
 
@@ -751,12 +743,12 @@ Operational follow-ups that live outside the repository:
 | `https://agora.in.net/post/{uuid}` | ✅ post |
 | `https://AGORA.IN.NET/Post/{uuid}/?utm_source=…` | ✅ post (host + segment case-insensitive, trailing slash, tracking params ignored) |
 | `https://agora.in.net/p/{uuid}` | ✅ post — short alias, same UUID validation |
-| `https://auth-agora.info/post/{uuid}` · `/p/{uuid}` | ✅ post — retired host, fallback for links already shared |
-| `https://auth-agora.online/…` | ⛔ null — never re-introduced; only the `.info` origin was ever public |
+| `https://auth-agora.info/post/{uuid}` · `/p/{uuid}` | ⛔ null — retired origin, 301'd at the domain |
+| `https://auth-agora.online/…` | ⛔ null — never public |
 | `https://www.agora.in.net/post/{uuid}` | ✅ post (parser only — the manifest declares the canonical host) |
 | `http://agora.in.net/post/{uuid}` | ✅ post (defensive; the manifest only declares `https`) |
 | `agora://post/{uuid}` · `agora:///post/{uuid}` | ✅ post |
-| `net.in.agora://post/{uuid}` | ✅ post — **previously `null`** |
+| `net.agora.app://post/{uuid}` | ✅ post — **previously `null`** |
 | `…?post_id={uuid}` | ✅ post (legacy share/query fallback) |
 | Intent extras `post_id` / `comment_id` | ✅ post (FCM path, wins over `data`) |
 | `https://agora.in.net/auth-callback?code=…` | ⛔ null — must reach `handleDeeplinks` untouched |
@@ -790,7 +782,7 @@ including the `/p/` alias, the legacy host and both rejection cases.
   crash the app), logs the navigation, and deliberately omits `restoreState`
   (restoring a saved stack for the same destination could show a *different*
   post than the one just tapped).
-- NavHost `navDeepLink` patterns gained the `net.in.agora://` variants, so the
+- NavHost `navDeepLink` patterns gained the `net.agora.app://` variants, so the
   router and the NavHost can both handle exactly the same URL set.
 
 ---

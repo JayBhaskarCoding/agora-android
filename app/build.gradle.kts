@@ -62,22 +62,18 @@ val defaultGoogleWebClientId =
 android {
     // ✦ NAMESPACE = the Kotlin/Java package, the R + BuildConfig package and
     //   the base for every relative class name in AndroidManifest.xml
-    //   (".MainActivity" -> com.example.agora.MainActivity).
+    //   (".MainActivity" -> net.agora.app.MainActivity).
     //
-    //   ⚠️ It CANNOT be net.in.agora, even though that is the applicationId.
-    //   `in` is a HARD KEYWORD in Kotlin, so `package net.in.agora` is a
-    //   syntax error ("Package name must be a '.'-separated identifier list"),
-    //   and every `import net.in.agora.…` is rejected with it. Java would
-    //   accept the same name; Kotlin does not. The only ways around it are
-    //   backticks in every package/import line (`package net.`in`.agora`) or a
-    //   different package — neither is worth it for a name users never see.
+    //   namespace == applicationId on purpose: one identity everywhere, so
+    //   there is no "which one is it?" question in crash reports, R8 rules,
+    //   OAuth client registration or adb commands.
     //
-    //   So the two are deliberately decoupled: `applicationId` below is the
-    //   public identity (Play, device, deep-link scheme, OAuth clients), and
-    //   this namespace is internal only (R, BuildConfig, class names).
-    //   Consequence to remember: R8 keep rules match the NAMESPACE, not the
-    //   applicationId — see proguard-rules.pro.
-    namespace = "com.example.agora"
+    //   ⚠️ Why not net.in.agora, the domain-derived name? `in` is a HARD
+    //   KEYWORD in Kotlin: `package net.in.agora` is a syntax error ("Package
+    //   name must be a '.'-separated identifier list") and every
+    //   `import net.in.agora.…` fails with it. Java accepts it; Kotlin does
+    //   not. net.agora.app is the legal rendering of the same domain.
+    namespace = "net.agora.app"
 
     // Compile against the newest stable tooling; what Play validates is
     // targetSdk, which is pinned to stable API 36 below.
@@ -86,12 +82,18 @@ android {
     }
 
     defaultConfig {
-        // ✦ Play Store identity, and the only name the device sees.
-        //   Install/upgrade continuity belongs to THIS value alone: installs of
-        //   the old com.example.agora build cannot be upgraded in place and
-        //   must be uninstalled (they were never publishable anyway — see
-        //   docs/engineering-notes.md §9).
-        applicationId = "net.in.agora"
+        // ✦ Play Store identity — the only name the device sees: install,
+        //   upgrade continuity, FCM registration, OAuth Android client and the
+        //   <data android:scheme> all key on this value.
+        //
+        //   ⚠️ Changing this makes it a BRAND-NEW app to Play and Android: an
+        //   installed build under a different id cannot be upgraded in place.
+        //   It also invalidates every externally-registered identity — the
+        //   Firebase Android app in google-services.json, the Google OAuth
+        //   Android client (package name + SHA-1) and the package_name in
+        //   /.well-known/assetlinks.json. All three must be recreated for
+        //   net.agora.app before a release build will work (docs §9, §10).
+        applicationId = "net.agora.app"
         minSdk = 26
 
         // ✅ Google Play 2026 policy: new apps must target a STABLE API level.

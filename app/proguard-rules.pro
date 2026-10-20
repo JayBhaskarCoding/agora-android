@@ -8,15 +8,13 @@
 #   )
 #
 # ⚠️  Every class name below is a SOURCE-level name, i.e. the Kotlin package,
-#     which is the Gradle `namespace` = com.example.agora.
+#     which is the Gradle `namespace` = net.agora.app.
 #
-#     It is NOT the applicationId. The app ships as net.in.agora, but that
-#     string cannot be a Kotlin package: `in` is a hard keyword, so
-#     `package net.in.agora` does not compile (docs/engineering-notes.md §9).
-#     These rules must always follow the NAMESPACE — R8 rewrites source names;
-#     the applicationId only appears in the manifest. A stale prefix here does
-#     not fail the build, it silently strips the @Serializable serializers and
-#     throws SerializationException in release only.
+#     namespace and applicationId are the same string, so these rules match
+#     both. Keep it that way: a stale prefix here does not fail the build — it
+#     silently strips the @Serializable serializers and throws
+#     SerializationException in release only. (The old net.in.agora namespace
+#     never compiled: `in` is a Kotlin hard keyword. See §9.)
 # ═══════════════════════════════════════════════════════════════════════
 
 # --- Metadata that reflection / serializers rely on ---------------------
@@ -38,17 +36,17 @@
 
 # Serializer classes generated for every @Serializable class in the app
 # (model/, viewmodel/ request bodies, utils/DisifyResponse).
--keep,includedescriptorclasses class com.example.agora.**$$serializer { *; }
+-keep,includedescriptorclasses class net.agora.app.**$$serializer { *; }
 
 # The wire models are the contract with Supabase Postgrest/Auth and Ktor.
 # Keep the package wholesale (8 small data classes) so field names, defaults
 # and @SerialName mappings survive obfuscation.
--keep class com.example.agora.model.** { *; }
+-keep class net.agora.app.model.** { *; }
 
 # Safety net for @Serializable classes declared outside model/ (request DTOs
 # in viewmodels, third-party response DTOs in utils). Obfuscation is allowed
 # because serializers are resolved by class, not by name.
--keep,allowobfuscation @kotlinx.serialization.Serializable class com.example.agora.** { *; }
+-keep,allowobfuscation @kotlinx.serialization.Serializable class net.agora.app.** { *; }
 
 # Keep the `Companion` object and its `serializer()` for every @Serializable
 # class, including library ones. This is the canonical kotlinx rule set.
@@ -149,9 +147,9 @@
 # ---------------------------------------------------------------------
 # 5. App entry points (belt and braces — AAPT also emits keep rules)
 # ---------------------------------------------------------------------
--keep class com.example.agora.AgoraApplication { <init>(...); }
--keep class com.example.agora.MainActivity { <init>(...); }
--keep class com.example.agora.service.** { <init>(...); }
+-keep class net.agora.app.AgoraApplication { <init>(...); }
+-keep class net.agora.app.MainActivity { <init>(...); }
+-keep class net.agora.app.service.** { <init>(...); }
 
 # ---------------------------------------------------------------------
 # 6. General Android / Kotlin safety nets
