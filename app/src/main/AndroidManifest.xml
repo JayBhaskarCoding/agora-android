@@ -6,13 +6,17 @@
 
     <!--
         ✦ PRODUCTION MANIFEST NOTES
-        - applicationId is net.in.agora (see app/build.gradle.kts); every
-          component below is declared with a RELATIVE class name so it always
-          resolves against the Kotlin namespace, independent of the app id.
+        - applicationId AND Kotlin namespace are both net.in.agora (see
+          app/build.gradle.kts and docs/engineering-notes.md §9). Components
+          below still use RELATIVE class names (".MainActivity"): that keeps
+          them correct by construction if the two ever diverge again, and it is
+          how AAPT resolves them today.
         - Any future authority (FileProvider, permission) must be written as
           "${applicationId}..." so it follows the id automatically.
         - Public web origin is agora.in.net (App Links + Supabase redirects).
           It is intentionally independent of the applicationId.
+        - auth-agora.info is the RETIRED origin, kept only so pre-migration
+          links still open the app. See the legacy filter at the bottom.
         - exported: MainActivity is the only launcher/deep-link entry point and is
           exported on purpose; the FCM service is exported="false" because only
           Google Play Services may bind to it.
@@ -69,8 +73,11 @@
             <!-- ═══════════════════════════════════════════════════════════
                  HTTPS APP LINKS — agora.in.net
 
-                 One filter, one verified host, two path prefixes:
+                 One filter, one verified host, four path prefixes:
                    /post/...          shared post links + notification taps
+                   /p/...             SHORT alias of the above (chats, QR
+                                      codes, SMS — where every character of a
+                                      link is visible or counted)
                    /auth-callback...  browser → app return path for
                    /login-callback... Supabase email / OAuth redirects when
                                       `redirect_to` is the production origin
@@ -78,10 +85,16 @@
 
                  ⚠️ autoVerify requires
                    https://agora.in.net/.well-known/assetlinks.json
-                 to list `net.in.agora` (the applicationId, NOT the Kotlin
-                 namespace) with the SHA-256 of the certificate that signed the
-                 INSTALLED apk (Play App Signing key for store builds).
-                 Without it Android opens the browser instead of the app.
+                 to list `net.in.agora` (which is BOTH the applicationId and
+                 the Kotlin namespace since the package migration) with the
+                 SHA-256 of the certificate that signed the INSTALLED apk (Play
+                 App Signing key for store builds). Without it Android opens
+                 the browser instead of the app.
+
+                 ⚠️ Exactly ONE host here. Domain verification is per-filter,
+                 and on Android 8–11 a single unverifiable host in an
+                 autoVerify filter un-verifies EVERY host in it. Legacy and
+                 `www.` origins live in the non-verifying filter below.
                  ═══════════════════════════════════════════════════════════ -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
@@ -94,11 +107,45 @@
                 <data
                     android:scheme="https"
                     android:host="agora.in.net"
+                    android:pathPrefix="/p/" />
+                <data
+                    android:scheme="https"
+                    android:host="agora.in.net"
                     android:pathPrefix="/auth-callback" />
                 <data
                     android:scheme="https"
                     android:host="agora.in.net"
                     android:pathPrefix="/login-callback" />
+            </intent-filter>
+
+            <!-- ═══════════════════════════════════════════════════════════
+                 LEGACY HTTPS LINKS — auth-agora.info (no autoVerify)
+
+                 Links shared before the agora.in.net migration are still in
+                 group chats, tweets and old push payloads, and a link that has
+                 left the device can never be recalled. DeepLinkRouter accepts
+                 this host as a fallback so those taps still open the post.
+
+                 ⚠️ Deliberately NOT in the filter above: auth-agora.info is
+                 retired and serves no assetlinks.json, and on Android 8–11
+                 verification is all-or-nothing per filter — including it there
+                 would un-verify agora.in.net for every user on those versions.
+                 Without autoVerify the OS still offers Agora in the chooser
+                 when such a link is tapped, which is exactly the fallback we
+                 want, with no risk to the verified host.
+                 ═══════════════════════════════════════════════════════════ -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="auth-agora.info"
+                    android:pathPrefix="/post/" />
+                <data
+                    android:scheme="https"
+                    android:host="auth-agora.info"
+                    android:pathPrefix="/p/" />
             </intent-filter>
         </activity>
 
