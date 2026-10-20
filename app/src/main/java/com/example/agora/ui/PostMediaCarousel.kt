@@ -48,6 +48,14 @@ import com.example.agora.ui.theme.rememberAgoraColors
 private const val TAG = "PostMedia"
 
 /**
+ * Corner radius of the media plate. Shared with [FeedVideoPlayer] so the
+ * player's own clip outline can never drift from the Compose clip — the video
+ * is center-cropped (RESIZE_MODE_ZOOM) and is measured larger than the plate,
+ * so the two clips must agree exactly.
+ */
+private val PlateCornerRadius = 22.dp
+
+/**
  * ✦ GALLERY PLATE MEDIA CAROUSEL
  *
  * Media is presented as a framed "gallery plate" inside the post card: a
@@ -70,7 +78,7 @@ fun PostMediaCarousel(
 
     val colors = rememberAgoraColors()
     val pagerState = rememberPagerState { mediaUrls.size }
-    val plateShape = RoundedCornerShape(22.dp)
+    val plateShape = RoundedCornerShape(PlateCornerRadius)
 
     Box(modifier = modifier.fillMaxWidth()) {
         HorizontalPager(
@@ -93,7 +101,8 @@ fun PostMediaCarousel(
                     FeedVideoPlayer(
                         videoUrl = url,
                         onVideoClick = { onMediaClick(url) },
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize(),
+                        cornerRadius = PlateCornerRadius
                     )
                 } else {
                     PostMediaImage(

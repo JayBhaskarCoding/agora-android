@@ -705,3 +705,134 @@ an on-device `DeepLinkIntentTest` (10 cases) that proves both overloads agree.
   post than the one just tapped).
 - NavHost `navDeepLink` patterns gained the `net.in.agora://` variants, so the
   router and the NavHost can both handle exactly the same URL set.
+
+---
+
+## 12. Inline video escaping the post card (shared-post page)
+
+**Symptom.** Open a post from a shared link (`SinglePostScreen`) and the video
+preview is not contained by the media plate: the picture runs past the card's
+rounded edge and covers the area below it — the "Comments" divider, the options
+row, sometimes the neighbouring content. Images in the same carousel are fine.
+
+### Root cause — two independent decisions that are individually reasonable
+
+1. **`PlayerView` is created with `RESIZE_MODE_ZOOM`** (`FeedVideoPlayer`).
+   That is the right call visually: it center-crops the video so it fills the
+   360 dp plate exactly like a `ContentScale.Crop` photo, with no pillarbox
+   bars. But "zoom" is implemented by making the **view larger than its cell**,
+   not by scaling inside it. From media3 1.11.1
+   `AspectRatioFrameLayout.onMeasure`:
+
+   ```java
+   case RESIZE_MODE_ZOOM:
+     if (aspectDeformation > 0) width  = (int) (height * videoAspectRatio);
+     else                       height = (int) (width  / videoAspectRatio);
+   ...
+   super.onMeasure(MeasureSpec.makeMeasureSpec(width,  EXACTLY),
+                   MeasureSpec.makeMeasureSpec(height, EXACTLY));
+   ```
+
+   In the 360 dp square plate the arithmetic is:
+
+   | source | measured frame | overhang |
+   | --- | --- | --- |
+   | 9:16 portrait (1080x1920) | 360 x 640 dp | **+280 dp vertical** |
+   | 3:4 portrait (720x960) | 360 x 480 dp | +120 dp vertical |
+   | 1:1 square | 360 x 360 dp | none |
+   | 16:9 landscape | 640 x 360 dp | +280 dp horizontal |
+
+   `exo_player_view.xml` gives that frame `layout_gravity="center"`, so the
+   overhang is split evenly on two edges.
+
+2. **The surface is a `SurfaceView`** (media3's default `surface_type`).
+   A `SurfaceView` is not drawn by the view hierarchy: it is a separate
+   `SurfaceControl` layer composited by SurfaceFlinger and merely *positioned*
+   from its view's frame. Consequently **nothing in the view tree can clip it** —
+   not `clipChildren`, not `clipToOutline` on an ancestor, and not Compose's
+   `Modifier.clip()`, which is a `graphicsLayer` clip that never reaches an
+   interop view's own surface. `PostMediaCarousel`'s
+   `.clip(RoundedCornerShape(22.dp))` therefore clips the *background* and the
+   *border*, and the layer above the plate, but not the video layer.
+
+Net effect: 640 dp tall video, 360 dp tall plate, no clip → 280 dp of picture
+outside the card.
+
+### Why it showed up on the shared-post page
+
+Nothing in the code path differs between the two screens — `PostCard` is the
+same composable in `FeedScreen` and `SinglePostScreen`, and both call the same
+`PostMediaCarousel` → `FeedVideoPlayer`. The defect exists in the feed too.
+What differs is how much attention the overhang attracts:
+
+- On the detail page the card is the whole screen: a uniform background above
+  the plate and the `Comments` header immediately below it, so 140 dp of video
+  landing there is unmistakable.
+- In the feed the same overhang falls on the next card's media plate, which is
+  dark and busy, and reads like a pager/shadow artifact.
+- The direction depends on the video: portrait sources overhang vertically,
+  landscape sources horizontally. A feed tested with landscape clips never
+  produces the "leaking out of the bottom" shape at all.
+
+The fullscreen viewer is unaffected because `ExpandedVideoScreen` keeps the
+default `RESIZE_MODE_FIT` in a full-screen dialog where there is no plate to
+escape.
+
+### Fix
+
+| option | verdict |
+| --- | --- |
+| `RESIZE_MODE_FIT` | ✘ letterbox bars — images crop, videos would not; visual regression |
+| `RESIZE_MODE_FILL` | ✘ stretches the picture (changes aspect ratio) |
+| Custom `FrameLayout` that measures the child with `EXACTLY` | ✘ fights media3 internals, breaks on video-size changes |
+| SurfaceView + `setEnableSurfaceClipping` / API-dependent surface clipping | ✘ platform-dependent, not honored by all OEM compositors, no rounded outline |
+| **`surface_type="texture_view"` + self-clip outline** | **✔ chosen** |
+
+`res/layout/view_inline_video_player.xml` inflates a `PlayerView` with
+`app:surface_type="texture_view"`. A `TextureView` is ordinary view content: it
+is drawn into the parent's canvas, so `ClipChildren` and the outline clip both
+apply. `FeedVideoPlayer` then sets `clipToOutline = true` with a
+`ViewOutlineProvider` that mirrors the plate's 22 dp radius — the same
+`PlateCornerRadius` constant `PostMediaCarousel` uses, so the two clips cannot
+drift apart. `invalidateOutline()` is called from a layout listener and from
+`AndroidView.update` because the outline is derived from the view's size.
+
+Everything else is deliberately untouched: pool ownership, mute state,
+`ON_PAUSE` handling, the centered play button and
+`onVideoClick → fullscreen` all behave exactly as before.
+
+**Trade-off.** `TextureView` costs an extra GPU copy per frame and slightly more
+power than `SurfaceView`. That is the right trade for one small, silent,
+non-autoplaying preview cell that must be clipped to a rounded shape; the
+fullscreen player keeps `SurfaceView` because it is full-bleed and needs no
+clip.
+
+**Rule going forward.** `PlayerView` never clips itself. Any inline (non
+full-bleed) player must be inflated with `surface_type="texture_view"` and must
+set `clipToOutline` to the container's shape — or it must not use
+`RESIZE_MODE_ZOOM`.
+
+### Files
+
+- `app/src/main/res/layout/view_inline_video_player.xml` — new; `PlayerView`
+  with `surface_type="texture_view"`, `use_controller="false"`, black
+  background, rationale in comments.
+- `app/src/main/java/com/example/agora/ui/FeedVideoPlayer.kt` — inflates that
+  layout, keeps `RESIZE_MODE_ZOOM`, adds `clipToOutline` +
+  `roundedOutline(cornerRadius)`, new optional `cornerRadius: Dp = 22.dp`
+  parameter.
+- `app/src/main/java/com/example/agora/ui/PostMediaCarousel.kt` — `PlateCornerRadius`
+  constant shared by the plate shape and the player.
+- `app/src/main/java/com/example/agora/ui/PostVideoPlayer.kt` — unused, now
+  documented so it cannot be wired up with the same bug.
+
+### Verify by hand
+
+1. Shared link → post with a **portrait** (9:16) video: picture must stop at the
+   360 dp plate's rounded edge, on all four sides, and must not paint over
+   `Comments`.
+2. Same post in the feed: identical containment.
+3. Landscape (16:9) video: no horizontal bleed past the plate.
+4. Play/pause, mute toggle, rotation during playback, scroll the post away and
+   back (pool reuse) — no black flash, no second surface, no stale frame.
+5. Tap the preview: fullscreen player opens with controls, `fit`, unaffected.

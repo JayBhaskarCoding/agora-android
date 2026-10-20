@@ -33,6 +33,15 @@ import androidx.media3.ui.PlayerView
 import com.example.agora.media.ExoPlayerHelper
 import com.example.agora.media.VideoCache
 
+/**
+ * ⚠️ UNUSED — superseded by [FeedVideoPlayer], which the media carousel uses.
+ *
+ * If this is ever wired up, give it the same treatment as [FeedVideoPlayer]:
+ * inflate `R.layout.view_inline_video_player` (TextureView) instead of calling
+ * `PlayerView(context)` (SurfaceView), and clip it to the container's shape.
+ * A SurfaceView cannot be clipped by its parent or by Compose, so an
+ * oversize-measured video (RESIZE_MODE_ZOOM) escapes the card.
+ */
 @OptIn(UnstableApi::class)
 @Composable
 fun PostVideoPlayer(

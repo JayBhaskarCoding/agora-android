@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+   ═══════════════════════════════════════════════════════════════════════════
+   INLINE VIDEO PLAYER — TextureView, NOT SurfaceView.
+
+   media3's PlayerView defaults to `surface_type="surface_view"`. A SurfaceView
+   is composited by SurfaceFlinger in its own layer, so it ignores BOTH
+   ViewGroup clipChildren AND Compose's Modifier.clip(): the rounded post card
+   cannot clip it.
+
+   That matters because the player is created with
+   AspectRatioFrameLayout.RESIZE_MODE_ZOOM, which deliberately measures the
+   video LARGER than its box to achieve "crop to fill":
+
+       case RESIZE_MODE_ZOOM:
+         if (aspectDeformation > 0) width  = (int) (height * videoAspectRatio);
+         else                       height = (int) (width  / videoAspectRatio);
+
+   A 9:16 video in the 360dp square media plate therefore measures 360 × 640dp.
+   media3's exo_player_view.xml gives that frame layout_gravity="center", so
+   280dp of video (140dp per side) sits outside the plate and the card. With a
+   SurfaceView nothing can clip it — SurfaceFlinger composites it as its own
+   layer, so neither clipChildren nor Compose's Modifier.clip() applies. That
+   is the "video comes out of the post box" bug on the shared post screen.
+
+   A TextureView is ordinary View content: it is drawn into the parent's canvas,
+   so clipChildren and the Compose clip both apply, and ZOOM crops as intended.
+
+   Keep surface_type="texture_view" here. Do not switch this back to
+   surface_view without also removing RESIZE_MODE_ZOOM.
+   ═══════════════════════════════════════════════════════════════════════════
+-->
+<androidx.media3.ui.PlayerView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black"
+    android:clipChildren="true"
+    android:clipToPadding="true"
+    app:surface_type="texture_view"
+    app:use_controller="false" />
