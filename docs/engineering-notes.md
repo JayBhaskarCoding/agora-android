@@ -649,3 +649,56 @@ Operational follow-ups that live outside the repository:
 - Keep the **previous** web origin in the Supabase redirect allow-list until
   already-emailed magic links have expired, otherwise those links 404. Only
   `agora.in.net` is referenced by code, the manifest and the setup script.
+
+---
+
+## 11. Shared `https://agora.in.net/post/{id}` links
+
+### Two separate failures, only one of them in the code
+
+| Symptom | Layer | Cause |
+|---|---|---|
+| The link opens Chrome instead of Agora | **Platform** | App Links verification. `autoVerify` only takes effect when `https://agora.in.net/.well-known/assetlinks.json` lists `net.in.agora` with the SHA-256 of the certificate that signed the *installed* APK. Nothing in this repo can fix that — see `docs/app-links/README.md` for the file, the three fingerprints to include and the `pm get-app-links` check. |
+| The app opens but shows the feed | **Code** | The parser only understood `agora://post/{id}` and an exact-match `https://agora.in.net/…` host. `net.in.agora://` (declared in the manifest and allow-listed in Supabase) parsed to `null`; so did an uppercase host, a `www.` prefix, an `http://` downgrade and the `agora:///post/{id}` form Chrome produces when it normalises an unknown scheme. `parse()` returned null, `injectDeepLink` silently returned, and the user landed on the feed with no log line anywhere. |
+
+### The parser now (`DeepLinkRouter`)
+
+| Input | Result |
+|---|---|
+| `https://agora.in.net/post/{uuid}` | ✅ post |
+| `https://AGORA.IN.NET/Post/{uuid}/?utm_source=…` | ✅ post (host + segment case-insensitive, trailing slash, tracking params ignored) |
+| `https://www.agora.in.net/post/{uuid}` | ✅ post (parser only — the manifest declares the canonical host) |
+| `http://agora.in.net/post/{uuid}` | ✅ post (defensive; the manifest only declares `https`) |
+| `agora://post/{uuid}` · `agora:///post/{uuid}` | ✅ post |
+| `net.in.agora://post/{uuid}` | ✅ post — **previously `null`** |
+| `…?post_id={uuid}` | ✅ post (legacy share/query fallback) |
+| Intent extras `post_id` / `comment_id` | ✅ post (FCM path, wins over `data`) |
+| `https://agora.in.net/auth-callback?code=…` | ⛔ null — must reach `handleDeeplinks` untouched |
+| `https://evil.example/post/{uuid}` · `https://agora.in.net.evil.example/…` | ⛔ null |
+| `ftp:` · `intent:` · `mailto:` · relative URIs | ⛔ null |
+| `…/post/{not-a-uuid}` | ⛔ null — `posts.id` is a `uuid` column, so navigating could only ever show "post not found" |
+
+`parseUri` exists twice on purpose: an `android.net.Uri` overload for the app and
+a `String` overload built on `java.net.URI`, so the whole decision table is
+unit-tested on the JVM (`DeepLinkRouterTest`, 28 cases) with no Robolectric, plus
+an on-device `DeepLinkIntentTest` (10 cases) that proves both overloads agree.
+
+### Routing and diagnostics
+
+- `MainActivity.injectDeepLink` now logs every launch under **`DeepLink`**:
+  `adb logcat -s DeepLink` prints the action, the raw URI, the extras and the
+  parsed result. **No `parsed` line means the intent never arrived** — i.e. the
+  manifest filter did not match and the OS gave the URL to the browser. That
+  single line separates the two failures above definitively.
+- Debug builds also log Android's verification verdict
+  (`app-links allowed=true hosts=[agora.in.net=verified]`), so an `assetlinks`
+  problem is visible without `adb shell pm get-app-links`.
+- Cold-start injection is gated on `savedInstanceState == null`: a rotation
+  replays the original `ACTION_VIEW` intent, and re-submitting it could stack a
+  second copy of the post screen on top of the restored one.
+- `MainScreen` now navigates inside `try/catch` (a malformed route can no longer
+  crash the app), logs the navigation, and deliberately omits `restoreState`
+  (restoring a saved stack for the same destination could show a *different*
+  post than the one just tapped).
+- NavHost `navDeepLink` patterns gained the `net.in.agora://` variants, so the
+  router and the NavHost can both handle exactly the same URL set.

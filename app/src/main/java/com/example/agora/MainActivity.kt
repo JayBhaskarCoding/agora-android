@@ -5,12 +5,14 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.verify.domain.DomainVerificationUserState
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
+import androidx.annotation.RequiresApi
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -141,6 +143,9 @@ fun syncFcmTokenAndSubscribeTopics() {
 class MainActivity : ComponentActivity() {
 
     companion object {
+        /** Logcat tag for every deep-link decision. `adb logcat -s DeepLink`. */
+        private const val TAG_DEEP_LINK = "DeepLink"
+
         /** App canvas in dark mode (#0B0C13) — matches NoirCanvasDark. */
         private const val WINDOW_BACKGROUND_DARK = 0xFF0B0C13.toInt()
 
@@ -158,32 +163,98 @@ class MainActivity : ComponentActivity() {
 
     // 🌟 INTENT INJECTION: Extract FCM notification extras / deep link URI, publish
     //    them to the DeepLinkRouter (single source of truth for post navigation) and
-    //    forge intent.data so the NavHost's native navDeepLink path can also match.
+    //    normalise intent.data to the `agora://post/…` form the NavHost grammar
+    //    understands.
+    //
+    //    Everything is logged under the `DeepLink` tag so a field report can be
+    //    diagnosed with `adb logcat -s DeepLink` alone:
+    //
+    //      D DeepLink: launch action=android.intent.action.VIEW data=https://agora.in.net/post/0c29… flags=0x10000000
+    //      D DeepLink: parsed postId=0c298d8b-… commentId=null -> agora://post/0c298d8b-…
+    //
+    //    A post link that produces NO "parsed" line is not a routing failure —
+    //    the intent never matched the manifest filter and Android handed the URL
+    //    to the browser instead (App Links verification, see §11 in the docs).
     private fun injectDeepLink(intent: Intent?) {
         if (intent == null) return
-        Log.d("FCM_TEST", "Extras: ${intent.extras?.keySet()} data: ${intent.data}")
+
+        val rawData = intent.dataString
+        Log.d(
+            TAG_DEEP_LINK,
+            "launch action=${intent.action} data=$rawData " +
+                "extras=${intent.extras?.keySet()?.joinToString(",")} flags=0x${Integer.toHexString(intent.flags)}"
+        )
 
         val parsed = DeepLinkRouter.parse(intent)
-        val postId = parsed?.postId
-        val commentId = parsed?.commentId
-
-        if (!postId.isNullOrBlank()) {
-            val uriString = if (!commentId.isNullOrBlank()) {
-                "agora://post/$postId?commentId=$commentId"
-            } else {
-                "agora://post/$postId"
+        if (parsed == null) {
+            if (!rawData.isNullOrBlank()) {
+                Log.d(TAG_DEEP_LINK, "not a post link (left untouched): $rawData")
             }
-            Log.d("FCM_TEST", "Routing post deep link: $uriString")
-            intent.data = Uri.parse(uriString)
-            intent.action = Intent.ACTION_VIEW
-
-            // MainScreen observes this and navigates once the NavHost exists
-            // (works for cold starts, warm onNewIntent and foreground banner taps).
-            DeepLinkRouter.submit(postId, commentId)
-
-            intent.removeExtra("post_id")
-            intent.removeExtra("comment_id")
+            return
         }
+        val postId = parsed.postId
+        val commentId = parsed.commentId
+
+        // Normalise to the form the NavHost deep-link grammar declares, so a
+        // `https://` App Link and an `agora://` notification converge on one URI.
+        // toRoute() is "post/{id}?commentId=…"; deep links need a scheme.
+        val uriString = "agora://" + parsed.toRoute()
+        Log.d(TAG_DEEP_LINK, "parsed postId=$postId commentId=$commentId -> $uriString")
+
+        intent.data = Uri.parse(uriString)
+        intent.action = Intent.ACTION_VIEW
+
+        // MainScreen observes this and navigates once the NavHost exists
+        // (works for cold starts, warm onNewIntent and foreground banner taps).
+        DeepLinkRouter.submit(postId, commentId)
+
+        intent.removeExtra("post_id")
+        intent.removeExtra("comment_id")
+    }
+
+    /**
+     * ✦ App Links can fail silently, and when they do the URL opens in the
+     *   browser with no trace in logcat. This dumps Android's verification
+     *   verdict for `agora.in.net` once per process (debug builds only):
+     *
+     *     adb logcat -s DeepLink
+     *     D DeepLink: app-links agora.in.net=verified (link handling allowed=true)
+     *     D DeepLink: app-links agora.in.net=denied   (link handling allowed=true)
+     *
+     *   `denied` / `unverified` means assetlinks.json is missing, stale or
+     *   signed with a different certificate than the installed APK.
+     */
+    private fun logAppLinkVerification() {
+        if (!BuildConfig.DEBUG) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            Log.d(TAG_DEEP_LINK, "app-links verification state requires API 31+")
+            return
+        }
+        try {
+            @Suppress("DEPRECATION")
+            val state = packageManager.getDomainVerificationUserState(packageName)
+            if (state == null) {
+                Log.d(TAG_DEEP_LINK, "app-links no domain verification state for $packageName")
+                return
+            }
+            val hosts = state.hostToStateMap.entries.joinToString(", ") { (host, value) ->
+                "$host=${domainVerificationStateName(value)}"
+            }
+            Log.d(
+                TAG_DEEP_LINK,
+                "app-links allowed=${state.isLinkHandlingAllowed} hosts=[$hosts]"
+            )
+        } catch (e: Exception) {
+            Log.d(TAG_DEEP_LINK, "app-links verification lookup failed: ${e.message}")
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.S)
+    private fun domainVerificationStateName(state: Int): String = when (state) {
+        DomainVerificationUserState.DOMAIN_STATE_NONE -> "unverified"
+        DomainVerificationUserState.DOMAIN_STATE_SELECTED -> "approved-by-user"
+        DomainVerificationUserState.DOMAIN_STATE_VERIFIED -> "verified"
+        else -> "state($state)"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -223,7 +294,14 @@ class MainActivity : ComponentActivity() {
         // 🌟 Publish any notification deep link before setContent so the NavHost and
         //    the DeepLinkRouter both see it (whichever navigates first wins; the other
         //    detects the duplicate and stands down).
-        injectDeepLink(intent)
+        //
+        //    ✦ Fresh starts only. On a configuration change the OS replays the same
+        //    ACTION_VIEW intent; re-injecting it re-submits a link the NavController
+        //    has already restored, which can stack a second copy of the post screen.
+        if (savedInstanceState == null) {
+            injectDeepLink(intent)
+            logAppLinkVerification()
+        }
 
         /* ★ Arm the auth-callback gate BEFORE the intent reaches Supabase. A magic
          *   link or email-OTP link creates the session inside handleDeeplinks —

@@ -128,12 +128,27 @@ fun MainScreen(
             currentEntry?.destination?.route?.startsWith("post/") == true &&
                 currentEntry.arguments?.getString("postId") == target.postId
         if (!alreadyOpen) {
-            navController.navigate(target.toRoute()) {
-                popUpTo(navController.graph.findStartDestination().id) {
-                    saveState = true
+            try {
+                navController.navigate(target.toRoute()) {
+                    // Keep the feed as the back-stack root so system back from a
+                    // deep-linked post always lands on the feed and never exits
+                    // the app, even when the link cold-started the process.
+                    popUpTo(navController.graph.findStartDestination().id) {
+                        saveState = true
+                    }
+                    launchSingleTop = true
+                    // No restoreState here: it could resurrect a previously
+                    // saved stack for the SAME destination and show a different
+                    // post than the one the user just tapped.
                 }
-                launchSingleTop = true
+                Log.d("DeepLink", "navigated to ${target.toRoute()}")
+            } catch (e: Exception) {
+                // A malformed/unknown route must never crash the app: the user
+                // simply stays where they are.
+                Log.e("DeepLink", "navigation failed for ${target.toRoute()}", e)
             }
+        } else {
+            Log.d("DeepLink", "already showing post ${target.postId}; standing down")
         }
         DeepLinkRouter.consume(target)
     }
@@ -506,6 +521,16 @@ fun MainScreen(
                             },
                             navDeepLink {
                                 uriPattern = "agora://post/{postId}"
+                            },
+                            // The applicationId-derived scheme is declared in the
+                            // manifest and parsed by DeepLinkRouter; mirroring it
+                            // here keeps the two entry points (router + NavHost)
+                            // capable of the same URLs.
+                            navDeepLink {
+                                uriPattern = "net.in.agora://post/{postId}?commentId={commentId}"
+                            },
+                            navDeepLink {
+                                uriPattern = "net.in.agora://post/{postId}"
                             }
                         ),
                         dialogProperties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
