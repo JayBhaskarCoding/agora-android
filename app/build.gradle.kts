@@ -60,12 +60,17 @@ val defaultGoogleWebClientId =
     "1025610780303-rmoc5h0pioc8799psr750orvp00rj597.apps.googleusercontent.com"
 
 android {
-    // ✦ NAMESPACE stays com.example.agora on purpose: it is the Kotlin/Java
-    //   package and the R class package, so the production applicationId can
-    //   change without moving a single source file. R8 keep rules must
-    //   therefore reference the NAMESPACE (com.example.agora.*), never the
-    //   applicationId.
-    namespace = "com.example.agora"
+    // ✦ NAMESPACE = the Kotlin/Java package, the R + BuildConfig package and
+    //   the base for every relative class name in AndroidManifest.xml
+    //   (".MainActivity" -> net.in.agora.MainActivity).
+    //
+    //   It now matches `applicationId` exactly. Sources live under
+    //   app/src/*/java/net/in/agora/** and every declaration reads
+    //   `package net.in.agora…`; R8 keep rules in proguard-rules.pro use the
+    //   same prefix. The two must be changed together — changing only this
+    //   line leaves R and BuildConfig unreachable and every relative manifest
+    //   component pointing at a class that does not exist.
+    namespace = "net.in.agora"
 
     // Compile against the newest stable tooling; what Play validates is
     // targetSdk, which is pinned to stable API 36 below.
@@ -74,9 +79,11 @@ android {
     }
 
     defaultConfig {
-        // ✦ Play Store identity. Changing this from com.example.agora makes
-        //   net.in.agora a BRAND-NEW app for Play/Android: existing installs of
-        //   the old id cannot be upgraded in place.
+        // ✦ Play Store identity, and the only name the device sees.
+        //   Install/upgrade continuity belongs to THIS value alone: installs of
+        //   the old com.example.agora build cannot be upgraded in place and
+        //   must be uninstalled (they were never publishable anyway — see
+        //   docs/engineering-notes.md §9).
         applicationId = "net.in.agora"
         minSdk = 26
 

@@ -460,11 +460,29 @@ without the black card, and `isDark` is a parameter (defaulting to
 
 ### Decisions
 
-**`applicationId = "net.in.agora"`, `namespace` stays `com.example.agora`.**
-The namespace is the Kotlin package *and* the `R` class package. Decoupling it from
-the app id means the Play identity changes without moving a single source file, and
-every `R.id.*` / `BuildConfig.*` reference keeps resolving. The price is one rule that
-must never be forgotten: **R8 keep rules match the namespace, not the applicationId.**
+**`applicationId = "net.in.agora"` and `namespace = "net.in.agora"`.**
+These were decoupled for one release (app id moved, namespace stayed at the template
+value) purely to keep the Play-identity change reviewable on its own. They are now
+unified, because a `com.example.*` Kotlin package cannot be published or defended:
+
+- every source tree lives under `app/src/{main,test,androidTest}/java/net/in/agora/**`
+  and every declaration reads `package net.in.agora…`;
+- `R` and `BuildConfig` are generated into `net.in.agora`, which is why files in
+  `net.in.agora.ui` import `net.in.agora.R` explicitly (it is a sibling package, not
+  a parent — that import existed before the rename too, pointing at the old root);
+- manifest components stay **relative** (`.MainActivity`), so they resolve against
+  the namespace and would survive another divergence;
+- **R8 keep rules must follow the namespace.** `proguard-rules.pro` matches
+  `net.in.agora.**`; a stale prefix does not fail the build — it silently removes the
+  shrunk-away `$$serializer` classes and throws `SerializationException` at runtime,
+  in release only.
+
+Rename mechanics, for the next time: `git mv` the three package directories (git
+detects the renames and keeps blame), rewrite `com.example.agora` → `net.in.agora`
+across `*.kt`, then assert **zero** package/path mismatches by comparing each file's
+`package` line with its directory. Update `proguard-rules.pro`, `namespace`, and any
+fully-qualified reference in docs/tests in the same commit — a namespace change is
+never a two-line diff.
 
 > ⚠️ Changing `applicationId` makes `net.in.agora` a *new* app to Play. Installs of
 > `com.example.agora` cannot be upgraded in place; the old listing must be retired or
@@ -486,7 +504,7 @@ set is still experimental.
 
 **Keep rules (`app/proguard-rules.pro`).** The release build must not crash by
 reflection, so the file protects: kotlinx.serialization (`$$serializer`, `Companion`,
-`serializer()`, `@SerialName` fields), `com.example.agora.model.**`, supabase-kt, Ktor,
+`serializer()`, `@SerialName` fields), `net.in.agora.model.**`, supabase-kt, Ktor,
 Credential Manager + Google ID, and Firebase Messaging. Note there are `@Serializable`
 DTOs outside `model/` (`utils/DisifyResponse`, `viewmodel/PostInsertRequest`,
 `PostUpdateRequest`) — the `@Serializable`-conditional rules cover them by annotation,
@@ -568,8 +586,9 @@ configuration facts made it impossible to succeed:
    handshake are missing, from the same cause.
 3. **The Android OAuth client was registered for the old package.** OAuth
    Android clients are keyed on `applicationId` + signing SHA-1. `applicationId`
-   moved from `com.example.agora` to `net.in.agora` (§9), so any client created
-   for the old package stopped matching the moment the id changed.
+   moved from `com.example.agora` to `net.in.agora` (§9; the namespace followed
+   later, but OAuth clients only ever key on the applicationId), so any client
+   created for the old package stopped matching the moment the id changed.
 
 Neither is fixable in Kotlin. What *was* fixable is that the failure was
 invisible: the catch block mapped every `GetCredentialException` to
@@ -606,7 +625,7 @@ message for the rest.
 
 ```bash
 # 1. what the app thinks it is
-adb logcat -c && adb shell am start -n net.in.agora/com.example.agora.MainActivity
+adb logcat -c && adb shell am start -n net.in.agora/net.in.agora.MainActivity
 adb logcat -s GoogleAuth
 # -> preflight package=net.in.agora sha1=… serverClientId=…(project …) firebaseProject=1025610780303
 
@@ -626,12 +645,12 @@ client now logs `MISCONFIGURATION: … project … but … project …` and show
 
 ### Deep-link / domain migration (`agora.in.net`)
 
-Every occurrence of the two legacy `auth-agora` origins was replaced
-repo-wide by `agora.in.net`, and the App Links filter was widened:
+Every *generated* link now uses `agora.in.net`; the retired `auth-agora` origins
+are no longer emitted anywhere. The App Links filter was widened:
 
-- one verified `https://agora.in.net` host, three path prefixes (`/post/`,
-  `/auth-callback`, `/login-callback`) — previously **only** `/post/` was
-  declared, so an `https://` auth redirect could never open the app;
+- one verified `https://agora.in.net` host, four path prefixes (`/post/`,
+  `/p/` — see below — `/auth-callback`, `/login-callback`) — previously **only**
+  `/post/` was declared, so an `https://` auth redirect could never open the app;
 - **two** custom schemes in the same filter: `agora://` (what the app emits —
   FCM payloads, notification intents, NavHost deep links, every link already
   sent to users) and `net.in.agora://` (the applicationId-derived form). A
@@ -642,6 +661,30 @@ repo-wide by `agora.in.net`, and the App Links filter was widened:
 - `backend/setup_agora_config.ps1` writes `site_url = https://agora.in.net` and
   `uri_allow_list = ['agora://**', 'net.in.agora://**', 'https://agora.in.net/**']`.
 
+**`/p/{id}` — short alias.** Added to the verified filter (and to `DeepLinkRouter`
+and the NavHost patterns) because a post link is pasted into chats, SMS and QR
+codes, where the four characters of `/post/` are pure overhead. It is web-only:
+
+| shape | accepted |
+|---|---|
+| `https://agora.in.net/p/{uuid}` | ✅ |
+| `https://auth-agora.info/p/{uuid}` | ✅ (legacy host, fallback) |
+| `agora://p/{uuid}` · `net.in.agora://p/{uuid}` | ⛔ — `p` would become the authority; the custom-scheme grammar stays `post`-only |
+
+**Legacy host `auth-agora.info` — accepted, never emitted.** A link that has left
+the device cannot be recalled, so pre-migration URLs stay routable forever:
+
+- `DeepLinkRouter.WEB_HOSTS` contains it, so the parser resolves those links like
+  any other;
+- the manifest declares it in its **own, non-`autoVerify`** filter. This is the
+  subtle part: on Android 8–11 domain verification is all-or-nothing **per
+  filter**, so putting a retired host that serves no `assetlinks.json` into the
+  verified filter would un-verify `agora.in.net` for every user on those
+  versions. A separate filter makes the app a *candidate* for the URL (chooser on
+  a stock device) without endangering the verified host;
+- nothing generates it: `DeepLinkRouter.WEB_HOST`, the share action, Supabase
+  `site_url` and the setup script all still point at `agora.in.net`.
+
 Operational follow-ups that live outside the repository:
 
 - `https://agora.in.net/.well-known/assetlinks.json` must list `net.in.agora`
@@ -649,6 +692,9 @@ Operational follow-ups that live outside the repository:
 - Keep the **previous** web origin in the Supabase redirect allow-list until
   already-emailed magic links have expired, otherwise those links 404. Only
   `agora.in.net` is referenced by code, the manifest and the setup script.
+- The legacy `auth-agora.info` domain should keep serving a redirect to
+  `agora.in.net` for as long as those links are in circulation; the app-side
+  filter is the safety net, not a substitute.
 
 ---
 
@@ -667,6 +713,9 @@ Operational follow-ups that live outside the repository:
 |---|---|
 | `https://agora.in.net/post/{uuid}` | ✅ post |
 | `https://AGORA.IN.NET/Post/{uuid}/?utm_source=…` | ✅ post (host + segment case-insensitive, trailing slash, tracking params ignored) |
+| `https://agora.in.net/p/{uuid}` | ✅ post — short alias, same UUID validation |
+| `https://auth-agora.info/post/{uuid}` · `/p/{uuid}` | ✅ post — retired host, fallback for links already shared |
+| `https://auth-agora.online/…` | ⛔ null — never re-introduced; only the `.info` origin was ever public |
 | `https://www.agora.in.net/post/{uuid}` | ✅ post (parser only — the manifest declares the canonical host) |
 | `http://agora.in.net/post/{uuid}` | ✅ post (defensive; the manifest only declares `https`) |
 | `agora://post/{uuid}` · `agora:///post/{uuid}` | ✅ post |
@@ -680,8 +729,9 @@ Operational follow-ups that live outside the repository:
 
 `parseUri` exists twice on purpose: an `android.net.Uri` overload for the app and
 a `String` overload built on `java.net.URI`, so the whole decision table is
-unit-tested on the JVM (`DeepLinkRouterTest`, 28 cases) with no Robolectric, plus
-an on-device `DeepLinkIntentTest` (10 cases) that proves both overloads agree.
+unit-tested on the JVM (`DeepLinkRouterTest`, 35 cases) with no Robolectric, plus
+an on-device `DeepLinkIntentTest` (12 cases) that proves both overloads agree —
+including the `/p/` alias, the legacy host and both rejection cases.
 
 ### Routing and diagnostics
 
@@ -817,13 +867,13 @@ set `clipToOutline` to the container's shape — or it must not use
 - `app/src/main/res/layout/view_inline_video_player.xml` — new; `PlayerView`
   with `surface_type="texture_view"`, `use_controller="false"`, black
   background, rationale in comments.
-- `app/src/main/java/com/example/agora/ui/FeedVideoPlayer.kt` — inflates that
+- `app/src/main/java/net/in/agora/ui/FeedVideoPlayer.kt` — inflates that
   layout, keeps `RESIZE_MODE_ZOOM`, adds `clipToOutline` +
   `roundedOutline(cornerRadius)`, new optional `cornerRadius: Dp = 22.dp`
   parameter.
-- `app/src/main/java/com/example/agora/ui/PostMediaCarousel.kt` — `PlateCornerRadius`
+- `app/src/main/java/net/in/agora/ui/PostMediaCarousel.kt` — `PlateCornerRadius`
   constant shared by the plate shape and the player.
-- `app/src/main/java/com/example/agora/ui/PostVideoPlayer.kt` — unused, now
+- `app/src/main/java/net/in/agora/ui/PostVideoPlayer.kt` — unused, now
   documented so it cannot be wired up with the same bug.
 
 ### Verify by hand
