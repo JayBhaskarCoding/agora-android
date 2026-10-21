@@ -245,9 +245,12 @@ serve(async (req: Request) => {
   if (!postId) return json({ error: "missing_post_id" }, 400);
 
   // ── 3. authorise against the database, not the request ───────────────────
+  // `image_urls` is read too: it is the pre-Task-10 column and this app still
+  // dual-writes both. A post whose media lives only in `image_urls` would
+  // otherwise derive an EMPTY allowed set and reject its own assets.
   const { data: post, error: postError } = await admin
     .from("posts")
-    .select("id,user_id,media_urls")
+    .select("id,user_id,media_urls,image_urls")
     .eq("id", postId)
     .maybeSingle();
 
@@ -269,7 +272,11 @@ serve(async (req: Request) => {
 
   // Allowed set, re-derived from the row. The client's list is only a hint.
   const allowed = new Map<string, string>(); // public_id -> resource_type
-  for (const url of (post.media_urls ?? []) as string[]) {
+  const rowUrls: unknown[] = [
+    ...(Array.isArray(post.media_urls) ? post.media_urls : []),
+    ...(Array.isArray(post.image_urls) ? post.image_urls : []),
+  ];
+  for (const url of rowUrls) {
     if (typeof url !== "string") continue;
     const id = publicIdOf(url);
     const type = resourceTypeOf(url);
@@ -292,12 +299,19 @@ serve(async (req: Request) => {
     : Array.from(allowed, ([public_id, resource_type]) => ({ public_id, resource_type }));
 
   const rejected: string[] = [];
-  const approved = targets.filter((asset) => {
+  const approved: AssetRef[] = [];
+  for (const asset of targets) {
     const permitted = allowed.get(asset.public_id);
-    const ok = permitted !== undefined && permitted === asset.resource_type;
-    if (!ok) rejected.push(asset.public_id);
-    return ok;
-  });
+    // The security boundary is membership, NOT the client's resource_type: the
+    // id is already confined to this post's row. Trusting the server's own parse
+    // for the type means a client-side parsing slip logs a failure instead of
+    // blocking the delete.
+    if (permitted === undefined) {
+      rejected.push(asset.public_id);
+      continue;
+    }
+    approved.push({ public_id: asset.public_id, resource_type: permitted });
+  }
 
   if (rejected.length > 0) {
     // Partial trust is not allowed: an id outside the post is an attempt, not a typo.

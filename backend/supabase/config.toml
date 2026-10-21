@@ -446,6 +446,14 @@ entrypoint = "./functions/broadcast-post/index.ts"
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/broadcast-post/*.html" ]
 
+[functions.delete-cloudinary-asset]
+enabled = true
+# TRUE on purpose: the caller's JWT is the authorisation. The gateway rejects
+# unauthenticated calls before our code runs, and the function then re-checks
+# that the post belongs to that user. Never set this to false.
+verify_jwt = true
+entrypoint = "./functions/delete-cloudinary-asset/index.ts"
+
 [functions.process-deletions]
 enabled = true
 verify_jwt = false

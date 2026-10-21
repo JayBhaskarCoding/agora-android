@@ -985,16 +985,22 @@ cannot happen on the device. It runs in the Supabase Edge Function
 
 1. The function verifies the caller's JWT (`auth.getUser`).
 2. It loads the post and checks `posts.user_id = auth.uid()`.
-3. It re-derives the **allowed** `public_id`s from that row's `media_urls` — the
-   list sent by the app is a hint, never a grant. Any id outside the post is
-   rejected with `403 asset_not_owned_by_post`, so a logged-in attacker cannot
-   destroy someone else's asset by guessing a `public_id`.
-4. Only then does it sign and call
+3. It re-derives the **allowed** `public_id`s from that row's `media_urls`
+   **and** `image_urls` — the list sent by the app is a hint, never a grant. Any
+   id outside the post is rejected with `403 asset_not_owned_by_post`, so a
+   logged-in attacker cannot destroy someone else's asset by guessing a
+   `public_id`. Both columns are read because `image_urls` predates the media
+   pipeline and is still dual-written; reading only `media_urls` would give an
+   empty allowed set for legacy posts and reject their own assets.
+4. Membership is the security boundary, not the client's `resource_type`: the
+   server uses **its own** parse of the type, so a client-side parsing slip logs
+   a failure instead of blocking the delete.
+5. Only then does it sign and call
    `POST https://api.cloudinary.com/v1_1/<cloud>/<resource_type>/destroy` with
    `public_id`, `timestamp`, `invalidate=true`, `api_key` and a SHA-1 signature
    over the sorted parameters (excluding `api_key`/`file`), with the secret
    appended.
-5. `ok` and `not found` both count as success (`not found` means the desired end
+6. `ok` and `not found` both count as success (`not found` means the desired end
    state already holds). A partial run returns **207** with `destroyed` /
    `failed` arrays.
 
@@ -1049,6 +1055,17 @@ Invoke it to smoke-test:
 supabase functions invoke delete-cloudinary-asset \
   --body '{"post_id":"<uuid>"}'
 ```
+
+If the call fails, the status code says which link is broken:
+
+| Response | Meaning |
+|---|---|
+| `401 missing_authorization` / `invalid_jwt` | the request had no usable user token |
+| `403 not_post_owner` | valid token, post belongs to someone else |
+| `403 asset_not_owned_by_post` | a `public_id` is not in this post's media columns |
+| `409 post_not_found` | called after the row was deleted — ordering bug |
+| `500 cloudinary_not_configured` | one of the three secrets is missing or misnamed |
+| `200` / `207` | secrets work (`207` = some assets failed) |
 
 **No Cloudinary key belongs in the app.** There is nothing to put in
 `local.properties`: `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` are no longer
