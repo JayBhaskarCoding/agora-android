@@ -562,7 +562,7 @@ fun MainScreen(
                                 navController.navigate("profile?userId=$clickedUserId")
                             },
                             onPostChanged = { updated -> feedViewModel.syncPostState(updated) },
-                            onDeletePost = { id -> feedViewModel.deletePost(id) },
+                            onDeletePost = { id -> feedViewModel.deletePost(context, id) },
                             onReportPost = { id, reason -> feedViewModel.reportPost(id, reason) },
                             onEditPost = { post -> detailPostToEdit = post }
                         )

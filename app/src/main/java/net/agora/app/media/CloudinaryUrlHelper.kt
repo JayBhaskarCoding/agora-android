@@ -1,7 +1,5 @@
 package net.agora.app.media
 
-import java.security.MessageDigest
-
 /**
  * Every Cloudinary URL transformation the app uses, in one place.
  *
@@ -27,6 +25,10 @@ import java.security.MessageDigest
  * ⚠️ URLs that are not Cloudinary (legacy Catbox links, Supabase Storage
  * avatars) are returned **unchanged** — the helper must never corrupt a URL it
  * does not own.
+ *
+ * ⚠️ There is deliberately NO signing code here. Destroying an asset needs the
+ * account's API secret, which must never ship in an APK; the signed call lives
+ * in the `delete-cloudinary-asset` Edge Function (docs §13).
  *
  * Pure Kotlin on purpose (no Android, no network): every rule below is unit
  * tested on the JVM in `CloudinaryUrlHelperTest`.
@@ -166,30 +168,6 @@ object CloudinaryUrlHelper {
         val id = segments.joinToString("/")
         return id.takeIf { it.isNotBlank() }
     }
-
-    // ── Signing ─────────────────────────────────────────────────────────────
-
-    /**
-     * Cloudinary request signature: `SHA-1(<sorted k=v pairs><api_secret>)`.
-     *
-     * ⚠️ Every parameter that is sent must be signed, except `api_key` and the
-     * file itself. `invalidate` is therefore included on purpose — sending it
-     * unsigned makes Cloudinary reject the whole request with
-     * *"Invalid Signature … invalid parameters"*, which is the usual cause of
-     * "deletion silently does nothing".
-     */
-    fun signature(params: Map<String, String>, apiSecret: String): String {
-        val payload = params.entries
-            .filter { it.key != "api_key" && it.key != "file" }
-            .sortedBy { it.key }
-            .joinToString("&") { "${it.key}=${it.value}" } + apiSecret
-        return sha1(payload)
-    }
-
-    private fun sha1(value: String): String =
-        MessageDigest.getInstance("SHA-1")
-            .digest(value.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
 
     // ── Internals ───────────────────────────────────────────────────────────
 

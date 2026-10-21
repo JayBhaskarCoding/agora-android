@@ -9,6 +9,7 @@ googleid = "1.1.1"
 coreKtx = "1.19.0"
 coreSplashscreen = "1.2.0"
 authKT = "3.7.0"
+functionsKT = "3.7.0"
 firebaseBom = "34.18.0"
 haze = "1.7.3"
 junit = "4.13.2"
@@ -77,6 +78,7 @@ ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "kto
 multiplatform-settings = { module = "com.russhwolf:multiplatform-settings", version.ref = "multiplatformSettings" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 postgrest-kt = { module = "io.github.jan-tennert.supabase:postgrest-kt", version.ref = "postgrestKt" }
+functions-kt = { module = "io.github.jan-tennert.supabase:functions-kt", version.ref = "functionsKT" }
 realtime-kt = { module = "io.github.jan-tennert.supabase:realtime-kt", version.ref = "realtimeKt" }
 storage-kt = { module = "io.github.jan-tennert.supabase:storage-kt", version.ref = "storageKt" }
 

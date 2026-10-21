@@ -199,7 +199,7 @@ fun ProfileScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    feedViewModel.deletePost(targetDelete.id)
+                    feedViewModel.deletePost(context, targetDelete.id)
                     coroutineScope.launch { snackbarHostState.showSnackbar("Post deleted") }
                     postToDelete = null
                 }) { Text("Delete", color = colors.danger, fontWeight = FontWeight.Bold) }

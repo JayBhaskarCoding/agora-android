@@ -409,7 +409,7 @@ fun GlobalFeedScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.deletePost(targetDelete.id)
+                        viewModel.deletePost(context, targetDelete.id)
                         Toast.makeText(context, "Post deleted successfully", Toast.LENGTH_SHORT).show()
                         postToDelete = null
                     }

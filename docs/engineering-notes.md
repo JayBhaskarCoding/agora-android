@@ -977,31 +977,84 @@ a long transcode. `TempFileSweeper.sweepAsync()` runs at startup and removes
 `upload_*` / `compressed_*` files older than an hour, covering the one case a
 `finally` cannot: the process being killed mid-export.
 
-### 3. Deleting the Cloudinary asset
+### 3. Deleting the Cloudinary asset (server-side signing)
 
-`CloudinaryClient.deleteFromCloudinary(url)` calls
-`POST https://api.cloudinary.com/v1_1/<cloud>/<resource_type>/destroy` with
-`public_id`, `timestamp`, `invalidate=true`, `api_key` and a SHA-1 signature.
+Deletion is the one media operation that needs the account **API secret**, so it
+cannot happen on the device. It runs in the Supabase Edge Function
+`backend/supabase/functions/delete-cloudinary-asset`:
 
-- `public_id` comes from `CloudinaryUrlHelper.publicId`, which strips the
-  transform segment, the `v1234/` version and the extension, and keeps folder
-  prefixes. It is careful about lookalikes: `…/upload/my_photo.jpg` is a
-  `public_id`, not a transformation.
-- `resource_type` is read from the path (`/image/`, `/video/`, `/raw/`), never
-  guessed from the extension.
-- **`invalidate` is included in the signature.** Cloudinary signs every
-  parameter that is sent; adding `invalidate=true` to the body without signing it
-  produces `Invalid Signature`, which is the classic "deletion silently does
-  nothing" failure.
-- `"not found"` is treated as success — the desired end state already holds.
+1. The function verifies the caller's JWT (`auth.getUser`).
+2. It loads the post and checks `posts.user_id = auth.uid()`.
+3. It re-derives the **allowed** `public_id`s from that row's `media_urls` — the
+   list sent by the app is a hint, never a grant. Any id outside the post is
+   rejected with `403 asset_not_owned_by_post`, so a logged-in attacker cannot
+   destroy someone else's asset by guessing a `public_id`.
+4. Only then does it sign and call
+   `POST https://api.cloudinary.com/v1_1/<cloud>/<resource_type>/destroy` with
+   `public_id`, `timestamp`, `invalidate=true`, `api_key` and a SHA-1 signature
+   over the sorted parameters (excluding `api_key`/`file`), with the secret
+   appended.
+5. `ok` and `not found` both count as success (`not found` means the desired end
+   state already holds). A partial run returns **207** with `destroyed` /
+   `failed` arrays.
 
-`deletePost` now: snapshots the media URLs **before** the row disappears →
-deletes the row → updates the feed → destroys the assets best-effort. A
-Cloudinary failure never blocks the user's delete and is logged under
-`CloudinaryDelete` for reconciliation.
+`public_id` is still derived by `CloudinaryUrlHelper.publicId`: it strips the
+transform segment, the `v1234/` version and the extension, and keeps folder
+prefixes. It is careful about lookalikes — `…/upload/my_photo.jpg` is a
+`public_id`, not a transformation. `resource_type` is read from the path
+(`/image/`, `/video/`, `/raw/`), never guessed from the extension. The function
+duplicates both parsers deliberately: the server must not trust a client's idea
+of which assets exist.
+
+**Ordering — and why it is not "row first".** The client:
+
+1. **captures** the post's media URLs and the `{public_id, resource_type}` pairs
+   while the post is still in memory;
+2. **invokes the function** while the row still exists, because step 2/3 above
+   authorise against that row;
+3. **deletes the row**;
+4. **evicts local caches** (`MediaCacheCleaner`) and refreshes the feed.
+
+Deleting the row first would leave the function with nothing to authorise
+against: it can only answer `409 post_not_found`, and "trust the client" is the
+vulnerability the function exists to prevent. The user-visible behaviour is
+still the requested one — the asset call is awaited but its **failure never
+blocks** the delete; a failure is logged under `CloudinaryDelete` for
+reconciliation. If the remote call fails, the row is still removed and the asset
+becomes an orphan, exactly as before, but the app has done everything it can.
+
+`MediaCacheCleaner.evict()` drops the raw URL plus all four renditions
+(`feedImageUrl`, `fullImageUrl`, `videoPosterUrl`, `optimizedVideoUrl`) from
+Coil's disk and memory caches and from Media3's `SimpleCache`, keyed by the URL
+string. Without it, a deleted post's photo can still render from cache and keeps
+occupying the 60 MB budget.
 
 Avatar replacement does the same for Supabase Storage: the previous object is
 removed after the new URL is committed (best-effort, logged as `AvatarCleanup`).
+
+### 🔑 Deploying the function (and where the secret lives now)
+
+```bash
+supabase secrets set \
+  CLOUDINARY_CLOUD_NAME=<cloud name> \
+  CLOUDINARY_API_KEY=<api key> \
+  CLOUDINARY_API_SECRET=<api secret>
+supabase functions deploy delete-cloudinary-asset
+```
+
+`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected by the platform.
+Invoke it to smoke-test:
+
+```bash
+supabase functions invoke delete-cloudinary-asset \
+  --body '{"post_id":"<uuid>"}'
+```
+
+**No Cloudinary key belongs in the app.** There is nothing to put in
+`local.properties`: `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` are no longer
+BuildConfig fields, so they cannot be extracted from an APK. The previous
+on-device signer (`CloudinaryClient.deleteFromCloudinary`) and its
+`local.properties` keys were removed in this change.
 
 ### 4. Cache ceilings
 
@@ -1015,24 +1068,19 @@ Coil's default is 2 % of free space (up to 250 MB), which on a 128 GB phone is
 by itself larger than the whole cache budget — the explicit `DiskCache` is what
 makes the ceiling real rather than incidental.
 
-### ⚠️ Security: the Cloudinary secret in the APK
+### ✅ Security: the secret is no longer in the APK
 
-`deleteFromCloudinary` signs requests on-device, so `CLOUDINARY_API_SECRET` ends
-up in `BuildConfig` and therefore in the APK. **Anyone can extract it and call
-the destroy API on the entire Cloudinary account.** This is shipped because it
-was requested and it is functionally correct, but it is not safe for production
-at scale:
+This section replaces the Task 10 warning. On-device signing put
+`CLOUDINARY_API_SECRET` in `BuildConfig`, where a single `unzip` of the APK
+recovers it, and that key can destroy **every** asset in the account. The
+credential and the signing now live only in the `delete-cloudinary-asset` Edge
+Function (see §3 above). The app ships no Cloudinary key at all, and the function
+cannot be abused by a logged-in user to delete another user's media because the
+allowed `public_id` set is re-derived from their own post row.
 
-- short term: use a dedicated API key restricted in the Cloudinary console
-  (Settings → Upload → restricted actions) so a leak cannot do more than delete
-  post media;
-- correct fix: move the signing to a **Supabase Edge Function** that holds the
-  secret server-side and verifies the caller's JWT owns the post before
-  destroying. The app then calls the function, and the APK contains no secret.
-
-Keys are optional on purpose: without them the build still succeeds, deletion
-logs `CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET are not set …` and the assets
-are orphaned (visible in `adb logcat -s CloudinaryDelete`).
+Residual risk is limited to the function itself: it runs with the service-role
+key, so its code is the trust boundary. Keep the ownership check in place — do
+not "simplify" it to trusting the client's `assets` array.
 
 ### Verify by hand
 
@@ -1045,6 +1093,58 @@ are orphaned (visible in `adb logcat -s CloudinaryDelete`).
    shows one player; back out → it is released.
 4. Post a photo > 1440 px: the uploaded `secure_url` reports `w_1440` and the
    size is a fraction of the original.
-5. Delete that post: `CloudinaryDelete: destroyed image/…` in logcat, and the
-   asset is gone from the Cloudinary media library.
+5. Delete that post: `CloudinaryDelete: post=… destroyed=… failed=0` in logcat,
+   the asset is gone from the Cloudinary media library, and
+   `adb logcat -s CloudinaryDelete` shows no `403`/`409`. A `409 post_not_found`
+   means the function was called after the row was deleted — the ordering in §3
+   is broken.
 6. `adb shell ls cache/` after a cancelled upload shows no `compressed_*` files.
+
+## 14. Task 11 audit: shared post links, cold and warm
+
+Re-verified rather than rewritten — the deep-link path already did the right
+thing, so no code changed. What was checked, in order:
+
+**Manifest** (`app/src/main/AndroidManifest.xml`). `MainActivity` is
+`exported=true`, `launchMode=singleTop`, and carries three filters:
+
+| filter | scheme | host | paths | autoVerify |
+|---|---|---|---|---|
+| 0 | — (launcher) | — | — | — |
+| 1 | `agora`, `net.agora.app` | — | — | — |
+| 2 | `https` | `agora.in.net` | `/post/`, `/p/`, `/auth-callback`, `/login-callback` | `true` |
+
+Only one host is in the verified filter, which matters: App Links verification is
+all-or-nothing per filter, so adding `www.agora.in.net` or a retired host there
+would silently de-verify the whole thing. `/post/` is a `pathPrefix`, so
+`https://agora.in.net/post/<uuid>` is delivered to `MainActivity` directly —
+there is no `pathPattern` mismatch to worry about, and the id itself is parsed by
+the app, not by the manifest.
+
+**Parsing** (`navigation/DeepLinkRouter.kt`). `parse()` accepts
+`https://agora.in.net/post/{id}`, `/p/{id}`, `agora://post/{id}`,
+`net.agora.app://post/{id}`, `agora:///post/{id}` (empty authority, which some
+share targets produce) and the `?post_id=` query fallback. The id must pass
+`isValidPostId` (UUID), so a malformed link is ignored instead of navigating to a
+blank screen. `https` and `http` share the same branch, and the host comparison
+is case-insensitive.
+
+**Delivery** (`MainActivity` → `MainScreen`). `injectDeepLink` normalises the
+result to `agora://post/{id}?commentId=…`, logs under `DeepLink`, and submits to
+`DeepLinkRouter`. `MainScreen` observes it in a `LaunchedEffect` and navigates
+with `popUpTo(startDestination) { saveState = true }` + `launchSingleTop` and
+**no** `restoreState`, so a link always lands on that post rather than on the
+last screen the user had open. If the post is already on screen it does not
+navigate again. Then the router's slot is `consume()`d, which is what stops a
+rotation from replaying the same navigation.
+
+- **Cold start:** the intent is read only when `savedInstanceState == null`, so a
+  configuration change re-creates the activity without re-submitting the link.
+- **Warm start:** `onNewIntent` re-runs `injectDeepLink`; `singleTop` +
+  `launchSingleTop` mean no second `MainActivity` is created.
+
+**Checked and intentionally left alone:** the `agora` scheme with no host
+(`agora:/post/{id}`), which `parse` also handles through the empty-authority
+branch, and `net.agora.app://` — kept for compatibility with links already in
+the wild from the identity migration, even though `https://agora.in.net` is the
+canonical form.

@@ -161,46 +161,4 @@ class CloudinaryUrlHelperTest {
         )
         assertNull(CloudinaryUrlHelper.resourceType("https://files.catbox.moe/abc.mp4"))
     }
-
-    // ── Signature ───────────────────────────────────────────────────────────
-
-    @Test
-    fun signatureSortsParamsAndAppendsSecret() {
-        // Sorted: invalidate < public_id < timestamp.
-        // sha1("invalidate=true&public_id=agora/posts/x1&timestamp=1700000000" + "secret")
-        val params = linkedMapOf(
-            "public_id" to "agora/posts/x1",   // deliberately not sorted
-            "timestamp" to "1700000000",
-            "invalidate" to "true"
-        )
-        val expected = sha1("invalidate=true&public_id=agora/posts/x1&timestamp=1700000000secret")
-        assertEquals(expected, CloudinaryUrlHelper.signature(params, "secret"))
-    }
-
-    @Test
-    fun signatureExcludesApiKeyAsCloudinaryRequires() {
-        val withKey = CloudinaryUrlHelper.signature(
-            mapOf("public_id" to "a", "timestamp" to "1", "api_key" to "123"),
-            "s"
-        )
-        val withoutKey = CloudinaryUrlHelper.signature(
-            mapOf("public_id" to "a", "timestamp" to "1"),
-            "s"
-        )
-        assertEquals(withoutKey, withKey)
-    }
-
-    @Test
-    fun signatureIsHexSha1() {
-        val sig = CloudinaryUrlHelper.signature(mapOf("public_id" to "a", "timestamp" to "1"), "s")
-        assertEquals(40, sig.length)
-        assertTrue(sig.all { it in "0123456789abcdef" })
-    }
-
-    // ── helper ──────────────────────────────────────────────────────────────
-
-    private fun sha1(value: String): String =
-        java.security.MessageDigest.getInstance("SHA-1")
-            .digest(value.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
 }

@@ -122,24 +122,12 @@ android {
 
         // 🌟 Google Sign-In server client id. One source of truth: the UI no
         //    longer passes a literal, and the ViewModel default reads this.
-        // ✦ CLOUDINARY SIGNED DELETION
-        //   Used only by CloudinaryClient.deleteFromCloudinary() to authenticate
-        //   the REST "destroy" call. Optional on purpose: a build without them
-        //   still compiles and runs — deletion logs a clear warning instead of
-        //   silently orphaning assets.
-        //
-        //   ⚠️ A shipped APK cannot keep a secret. See docs §13: production
-        //      should proxy this through a Supabase Edge Function.
-        buildConfigField(
-            "String",
-            "CLOUDINARY_API_KEY",
-            (optionalLocalProperty("CLOUDINARY_API_KEY") ?: "").asBuildConfigString()
-        )
-        buildConfigField(
-            "String",
-            "CLOUDINARY_API_SECRET",
-            (optionalLocalProperty("CLOUDINARY_API_SECRET") ?: "").asBuildConfigString()
-        )
+        // ✦ CLOUDINARY DELETION IS SERVER-SIDE — no credentials here.
+        //   Destroying an asset needs the account API secret, and anything in
+        //   BuildConfig is extractable from the APK. The signed call now lives in
+        //   the `delete-cloudinary-asset` Edge Function, which holds the secret
+        //   as a Supabase function secret and authorises the caller by JWT +
+        //   post ownership (docs/engineering-notes.md §13).
 
         buildConfigField(
             "String",
@@ -221,6 +209,7 @@ dependencies {
     implementation(libs.multiplatform.settings)
     implementation(libs.realtime.kt)
     implementation(libs.storage.kt)
+    implementation(libs.functions.kt)
     implementation(libs.coil.compose)
     implementation(libs.ktor.client.cio)
     implementation(libs.ktor.client.okhttp)

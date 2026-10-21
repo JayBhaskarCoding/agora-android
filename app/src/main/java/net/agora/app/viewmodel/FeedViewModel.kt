@@ -10,6 +10,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import net.agora.app.data.CloudinaryClient
+import net.agora.app.data.CloudinaryDeletionApi
+import net.agora.app.media.MediaCacheCleaner
 import net.agora.app.media.MediaCompressor
 import net.agora.app.data.supabaseClient
 import net.agora.app.model.Comment
@@ -32,7 +34,6 @@ import io.github.jan.supabase.realtime.RealtimeChannel
 import io.github.jan.supabase.realtime.channel
 import io.github.jan.supabase.realtime.postgresChangeFlow
 import io.github.jan.supabase.realtime.realtime
-import io.github.jan.supabase.storage.storage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -52,7 +53,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import java.util.UUID
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -746,19 +746,41 @@ class FeedViewModel : ViewModel() {
      * took 3 network round-trips would feel broken. Each destroyed asset logs
      * under `CloudinaryDelete`, so a failure is diagnosable rather than silent.
      */
-    fun deletePost(postId: String) {
+    fun deletePost(context: Context, postId: String) {
         viewModelScope.launch {
             try {
                 val userId = currentUserId ?: return@launch
+                val appContext = context.applicationContext
 
-                // 1. Snapshot the media list while the post is still known.
+                // ── 1. CAPTURE ───────────────────────────────────────────────
+                // Read the media list while the post is still known. After the
+                // row is gone nothing on the device knows which assets belonged
+                // to it — that is exactly how the Cloudinary orphans were made.
                 val mediaUrls = _posts.value
                     .firstOrNull { it.id == postId }
                     ?.imageUrls
                     .orEmpty()
                     .filter { it.isNotBlank() }
+                val assets = CloudinaryDeletionApi.assetsFor(mediaUrls)
 
-                // 2. Remove the database row.
+                // ── 2. DESTROY ASSETS (before the row disappears) ────────────
+                // The Edge Function authorises the call by checking that the
+                // post belongs to the caller and that every public_id is one of
+                // ITS media_urls. That check needs the row, so this has to run
+                // first; after a delete the function can only answer 409.
+                //
+                // Best-effort by design: media cleanup must never block the
+                // user's delete. A failure is logged under CloudinaryDelete and
+                // leaves an orphan to reconcile, not a broken UI.
+                val cleanup = if (assets.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        CloudinaryDeletionApi.deleteAssets(postId, assets)
+                    }
+                } else {
+                    null
+                }
+
+                // ── 3. DELETE THE ROW ────────────────────────────────────────
                 withContext(Dispatchers.IO) {
                     supabaseClient.from("posts").delete {
                         filter {
@@ -768,24 +790,26 @@ class FeedViewModel : ViewModel() {
                     }
                 }
 
-                // Update the UI immediately — the user asked for the post to go.
+                // ── 4. LOCAL STATE + CACHES ─────────────────────────────────
                 _posts.update { list -> list.filterNot { it.id == postId } }
-                fetchPostsFromCloud()
 
-                // 3. Destroy the Cloudinary assets that row pointed at.
                 if (mediaUrls.isNotEmpty()) {
                     withContext(Dispatchers.IO) {
-                        mediaUrls.forEach { url ->
-                            val destroyed = CloudinaryClient.deleteFromCloudinary(url)
-                            if (!destroyed) {
-                                Log.w(
-                                    "FeedViewModel",
-                                    "Cloudinary cleanup skipped/failed for post=$postId url=$url " +
-                                        "(asset may be orphaned)"
-                                )
-                            }
-                        }
+                        // Coil + Media3 hold copies keyed by URL; without this a
+                        // deleted post's media lingers until LRU eviction.
+                        MediaCacheCleaner.evict(appContext, mediaUrls)
+                        MediaCacheCleaner.sweepUploadTemps(appContext)
                     }
+                }
+
+                fetchPostsFromCloud()
+
+                if (cleanup != null && !cleanup.ok) {
+                    Log.w(
+                        "FeedViewModel",
+                        "post=$postId deleted, but Cloudinary cleanup reported " +
+                            "${cleanup.failed} failure(s) (http=${cleanup.httpStatus})"
+                    )
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
