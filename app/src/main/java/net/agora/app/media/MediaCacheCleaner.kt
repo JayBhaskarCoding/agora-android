@@ -72,9 +72,18 @@ object MediaCacheCleaner {
         try {
             val cache = VideoCache.getCache(context)
             // SimpleCache has no "remove by prefix"; the key IS the URI, so match
-            // the exact strings. Guarded because a key can vanish between keys()
-            // and removeResource(), and that is not an error for us.
-            val toRemove = cache.keys().filter { key -> urls.any { key == it || key.startsWith(it) } }
+            // the exact strings. Guarded because a key can vanish between the
+            // enumeration and removeResource(), and that is not an error for us.
+            //
+            // `Cache.getKeys()` is a JAVA getter, so Kotlin surfaces it as the
+            // `keys` property — `cache.keys()` is not a function call, and the
+            // compiler cannot bind a type argument for it. Call the method by
+            // its real name and pin the platform type on the way in, so nothing
+            // downstream has to infer anything.
+            val cachedKeys: Set<String> = cache.getKeys()
+            val toRemove: List<String> = cachedKeys.filter { cachedKey ->
+                urls.any { url -> cachedKey == url || cachedKey.startsWith(url) }
+            }
             toRemove.forEach { key ->
                 runCatching { cache.removeResource(key) }
             }

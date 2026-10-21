@@ -1445,3 +1445,49 @@ run outside Gradle, all green.
 None of that is a build. `./gradlew :app:assembleDebug` is the only proof that
 matters, and this environment has no JDK, no Android SDK and no network access
 to Google's Maven. Treat the static evidence as *necessary*, never *sufficient*.
+
+### 16.6 First compiler contact: `cache.keys()` was never a function call
+
+The first real `javac`/`kotlinc` output on this repository was one line:
+
+```
+e: MediaCacheCleaner.kt:77:34 Cannot infer type for type parameter 'T'. Specify it explicitly.
+```
+
+Column 34 is the `keys` of `cache.keys()`. `androidx.media3.datasource.cache.Cache`
+is a **Java** interface, and its method is
+
+```java
+Set<String> getKeys();
+```
+
+Kotlin exposes any `getX()` method as a synthetic property, so the value is
+`cache.keys` — a property, not a function. `cache.keys()` therefore had no
+callable to bind and no type argument to infer. Nothing about this is caught by
+a grammar parser: tree-sitter sees a perfectly shaped call expression, which is
+why the file passed 103-file parsing, import resolution and duplicate-symbol
+checks and still failed the only test that matters.
+
+The fix calls the method by the name that actually exists and pins the platform
+type on the way in:
+
+```kotlin
+val cachedKeys: Set<String> = cache.getKeys()
+val toRemove: List<String> = cachedKeys.filter { cachedKey ->
+    urls.any { url -> cachedKey == url || cachedKey.startsWith(url) }
+}
+```
+
+Two lessons worth keeping:
+
+* A Java `Set<String>` arrives as the platform type `(Mutable)Set<String!>!`.
+  Binding it to an explicit `Set<String>` removes any inference from the
+  expression, so a future API change fails at the assignment instead of inside a
+  lambda.
+* `it` shadowing (an `it` inside a nested `any` inside a `filter`) makes these
+  errors read badly and can hide which receiver failed. Naming every lambda
+  parameter is not style here; it is diagnostics.
+
+Gradle has now run somewhere — the user's machine — and this is the only
+diagnostic it produced for this file. The rest of the static evidence still
+stands, but the compiler remains the only judge.
