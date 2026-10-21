@@ -173,6 +173,29 @@ fun LoginScreen(
                             )
                         }
 
+                        // 🌟 SIGNED-OUT RECOVERY ENTRY POINT.
+                        //    Without this button a signed-out user has no way to
+                        //    reach the reset flow at all: Account Details only
+                        //    exists behind a session. It starts RECOVERY mode,
+                        //    which always begins at the email step and can never
+                        //    jump straight to "set a new password".
+                        TextButton(
+                            onClick = {
+                                authViewModel.clearError()
+                                authViewModel.startPasswordRecovery()
+                            },
+                            modifier = Modifier
+                                .align(Alignment.End)
+                                .padding(bottom = 6.dp)
+                        ) {
+                            Text(
+                                text = "Forgot password?",
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.sp
+                            )
+                        }
+
                         // 🌟 Divider
                         Row(
                             modifier = Modifier

@@ -110,6 +110,8 @@ class DeepLinkIntentTest {
             "https://auth-agora.info/post/$postId",   // retired -> both null, must agree
             "agora://post/$postId",
             "agora:///post/$postId",
+            "net.in.agora://post/$postId",
+            "net.in.agora://post/$postId?comment_id=$commentId",
             "net.agora.app://post/$postId?comment_id=$commentId",
             "https://agora.in.net/auth-callback?code=abc",
             "https://agora.in.net/post/not-a-uuid",
@@ -139,7 +141,8 @@ class DeepLinkIntentTest {
     @Test
     fun retiredHostIntentIsIgnored() {
         // auth-agora.info is retired: it is 301'd at the domain, absent from the
-        // manifest and removed from the parser. A surviving old link must not
+        // manifest and removed from the parser. auth-agora.online is retired
+        // too (never used in production). A surviving old link must not
         // smuggle a second (unverifiable) host into the app.
         assertNull(
             DeepLinkRouter.parse(viewIntent("https://auth-agora.info/post/$postId"))

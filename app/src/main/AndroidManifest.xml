@@ -67,11 +67,14 @@
                  CUSTOM-SCHEME FILTER — Supabase Auth callbacks (email OTP,
                  magic link, password recovery) and in-app notifications.
 
-                 TWO schemes are accepted, for one reason: `agora://` is what
-                 the app already emits everywhere (FCM payloads, notification
-                 intents, NavHost deep links, every link ever sent to a user),
-                 while `net.agora.app://` is the applicationId-derived form some
-                 Supabase templates use. Declaring both means neither an old
+                 THREE schemes are accepted, one per origin: `agora://` is what
+                 the app itself emits everywhere (FCM payloads, notification
+                 intents, NavHost deep links, every link ever sent to a user);
+                 `net.in.agora://` is derived from the shipped applicationId and
+                 is what `intent://` URIs and Supabase templates built from the
+                 package name use; `net.agora.app://` is the Kotlin namespace,
+                 kept because links minted while the two identities were unified
+                 are still in the wild. Declaring all three means neither an old
                  notification nor a new browser redirect dead-ends.
 
                  Whatever scheme is used MUST appear in the Supabase dashboard →
@@ -83,6 +86,11 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="agora" />
+                <!-- The shipped applicationId (net.in.agora). intent:// URIs and
+                     anything built from the package name use this form. -->
+                <data android:scheme="net.in.agora" />
+                <!-- The Kotlin namespace. Kept because links minted while the
+                     two identities were unified are still in circulation. -->
                 <data android:scheme="net.agora.app" />
             </intent-filter>
 
@@ -101,8 +109,8 @@
 
                  ⚠️ autoVerify requires
                    https://agora.in.net/.well-known/assetlinks.json
-                 to list `net.agora.app` (which is BOTH the applicationId and
-                 the Kotlin namespace) with the
+                 to list `net.in.agora` (the applicationId — NOT the Kotlin
+                 namespace, which is net.agora.app) with the
                  SHA-256 of the certificate that signed the INSTALLED apk (Play
                  App Signing key for store builds). Without it Android opens
                  the browser instead of the app.

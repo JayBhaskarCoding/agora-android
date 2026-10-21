@@ -1288,3 +1288,160 @@ device. That is exactly what a contract test is for.
    **backgrounded**, triggered from a real push: the status bar shows the "a",
    not a white square.
 4. API 25 emulator or lower: the rounded raster icon is used.
+
+---
+
+## 16. Task 12 — the split identity, and the reset flow that was half-missing
+
+### The symptom
+
+Two histories had been merged: `master` (`003eba8`) still said
+`com.example.agora` everywhere, while the current line (`net.agora.app`) had
+been repackaged and had since diverged feature-by-feature. A merge that only
+looks at *files* reports a conflict; a merge that looks at *behaviour* reports
+something worse — **both sides had lost something the other still had.**
+
+The audit (§16.1) found three separate defects, only one of which looked like a
+"merge conflict":
+
+1. The Kotlin tree itself was already unified — there is **no**
+   `com/example/agora` directory to move. Nothing to relocate; plenty to prove.
+2. The password-reset state machine existed in `master` and **not** on the
+   current line: no mode, no routing guards, no resend cooldown, no busy flag,
+   no `signOut()` after a recovery update. The current line had a *flattened*
+   flow that still compiled — which is why no parser, linter or build ever
+   flagged it.
+3. `LoginScreen` had lost the **"Forgot password?" entry point** entirely. The
+   whole API was present and unreachable.
+
+Meanwhile `master` was *behind* on the UI: its extracted `PasswordReset*Step`
+composables predate the light-mode contrast work, so copying them verbatim
+would have reverted a fix from the current line.
+
+### 16.1 Evidence, not assumption
+
+`git log --all --name-only` showed the six reset files exist **only** in
+`003eba8`, which `git merge-base --is-ancestor` proved is **not** an ancestor of
+`HEAD`. `master` is a parentless shallow root — a *sibling* history, not an
+earlier state of this one. So:
+
+| Fact | Value |
+|---|---|
+| commits reachable from HEAD | 24 |
+| `003eba8` ancestors of HEAD | none |
+| files under `com/example/agora` at HEAD | 0 |
+| files under `net/agora/app` at HEAD | 99 |
+| `master` tree | 92 files, 100 % `com.example.agora` |
+| `PasswordResetScreen.kt` vs `master` | identical modulo the `package` line |
+
+A grep for the nine `master`-only `AuthViewModel` members at HEAD returned
+**0 hits** — including `startPasswordReset`, which `AccountDetailsScreen.kt:858`
+was calling. The flow *looked* present because `PasswordResetStep` and
+`PasswordResetScreen` existed; the *policy* around them did not.
+
+### 16.2 Decision: split the identity, do not unify it
+
+`namespace` and `applicationId` are deliberately **different strings**:
+
+```
+namespace     = "net.agora.app"   // Kotlin package, R, BuildConfig, manifest class base
+applicationId = "net.in.agora"    // device identity: Play, Firebase, OAuth, App Links
+```
+
+Both directions are forced, and both have already broken this repository once:
+
+* **`applicationId` cannot be `net.agora.app`.** `app/google-services.json`
+  declares exactly two clients (`com.example.agora`, `net.in.agora`); the
+  google-services plugin aborts the build — *"No matching client found for
+  package name"* — when `applicationId` matches neither. The Google OAuth
+  Android client is registered for `net.in.agora` + the release SHA-1, so
+  sign-in would return `[28444]` / status `16` / `DEVELOPER_ERROR`. And
+  `https://agora.in.net/.well-known/assetlinks.json` names `net.in.agora`, so
+  App Links would stop verifying.
+* **`namespace` cannot be `net.in.agora`.** `in` is a Kotlin *hard keyword*:
+  `package net.in.agora` is a syntax error (`Package name must be a
+  '.'-separated identifier list`), as is every `import net.in.agora.…`. Java
+  accepts it; Kotlin does not.
+
+AGP supports this natively — `namespace` only feeds `R`/`BuildConfig` and the
+manifest's relative class names, while `applicationId` is what lands in the APK
+manifest, on the device and in Play. The previous contract test asserted the two
+were *equal*; that test is now
+`namespaceIsTheLegalPackageAndApplicationIdIsTheShippedIdentity` and pins each
+value separately, plus a new
+`googleServicesJsonDeclaresTheApplicationId` that fails with the real cause
+instead of letting the Gradle plugin fail with a cryptic one.
+
+`docs/app-links/assetlinks.json.template` still listed `net.agora.app` — a file
+that would have verified **nothing**, because Android compares `package_name`
+against the installed package id. Fixed to `net.in.agora`, with a section in
+`docs/app-links/README.md` explaining why the `adb` commands use the
+applicationId and never the namespace.
+
+### 16.3 Deep links: three custom schemes, one host
+
+`DeepLinkRouter.CUSTOM_SCHEMES` and the manifest now agree on:
+
+| Scheme | Why it exists |
+|---|---|
+| `agora` | what the app itself emits (FCM, notifications, NavHost, every link sent) |
+| `net.in.agora` | the shipped applicationId — `intent://` URIs and package-derived links |
+| `net.agora.app` | the Kotlin namespace — links minted while the two identities were unified |
+
+`https` + `agora.in.net` remains the only web origin, and the `autoVerify`
+filter still declares only the canonical host: one unverifiable host downgrades
+verification for *all* of them.
+
+`net.in.agora://post/{id}` and its empty-authority form
+`net.in.agora:///post/{id}` are now covered by tests in both
+`DeepLinkRouterTest` (JVM) and `DeepLinkIntentTest` (instrumentation), and
+`backend/setup_agora_config.ps1` adds `net.in.agora://**` to the Supabase
+redirect allow-list — a scheme the manifest accepts but Supabase never
+redirects to is only half-wired.
+
+### 16.4 Reconciliation policy for the reset flow
+
+Ported **from `master`, selectively**:
+
+* `PasswordResetRouting` + its 6 unit tests (free of Android types).
+* `rememberOtpResendSeconds` — shared by the registration OTP card and the
+  reset OTP step, counting down to an *absolute monotonic deadline*, so
+  rotation and backgrounding cannot restart the cooldown.
+* The guarded state machine in `AuthViewModel`: `PasswordResetMode`
+  (`CHANGE`/`RECOVERY`), `startChangePassword` / `startPasswordRecovery` /
+  `editRecoveryEmail`, `PasswordResetRouting` guards on all three mutators,
+  `PasswordPolicy.isValid` (replacing a bare `length < 6`), the resend
+  deadline, the busy flag, and the `signOut()` that ends a *recovery* session
+  after the password changes.
+
+Kept **from the current line**:
+
+* Every Google Sign-In diagnostic (`logGoogleSignInDiagnostics`,
+  `BuildConfig.GOOGLE_WEB_CLIENT_ID`, the `--rim-rgb` / error classification) —
+  untouched.
+* The light-mode field colours (`agoraAuthFieldColors`, `authSubtitleColor`).
+* The shared components, media pipeline, Edge Function deletion and icons.
+
+The three reset steps were extracted into `PasswordResetEmailStep.kt`,
+`PasswordResetOtpStep.kt` and `PasswordResetNewPasswordStep.kt` **from the
+current line's inline bodies**, not from `master`'s stale composables — the
+structure of `master` with the styling of `HEAD`. The screen keeps the
+`AnimatedContent` `when` and the snackbar rules; the steps are presentational
+and take callbacks.
+
+Safety check on the restored `signOut()`: the abandoned-account wipe in this
+ViewModel is gated on `sessionCreatedInThisRun`, which every recovery path sets
+before minting a session — so a post-change `signOut()` can never trigger the
+destructive branch on a real account.
+
+### 16.5 What still cannot be proven here
+
+Tree-sitter parses all 103 Kotlin files with zero `ERROR`/`missing` nodes; all
+244 intra-`net.agora.app` imports resolve to a real declaration; the only
+duplicate top-level names are same-file overloads (`AgoraPrimaryButton` ×2,
+`AgoraTheme` ×2). The seven package-contract assertions were re-implemented and
+run outside Gradle, all green.
+
+None of that is a build. `./gradlew :app:assembleDebug` is the only proof that
+matters, and this environment has no JDK, no Android SDK and no network access
+to Google's Maven. Treat the static evidence as *necessary*, never *sufficient*.

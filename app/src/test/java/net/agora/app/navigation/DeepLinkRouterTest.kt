@@ -132,10 +132,11 @@ class DeepLinkRouterTest {
 
     @Test
     fun retiredOriginsAreRejected() {
-        // auth-agora.info was accepted for one release as a courtesy to links
-        // already in circulation. It is retired: the domain 301s to agora.in.net
-        // and the app no longer carries a second, unverifiable host. Same for
-        // the never-used .online origin and the old template package name.
+        // auth-agora.info is retired: it was accepted for one release as a
+        // courtesy to links already in circulation, the domain 301s to
+        // agora.in.net, and the app no longer carries a second, unverifiable
+        // host. auth-agora.online is retired too (never used in production),
+        // and com.example.agora is the retired template package.
         assertNull(DeepLinkRouter.parseUri("https://auth-agora.info/post/$postId"))
         assertNull(DeepLinkRouter.parseUri("https://auth-agora.info/p/$postId"))
         assertNull(DeepLinkRouter.parseUri("https://auth-agora.online/post/$postId"))
@@ -164,9 +165,22 @@ class DeepLinkRouterTest {
     }
 
     @Test
-    fun applicationIdSchemeResolvesThePostId() {
-        // Declared in the manifest and allow-listed in Supabase, but the old
-        // parser only understood "agora" and returned null for this one.
+    fun shippedApplicationIdSchemeResolvesThePostId() {
+        // `net.in.agora` is the applicationId, so an intent:// URI built from
+        // the package name (or a notification minted by an older build) uses
+        // this scheme. Declared in the manifest, allow-listed in Supabase.
+        val link = DeepLinkRouter.parseUri("net.in.agora://post/$postId")
+        assertEquals(postId, link!!.postId)
+
+        // Browsers drop the authority when normalising an unknown scheme.
+        val emptyAuthority = DeepLinkRouter.parseUri("net.in.agora:///post/$postId")
+        assertEquals(postId, emptyAuthority!!.postId)
+    }
+
+    @Test
+    fun namespaceSchemeStillResolvesThePostId() {
+        // `net.agora.app` is the Kotlin namespace; links minted while the two
+        // identities were unified are still in the wild and must keep working.
         val link = DeepLinkRouter.parseUri("net.agora.app://post/$postId")
         assertEquals(postId, link!!.postId)
     }
@@ -174,7 +188,7 @@ class DeepLinkRouterTest {
     @Test
     fun applicationIdSchemeFromNotificationIsAccepted() {
         val link = DeepLinkRouter.parseUri(
-            "net.agora.app://post/$postId?commentId=0b3f0f8e-1e0c-4a4e-9a1e-0b2c3d4e5f60"
+            "net.in.agora://post/$postId?commentId=0b3f0f8e-1e0c-4a4e-9a1e-0b2c3d4e5f60"
         )
         assertEquals(postId, link!!.postId)
         assertEquals("0b3f0f8e-1e0c-4a4e-9a1e-0b2c3d4e5f60", link.commentId)

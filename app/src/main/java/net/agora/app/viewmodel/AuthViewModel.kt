@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.SystemClock
 import net.agora.app.utils.DateOfBirth
 import net.agora.app.utils.PasswordPolicy
+import net.agora.app.utils.PasswordResetRouting
 import net.agora.app.utils.OtpCooldown
 import android.util.Log
 import android.util.Patterns
@@ -82,6 +83,9 @@ import java.time.Instant
 import java.util.UUID
 
 enum class PasswordResetStep { EMAIL, OTP, NEW_PASSWORD }
+
+/** CHANGE = signed-in user changing a known password; RECOVERY = signed-out reset. */
+enum class PasswordResetMode { CHANGE, RECOVERY }
 
 /**
  * Where the auth shell ([net.agora.app.MainActivity]) must go once a session
@@ -207,6 +211,29 @@ class AuthViewModel : ViewModel() {
 
     private val _passwordResetStep = MutableStateFlow<PasswordResetStep?>(null)
     val passwordResetStep: StateFlow<PasswordResetStep?> = _passwordResetStep.asStateFlow()
+
+    private val _passwordResetMode = MutableStateFlow(PasswordResetMode.RECOVERY)
+    val passwordResetMode: StateFlow<PasswordResetMode> = _passwordResetMode.asStateFlow()
+
+    /** Absolute monotonic deadline for the emailed-code countdown (0 = expired). */
+    private val _passwordResetResendAvailableAt = MutableStateFlow(0L)
+    val passwordResetResendAvailableAt: StateFlow<Long> = _passwordResetResendAvailableAt.asStateFlow()
+
+    /** True while a reset request, verification or password update is in flight. */
+    private val _isPasswordResetBusy = MutableStateFlow(false)
+    val isPasswordResetBusy: StateFlow<Boolean> = _isPasswordResetBusy.asStateFlow()
+
+    /** True once Supabase accepted a recovery-code request for [recoveryEmail]. */
+    private val _isRecoveryCodeRequested = MutableStateFlow(false)
+    val isRecoveryCodeRequested: StateFlow<Boolean> = _isRecoveryCodeRequested.asStateFlow()
+
+    /**
+     * True only after `verifyEmailOtp(RECOVERY)` succeeded — i.e. Supabase
+     * returned a session for the emailed code. The new-password step is gated on
+     * this, so it can never be reached by skipping verification.
+     */
+    private val _isRecoverySessionVerified = MutableStateFlow(false)
+    val isRecoverySessionVerified: StateFlow<Boolean> = _isRecoverySessionVerified.asStateFlow()
 
     private var recoveryEmail: String = ""
 
@@ -701,8 +728,48 @@ class AuthViewModel : ViewModel() {
         sendNav(AuthNavTarget.Home)
     }
 
-    fun startPasswordReset() {
+    /**
+     * Entry point for *Change Password* (authenticated). Requires a live
+     * session; without one it degrades to the strict recovery flow rather than
+     * opening the new-password step unverified.
+     */
+    fun startChangePassword() {
+        if (supabaseClient.auth.currentUserOrNull() == null) {
+            startPasswordRecovery()
+            return
+        }
+        _passwordResetMode.value = PasswordResetMode.CHANGE
+        _isRecoveryCodeRequested.value = false
+        _isRecoverySessionVerified.value = false
+        _passwordResetResendAvailableAt.value = 0L
+        _passwordResetStep.value = PasswordResetRouting.startStep(PasswordResetMode.CHANGE)
+        clearError()
+    }
+
+    /**
+     * Entry point for *Forgot password?* (unauthenticated). ALWAYS the strict
+     * three-step sequence — a leftover session from an earlier attempt must
+     * never let the user jump to the new-password screen.
+     */
+    fun startPasswordRecovery() {
+        _passwordResetMode.value = PasswordResetMode.RECOVERY
+        _isRecoveryCodeRequested.value = false
+        _isRecoverySessionVerified.value = false
+        _passwordResetResendAvailableAt.value = 0L
+        _passwordResetStep.value = PasswordResetRouting.startStep(PasswordResetMode.RECOVERY)
+        recoveryEmail = ""
+        clearError()
+    }
+
+    /** Back from the code step to the email step (recovery only). */
+    fun editRecoveryEmail() {
+        if (_passwordResetMode.value != PasswordResetMode.RECOVERY) return
+        if (_isPasswordResetBusy.value) return
+        _isRecoveryCodeRequested.value = false
+        _isRecoverySessionVerified.value = false
+        _passwordResetResendAvailableAt.value = 0L
         _passwordResetStep.value = PasswordResetStep.EMAIL
+        clearError()
     }
 
     fun requestPasswordResetOtp(email: String) {
@@ -711,7 +778,17 @@ class AuthViewModel : ViewModel() {
             _errorMessage.value = "Please enter a valid email address."
             return
         }
+        if (_isPasswordResetBusy.value) return
+        if (_passwordResetMode.value != PasswordResetMode.RECOVERY) return
+        // A resend must respect the same 60-second window as the shared OTP card;
+        // the very first send (EMAIL step) is never gated by it.
+        if (_passwordResetStep.value == PasswordResetStep.OTP &&
+            SystemClock.elapsedRealtime() < _passwordResetResendAvailableAt.value
+        ) {
+            return
+        }
 
+        _isPasswordResetBusy.value = true
         viewModelScope.launch {
             try {
                 clearError()
@@ -742,20 +819,38 @@ class AuthViewModel : ViewModel() {
                     supabaseClient.auth.resetPasswordForEmail(cleanEmail)
                 }
                 recoveryEmail = cleanEmail
+                _passwordResetResendAvailableAt.value =
+                    SystemClock.elapsedRealtime() + OtpCooldown.DURATION_MS
+                _isRecoveryCodeRequested.value = true
                 _passwordResetStep.value = PasswordResetStep.OTP
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _errorMessage.value = handleAuthError(e)
+            } finally {
+                _isPasswordResetBusy.value = false
             }
         }
     }
 
     fun verifyPasswordResetOtp(otpCode: String) {
-        val cleanCode = otpCode.trim()
-        if (cleanCode.isBlank()) {
-            _errorMessage.value = "Please enter the verification code."
+        // Ordering guard: the code step exists only after a code was requested.
+        // Nothing downstream may open the new-password screen without this.
+        if (!PasswordResetRouting.canOpenOtpStep(
+                _passwordResetMode.value,
+                _isRecoveryCodeRequested.value
+            )
+        ) {
+            _errorMessage.value = "Request a reset code for your email first."
             return
         }
+        val cleanCode = otpCode.trim()
+        if (cleanCode.length != 6 || !cleanCode.all { it in '0'..'9' }) {
+            _errorMessage.value = "Please enter the 6-digit code from your email."
+            return
+        }
+        if (_isPasswordResetBusy.value) return
 
+        _isPasswordResetBusy.value = true
         viewModelScope.launch {
             try {
                 clearError()
@@ -763,25 +858,42 @@ class AuthViewModel : ViewModel() {
                 //   cleanup away from it.
                 sessionCreatedInThisRun = true
                 withContext(Dispatchers.IO) {
+                    // Returns the AuthResponse that installs the temporary
+                    // recovery session; a failure throws and leaves the code
+                    // step open for a retry.
                     supabaseClient.auth.verifyEmailOtp(
                         type = OtpType.Email.RECOVERY,
                         email = recoveryEmail,
                         token = cleanCode
                     )
                 }
+                _isRecoverySessionVerified.value = true
                 _passwordResetStep.value = PasswordResetStep.NEW_PASSWORD
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _errorMessage.value = handleAuthError(e)
+            } finally {
+                _isPasswordResetBusy.value = false
             }
         }
     }
 
     fun submitNewPassword(newPassword: String, onSuccess: () -> Unit) {
-        if (newPassword.length < 6) {
-            _errorMessage.value = "Password must be at least 6 characters."
+        if (!PasswordResetRouting.canOpenNewPasswordStep(
+                _passwordResetMode.value,
+                _isRecoverySessionVerified.value
+            )
+        ) {
+            _errorMessage.value = "Verify the code we emailed you before setting a new password."
             return
         }
+        if (!PasswordPolicy.isValid(newPassword)) {
+            _errorMessage.value = PasswordPolicy.ERROR_MESSAGE
+            return
+        }
+        if (_isPasswordResetBusy.value) return
 
+        _isPasswordResetBusy.value = true
         viewModelScope.launch {
             try {
                 clearError()
@@ -800,16 +912,35 @@ class AuthViewModel : ViewModel() {
                     }
                 }
 
+                if (_passwordResetMode.value == PasswordResetMode.RECOVERY) {
+                    // ★ Recovery is a *temporary* session. Ending it here drops
+                    //   the user back on Login, exactly like popping the auth
+                    //   back stack — and stops a later "Forgot password?" tap
+                    //   from ever being treated as an authenticated change.
+                    withContext(Dispatchers.IO) { supabaseClient.auth.signOut() }
+                }
+                recoveryEmail = ""
+                _isRecoveryCodeRequested.value = false
+                _isRecoverySessionVerified.value = false
+                _passwordResetResendAvailableAt.value = 0L
                 _passwordResetStep.value = null
                 onSuccess()
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _errorMessage.value = handleAuthError(e)
+            } finally {
+                _isPasswordResetBusy.value = false
             }
         }
     }
 
     fun cancelPasswordReset() {
         _passwordResetStep.value = null
+        _passwordResetResendAvailableAt.value = 0L
+        _isPasswordResetBusy.value = false
+        _isRecoveryCodeRequested.value = false
+        _isRecoverySessionVerified.value = false
+        recoveryEmail = ""
         clearError()
     }
 

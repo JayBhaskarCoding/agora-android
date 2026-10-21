@@ -32,7 +32,8 @@ import java.util.UUID
  * http://agora.in.net/post/{postId}                    defensive (see below)
  * agora://post/{postId}[?commentId=…]                  notifications, in-app
  * agora:///post/{postId}                               empty-authority variant
- * net.agora.app://post/{postId}                        applicationId-derived
+ * net.in.agora://post/{postId}                         applicationId-derived
+ * net.agora.app://post/{postId}                        namespace-derived
  * <any of the above>?post_id={postId}                  legacy query fallback
  * Intent extras post_id / comment_id                   FCM data payload
  * ```
@@ -78,8 +79,18 @@ object DeepLinkRouter {
      */
     private val WEB_HOSTS = setOf(WEB_HOST, "www.$WEB_HOST")
 
-    /** Custom schemes declared in the manifest and allow-listed in Supabase. */
-    private val CUSTOM_SCHEMES = setOf("agora", "net.agora.app")
+    /**
+     * Custom schemes declared in the manifest and allow-listed in Supabase.
+     *
+     * Three, for one reason each:
+     *  - `agora`        — what the app itself emits (FCM payloads, notification
+     *                     intents, NavHost deep links, every link ever sent);
+     *  - `net.in.agora` — the shipped applicationId. Hand-built `intent://` URIs
+     *                     and anything generated from the package name use it;
+     *  - `net.agora.app`— the Kotlin namespace, kept because links minted while
+     *                     the two identities were unified are still in the wild.
+     */
+    private val CUSTOM_SCHEMES = setOf("agora", "net.in.agora", "net.agora.app")
 
     /** `https://agora.in.net/post/{id}` — canonical. */
     private const val POST_SEGMENT = "post"

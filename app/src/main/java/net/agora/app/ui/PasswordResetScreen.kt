@@ -5,7 +5,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -15,10 +14,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,18 +21,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.agora.app.ui.components.VibrantGlassBackground
-import net.agora.app.ui.components.agoraAuthFieldColors
-import net.agora.app.ui.components.authSubtitleColor
 import net.agora.app.ui.theme.LocalDarkTheme
 import net.agora.app.ui.theme.glassmorphic
 import net.agora.app.viewmodel.AuthViewModel
+import net.agora.app.viewmodel.PasswordResetMode
 import net.agora.app.viewmodel.PasswordResetStep
-import net.agora.app.ui.components.AgoraPrimaryButton
+import net.agora.app.ui.components.rememberOtpResendSeconds
 import kotlinx.coroutines.launch
 
 @Composable
@@ -104,6 +96,15 @@ fun PasswordResetScreen(
     val step by viewModel.passwordResetStep.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
 
+    // Owned by the ViewModel so they survive configuration changes: the mode
+    // decides the wording, `isBusy` stops a second tap from racing the
+    // ViewModel's own guard, and the resend deadline keeps the cooldown honest
+    // across rotation (it is an absolute monotonic instant, not a counter).
+    val mode by viewModel.passwordResetMode.collectAsState()
+    val isBusy by viewModel.isPasswordResetBusy.collectAsState()
+    val resendAvailableAt by viewModel.passwordResetResendAvailableAt.collectAsState()
+    val otpSecondsRemaining = rememberOtpResendSeconds(resendAvailableAt)
+
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
     val isDark = LocalDarkTheme.current
@@ -149,7 +150,13 @@ fun PasswordResetScreen(
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
             topBar = {
                 TopAppBar(
-                    title = { Text("Reset Password", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp) },
+                    title = {
+                        Text(
+                            text = if (mode == PasswordResetMode.CHANGE) "Change Password" else "Reset Password",
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 20.sp
+                        )
+                    },
                     navigationIcon = {
                         IconButton(onClick = {
                             viewModel.cancelPasswordReset()
@@ -216,244 +223,46 @@ fun PasswordResetScreen(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 when (currentStep) {
-                                    PasswordResetStep.EMAIL -> {
-                                        Text(
-                                            text = "Verify Account",
-                                            fontSize = 22.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onBackground,
-                                            modifier = Modifier
-                                                .align(Alignment.Start)
-                                                .padding(bottom = 6.dp)
-                                        )
-                                        Text(
-                                            text = "Enter your email to receive a 6-digit security code.",
-                                            fontSize = 14.sp,
-                                            color = authSubtitleColor(isDark),
-                                            modifier = Modifier
-                                                .align(Alignment.Start)
-                                                .padding(bottom = 24.dp)
-                                        )
+                                    PasswordResetStep.EMAIL -> PasswordResetEmailStep(
+                                        emailInput = emailInput,
+                                        isBusy = isBusy,
+                                        onEmailChange = { emailInput = it; viewModel.clearError() },
+                                        // The screen decides which step an error belongs to; the step
+                                        // composable only renders what it is handed.
+                                        errorMessage = if (step == PasswordResetStep.EMAIL ||
+                                            errorMessage == "This email does not match your active account."
+                                        ) errorMessage else null,
+                                        isDark = isDark,
+                                        onSendCode = { viewModel.requestPasswordResetOtp(emailInput) }
+                                    )
 
-                                        val isEmailError = errorMessage != null && (step == PasswordResetStep.EMAIL || errorMessage == "This email does not match your active account.")
+                                    PasswordResetStep.OTP -> PasswordResetOtpStep(
+                                        emailInput = emailInput,
+                                        isBusy = isBusy,
+                                        otpInput = otpInput,
+                                        onOtpChange = { otpInput = it; viewModel.clearError() },
+                                        isError = errorMessage != null && step == PasswordResetStep.OTP,
+                                        isDark = isDark,
+                                        secondsRemaining = otpSecondsRemaining,
+                                        onVerify = { viewModel.verifyPasswordResetOtp(otpInput) },
+                                        onResend = { viewModel.requestPasswordResetOtp(emailInput) }
+                                    )
 
-                                        OutlinedTextField(
-                                            value = emailInput,
-                                            onValueChange = { emailInput = it; viewModel.clearError() },
-                                            label = { Text("Email Address") },
-                                            singleLine = true,
-                                            isError = isEmailError,
-                                            shape = RoundedCornerShape(16.dp),
-                                            supportingText = {
-                                                if (isEmailError && errorMessage != null) {
-                                                    Text(
-                                                        text = errorMessage!!,
-                                                        color = MaterialTheme.colorScheme.error,
-                                                        fontSize = 12.sp
-                                                    )
-                                                }
-                                            },
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(bottom = 12.dp),
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                                            leadingIcon = {
-                                                Icon(
-                                                    Icons.Default.Email,
-                                                    contentDescription = null,
-                                                    tint = if (isDark) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF474C57)
-                                                )
-                                            },
-                                            colors = agoraAuthFieldColors(isDark)
-                                        )
-
-                                        AgoraPrimaryButton(
-                                            onClick = { viewModel.requestPasswordResetOtp(emailInput) },
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .height(54.dp),
-                                            enabled = emailInput.isNotBlank()
-                                        ) {
-                                            Text(
-                                                text = "Send Code",
-                                                fontSize = 16.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-
-                                    PasswordResetStep.OTP -> {
-                                        val isOtpError = errorMessage != null && step == PasswordResetStep.OTP
-
-                                        Text(
-                                            text = "Enter Security Code",
-                                            fontSize = 22.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onBackground,
-                                            modifier = Modifier
-                                                .align(Alignment.Start)
-                                                .padding(bottom = 6.dp)
-                                        )
-                                        Text(
-                                            text = "We sent a 6-digit security code to $emailInput.",
-                                            fontSize = 14.sp,
-                                            color = authSubtitleColor(isDark),
-                                            modifier = Modifier
-                                                .align(Alignment.Start)
-                                                .padding(bottom = 24.dp)
-                                        )
-
-                                        OtpInputField(
-                                            otpText = otpInput,
-                                            onOtpTextChange = { otpInput = it; viewModel.clearError() },
-                                            isError = isOtpError,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(bottom = 24.dp)
-                                        )
-
-                                        AgoraPrimaryButton(
-                                            onClick = { viewModel.verifyPasswordResetOtp(otpInput) },
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .height(54.dp),
-                                            enabled = otpInput.length == 6
-                                        ) {
-                                            Text(
-                                                text = "Verify Code",
-                                                fontSize = 16.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-
-                                        TextButton(
-                                            onClick = { viewModel.requestPasswordResetOtp(emailInput) },
-                                            modifier = Modifier.padding(top = 16.dp)
-                                        ) {
-                                            Text(
-                                                text = "Didn't receive code? Resend",
-                                                color = MaterialTheme.colorScheme.primary,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                        }
-                                    }
-
-                                    PasswordResetStep.NEW_PASSWORD -> {
-                                        Text(
-                                            text = "New Password",
-                                            fontSize = 22.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onBackground,
-                                            modifier = Modifier
-                                                .align(Alignment.Start)
-                                                .padding(bottom = 6.dp)
-                                        )
-                                        Text(
-                                            text = "Enter your strong new password.",
-                                            fontSize = 14.sp,
-                                            color = authSubtitleColor(isDark),
-                                            modifier = Modifier
-                                                .align(Alignment.Start)
-                                                .padding(bottom = 24.dp)
-                                        )
-
-                                        OutlinedTextField(
-                                            value = newPasswordInput,
-                                            onValueChange = { newPasswordInput = it; viewModel.clearError() },
-                                            label = { Text("New Password") },
-                                            singleLine = true,
-                                            shape = RoundedCornerShape(16.dp),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(bottom = 14.dp),
-                                            visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                                            leadingIcon = {
-                                                Icon(
-                                                    Icons.Default.Lock,
-                                                    contentDescription = null,
-                                                    tint = if (isDark) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF474C57)
-                                                )
-                                            },
-                                            trailingIcon = {
-                                                IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
-                                                    Icon(
-                                                        imageVector = if (isPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                                        contentDescription = "Toggle Password Visibility"
-                                                    )
-                                                }
-                                            },
-                                            colors = agoraAuthFieldColors(isDark)
-                                        )
-
-                                        OutlinedTextField(
-                                            value = confirmPasswordInput,
-                                            onValueChange = { confirmPasswordInput = it; viewModel.clearError() },
-                                            label = { Text("Confirm New Password") },
-                                            singleLine = true,
-                                            shape = RoundedCornerShape(16.dp),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(bottom = 12.dp),
-                                            visualTransformation = if (isConfirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                                            leadingIcon = {
-                                                Icon(
-                                                    Icons.Default.Lock,
-                                                    contentDescription = null,
-                                                    tint = if (isDark) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF474C57)
-                                                )
-                                            },
-                                            trailingIcon = {
-                                                IconButton(onClick = { isConfirmPasswordVisible = !isConfirmPasswordVisible }) {
-                                                    Icon(
-                                                        imageVector = if (isConfirmPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                                        contentDescription = "Toggle Confirm Password Visibility"
-                                                    )
-                                                }
-                                            },
-                                            colors = agoraAuthFieldColors(isDark)
-                                        )
-
-                                        if (confirmPasswordInput.isNotEmpty() && confirmPasswordInput != newPasswordInput) {
-                                            Text(
-                                                text = "Passwords do not match.",
-                                                color = MaterialTheme.colorScheme.error,
-                                                fontSize = 12.sp,
-                                                modifier = Modifier
-                                                    .align(Alignment.Start)
-                                                    .padding(bottom = 18.dp)
-                                            )
-                                        } else if (newPasswordInput.isNotEmpty() && newPasswordInput.length < 8) {
-                                            Text(
-                                                text = "Password must be at least 8 characters.",
-                                                color = MaterialTheme.colorScheme.error,
-                                                fontSize = 12.sp,
-                                                modifier = Modifier
-                                                    .align(Alignment.Start)
-                                                    .padding(bottom = 18.dp)
-                                            )
-                                        } else {
-                                            Spacer(modifier = Modifier.height(18.dp))
-                                        }
-
-                                        AgoraPrimaryButton(
-                                            onClick = { viewModel.submitNewPassword(newPasswordInput, onSuccess) },
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .height(54.dp),
-                                            enabled = newPasswordInput.length >= 8 && newPasswordInput == confirmPasswordInput
-                                        ) {
-                                            Text(
-                                                text = "Update Password",
-                                                fontSize = 16.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-
-                                    else -> {}
+                                    PasswordResetStep.NEW_PASSWORD -> PasswordResetNewPasswordStep(
+                                        newPasswordInput = newPasswordInput,
+                                        isBusy = isBusy,
+                                        onNewPasswordChange = { newPasswordInput = it; viewModel.clearError() },
+                                        confirmPasswordInput = confirmPasswordInput,
+                                        onConfirmPasswordChange = { confirmPasswordInput = it; viewModel.clearError() },
+                                        isPasswordVisible = isPasswordVisible,
+                                        onTogglePasswordVisibility = { isPasswordVisible = !isPasswordVisible },
+                                        isConfirmPasswordVisible = isConfirmPasswordVisible,
+                                        onToggleConfirmVisibility = { isConfirmPasswordVisible = !isConfirmPasswordVisible },
+                                        isDark = isDark,
+                                        onSubmit = { viewModel.submitNewPassword(newPasswordInput, onSuccess) }
+                                    )
                                 }
+
                             }
                         }
                     }

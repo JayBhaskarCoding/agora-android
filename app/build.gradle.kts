@@ -64,15 +64,17 @@ android {
     //   the base for every relative class name in AndroidManifest.xml
     //   (".MainActivity" -> net.agora.app.MainActivity).
     //
-    //   namespace == applicationId on purpose: one identity everywhere, so
-    //   there is no "which one is it?" question in crash reports, R8 rules,
-    //   OAuth client registration or adb commands.
+    //   ⚠️ namespace is NOT the applicationId, and must not be changed to
+    //   match it. `in` is a HARD KEYWORD in Kotlin: `package net.in.agora` is a
+    //   syntax error ("Package name must be a '.'-separated identifier list")
+    //   and every `import net.in.agora.…` fails with it. Java accepts it;
+    //   Kotlin does not. net.agora.app is the legal rendering of the same
+    //   domain, so the SOURCE tree lives there while the shipped identity stays
+    //   net.in.agora (see defaultConfig below).
     //
-    //   ⚠️ Why not net.in.agora, the domain-derived name? `in` is a HARD
-    //   KEYWORD in Kotlin: `package net.in.agora` is a syntax error ("Package
-    //   name must be a '.'-separated identifier list") and every
-    //   `import net.in.agora.…` fails with it. Java accepts it; Kotlin does
-    //   not. net.agora.app is the legal rendering of the same domain.
+    //   The split is deliberate and supported by AGP: `namespace` controls R,
+    //   BuildConfig and relative manifest class names; `applicationId` controls
+    //   the device/Play/Firebase identity.
     namespace = "net.agora.app"
 
     // Compile against the newest stable tooling; what Play validates is
@@ -86,14 +88,23 @@ android {
         //   upgrade continuity, FCM registration, OAuth Android client and the
         //   <data android:scheme> all key on this value.
         //
-        //   ⚠️ Changing this makes it a BRAND-NEW app to Play and Android: an
+        //   ⚠️ This MUST stay net.in.agora. It is the identity already
+        //   registered outside this repository:
+        //     - app/google-services.json lists exactly two clients,
+        //       com.example.agora and net.in.agora — there is NO net.agora.app
+        //       client, so the google-services plugin fails the build with
+        //       "No matching client found for package name" if this changes;
+        //     - the Google OAuth Android client is registered for this package
+        //       name + the release SHA-1 (otherwise sign-in returns [28444]);
+        //     - https://agora.in.net/.well-known/assetlinks.json lists it, so
+        //       App Links stop verifying if it changes.
+        //
+        //   Changing it also makes the app BRAND-NEW to Play and Android: an
         //   installed build under a different id cannot be upgraded in place.
-        //   It also invalidates every externally-registered identity — the
-        //   Firebase Android app in google-services.json, the Google OAuth
-        //   Android client (package name + SHA-1) and the package_name in
-        //   /.well-known/assetlinks.json. All three must be recreated for
-        //   net.agora.app before a release build will work (docs §9, §10).
-        applicationId = "net.agora.app"
+        //
+        //   The Kotlin namespace above is independent of this value and stays
+        //   net.agora.app because `in` is a Kotlin keyword (docs §9).
+        applicationId = "net.in.agora"
         minSdk = 26
 
         // ✅ Google Play 2026 policy: new apps must target a STABLE API level.

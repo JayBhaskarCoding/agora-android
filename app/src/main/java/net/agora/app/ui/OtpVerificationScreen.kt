@@ -1,10 +1,9 @@
 package net.agora.app.ui
 
+import net.agora.app.ui.components.rememberOtpResendSeconds
 import net.agora.app.utils.OtpCooldown
 import android.os.SystemClock
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.saveable.rememberSaveable
-import kotlinx.coroutines.delay
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -16,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -84,17 +82,9 @@ fun OtpVerificationScreen(
         mutableStateOf(SystemClock.elapsedRealtime() + OtpCooldown.DURATION_MS)
     }
     val deadline = resendAvailableAt ?: localDeadline
-    fun remainingSeconds(): Int =
-        OtpCooldown.remainingSeconds(deadline, SystemClock.elapsedRealtime())
-    var secondsRemaining by remember(email, deadline) { mutableStateOf(remainingSeconds()) }
-
-    LaunchedEffect(email, deadline) {
-        secondsRemaining = remainingSeconds()
-        while (secondsRemaining > 0) {
-            delay(250L)
-            secondsRemaining = remainingSeconds()
-        }
-    }
+    // Shared with the password-reset code step. The ticker lives in one place so
+    // the two screens cannot drift on tick rate or on when the loop stops.
+    val secondsRemaining = rememberOtpResendSeconds(deadline)
 
     Column(
         modifier = modifier.fillMaxWidth(),

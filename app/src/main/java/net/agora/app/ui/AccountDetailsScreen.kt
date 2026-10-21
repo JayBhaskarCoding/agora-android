@@ -855,7 +855,11 @@ fun AccountDetailsScreen(
                     }
 
                     FilledTonalButton(
-                        onClick = { viewModel.startPasswordReset() },
+                        // CHANGE mode, not recovery: this screen only exists behind a
+                        // live session, so the JWT already proved identity and the
+                        // flow opens directly on the new-password step. It degrades
+                        // to the strict emailed-code flow if the session is gone.
+                        onClick = { viewModel.startChangePassword() },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(16.dp)
                     ) {

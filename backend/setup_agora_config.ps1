@@ -117,14 +117,19 @@ SELECT vault.create_secret('$escapedWebhookSecret', 'webhook_secret', 'Agora dat
 
     $authConfig = @{
         site_url                    = $ProductionSiteUrl
-        # agora:// and net.agora.app:// -> native app deep links (post links and
-        #                                 auth callbacks; both schemes are declared
-        #                                 in AndroidManifest.xml).
+        # agora://                    -> what the app itself emits (post links and
+        #                                 auth callbacks).
+        # net.in.agora://             -> the shipped applicationId; intent:// URIs
+        #                                 and package-derived links use this form.
+        # net.agora.app://            -> the Kotlin namespace; only links minted
+        #                                 while the two identities were unified.
         # https://agora.in.net        -> App Links + browser redirects. The host
         #                                 must match AndroidManifest.xml's
         #                                 <data android:host> and
         #                                 DeepLinkRouter.WEB_HOST.
-        uri_allow_list              = @('agora://**', 'net.agora.app://**', 'https://agora.in.net/**')
+        # All four are declared in AndroidManifest.xml and accepted by
+        # DeepLinkRouter.CUSTOM_SCHEMES / WEB_HOSTS.
+        uri_allow_list              = @('agora://**', 'net.in.agora://**', 'net.agora.app://**', 'https://agora.in.net/**')
         external_google_enabled     = $true
         external_google_client_id   = $GoogleClientId
         external_google_secret      = $GoogleClientSecret

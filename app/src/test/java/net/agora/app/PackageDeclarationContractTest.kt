@@ -8,13 +8,23 @@ import org.junit.Test
 /**
  * Guards the app identity and the Kotlin package headers.
  *
- * The rule this file exists to enforce: **`namespace` and `applicationId` are the
- * same string, and that string is a legal Kotlin package.**
+ * The rule this file exists to enforce: **one namespace, one applicationId,
+ * and they are deliberately different strings.**
  *
- * Both halves have already been broken once in opposite directions:
+ * ```
+ * namespace     = "net.agora.app"   // Kotlin package, R, BuildConfig
+ * applicationId = "net.in.agora"    // device identity, Play, Firebase, OAuth
+ * ```
  *
- * 1. `namespace = "net.in.agora"` shipped in a commit and did not compile —
- *    `in` is a hard keyword, so `package net.in.agora` is a syntax error:
+ * The split is forced from both sides:
+ *
+ * 1. `applicationId` cannot be `net.agora.app`: no Android OAuth client, no
+ *    entry in `google-services.json`, and no `package_name` in the live
+ *    `/.well-known/assetlinks.json` is registered under it, so Play App Links
+ *    and Google Sign-In both fail closed (status 16 / `DEVELOPER_ERROR`).
+ *
+ * 2. `namespace` cannot be `net.in.agora`: `in` is a hard keyword, so
+ *    `package net.in.agora` is a syntax error —
  *
  *    ```
  *    AgoraApplication.kt:1:13 Syntax error:
@@ -25,11 +35,12 @@ import org.junit.Test
  *    (tree-sitter lexes `in` as an ordinary identifier) — only the compiler
  *    does, which is why the rule is encoded here as a plain assertion.
  *
- * 2. The namespace sat at the template default `com.example.agora` for a while,
- *    which is unpublishable-looking and diverged from the app id.
- *
- * `net.agora.app` satisfies both constraints: legal identifiers, no hard
- * keyword, and a single identity across Gradle, R8, the manifest and OAuth.
+ * AGP supports the split natively: `namespace` only feeds R/BuildConfig and the
+ * manifest's relative class names, while `applicationId` is what ends up in the
+ * APK manifest, on the device, in Play, and in the Digital Asset Links
+ * statement. A previous revision of this file asserted the two were equal, back
+ * when the namespace still sat at the template default `com.example.agora` —
+ * that assertion is gone because the premise was wrong.
  *
  * Pure JVM test: no device, no Robolectric.
  */
@@ -82,22 +93,51 @@ class PackageDeclarationContractTest {
 
     // ── Identity ────────────────────────────────────────────────────────────
 
+    /**
+     * `namespace` and `applicationId` are deliberately DIFFERENT values:
+     *
+     *  - `namespace` = net.agora.app — the Kotlin package, which must be a legal
+     *    identifier chain. `net.in.agora` is not: `in` is a hard keyword, so
+     *    `package net.in.agora` does not compile.
+     *  - `applicationId` = net.in.agora — the shipped identity. It is what
+     *    google-services.json, the Google OAuth Android client and
+     *    /.well-known/assetlinks.json are all registered against.
+     *
+     * AGP treats them independently on purpose: namespace controls R,
+     * BuildConfig and relative manifest class names, applicationId controls the
+     * device/Play/Firebase identity.
+     */
     @Test
-    fun namespaceAndApplicationIdAreIdentical() {
-        val namespace = gradleValue("namespace")
-        val applicationId = gradleValue("applicationId")
-        assertEquals(
-            "namespace and applicationId must be the same string — one identity " +
-                "everywhere (Gradle, R8 rules, manifest, OAuth client, adb).",
-            namespace,
-            applicationId
-        )
+    fun namespaceIsTheLegalPackageAndApplicationIdIsTheShippedIdentity() {
+        assertEquals("net.agora.app", gradleValue("namespace"))
+        assertEquals("net.in.agora", gradleValue("applicationId"))
     }
 
+    /**
+     * The invariant that the previous configuration violated.
+     *
+     * The google-services Gradle plugin fails the build outright when no client
+     * in google-services.json matches `applicationId` ("No matching client found
+     * for package name"). That is a build-time failure with a confusing message,
+     * so it is asserted here where the cause is obvious.
+     */
     @Test
-    fun identityIsNetAgoraApp() {
-        assertEquals("net.agora.app", gradleValue("namespace"))
-        assertEquals("net.agora.app", gradleValue("applicationId"))
+    fun googleServicesJsonDeclaresTheApplicationId() {
+        val file = File(repoRoot(), "app/google-services.json")
+        assertTrue("app/google-services.json is missing", file.isFile)
+
+        val applicationId = gradleValue("applicationId")
+        val declared = Regex(""""package_name"\s*:\s*"([^"]+)"""")
+            .findAll(file.readText())
+            .map { it.groupValues[1] }
+            .toSet()
+
+        assertTrue(
+            "google-services.json declares no client for applicationId=" +
+                "\"$applicationId\" (it has $declared). The google-services plugin " +
+                "fails the build until a matching Firebase Android app exists.",
+            applicationId in declared
+        )
     }
 
     // ── Package legality ────────────────────────────────────────────────────
@@ -117,8 +157,8 @@ class PackageDeclarationContractTest {
         }
         assertEquals(
             "A package segment is a Kotlin hard keyword; `package a.in.b` does not " +
-                "compile. This is why the identity is net.agora.app and not " +
-                "net.in.agora — see docs/engineering-notes.md §9.",
+                "compile. This is why the namespace is net.agora.app while the " +
+                "applicationId is net.in.agora — see docs/engineering-notes.md §16.",
             emptyList<String>(),
             offenders
         )
@@ -156,7 +196,9 @@ class PackageDeclarationContractTest {
 
     @Test
     fun retiredIdentitiesDoNotAppearInSources() {
-        val retired = listOf("com.example.agora", "net.in.agora")
+        // net.in.agora is NOT retired: it is the applicationId. Only the
+        // template package and the old auth domains are gone.
+        val retired = listOf("com.example.agora", "auth-agora.info", "auth-agora.online")
         val hits = mutableListOf<String>()
         for (file in kotlinSources()) {
             val text = file.readText()
@@ -172,23 +214,27 @@ class PackageDeclarationContractTest {
             }
         }
         assertEquals(
-            "A retired identity is still referenced. Only agora.in.net (web) and " +
-                "net.agora.app (app) are live.",
+            "A retired identity is still referenced. Only agora.in.net (web), " +
+                "net.in.agora (applicationId) and net.agora.app (namespace) are live.",
             emptyList<String>(),
             hits
         )
     }
 
+    /**
+     * All three custom schemes must be declared. `net.in.agora` is the
+     * applicationId (intent:// URIs and package-derived links use it),
+     * `net.agora.app` is the namespace (links minted while the two identities
+     * were unified), and `agora` is what the app itself emits.
+     */
     @Test
-    fun noRetiredSchemeIsDeclared() {
+    fun everyLiveSchemeIsDeclared() {
         val manifest = File(repoRoot(), "app/src/main/AndroidManifest.xml").readText()
-        assertTrue(
-            "The net.in.agora:// scheme is retired; use net.agora.app://",
-            !manifest.contains("android:scheme=\"net.in.agora\"")
-        )
-        assertTrue(
-            "The manifest must declare the app-identity scheme",
-            manifest.contains("android:scheme=\"net.agora.app\"")
-        )
+        listOf("agora", "net.in.agora", "net.agora.app").forEach { scheme ->
+            assertTrue(
+                "The manifest must declare android:scheme=\"$scheme\"",
+                manifest.contains("android:scheme=\"$scheme\"")
+            )
+        }
     }
 }
