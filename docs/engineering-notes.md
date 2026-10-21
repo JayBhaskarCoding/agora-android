@@ -1227,6 +1227,49 @@ renders the tray entry itself** — `PushNotificationService` never runs, and
 - `com.google.firebase.messaging.default_notification_icon` +
   `default_notification_color` in the manifest for the FCM path.
 
+### The final assets, and the one correction they needed
+
+The authoritative vectors are:
+
+| File | Source |
+|---|---|
+| `drawable/ic_launcher_background.xml` | upstream artwork, **verbatim** |
+| `drawable/ic_launcher_foreground.xml` | upstream artwork, **verbatim** |
+| `drawable/ic_launcher_monochrome.xml` | upstream pathData, with two required changes |
+
+They use a `512x512` viewport and `#4A49DF → #322EBA`, replacing the earlier
+hand-fitted `#5A57DC → #3228AD` gradient — the measured palette was slightly off,
+and the vector source is now the source of truth rather than `ic_logo.png`.
+
+**The monochrome layer needed fixing, not formatting.** As supplied it drew the
+white mark over an **opaque black 512x512 backdrop**, with the counter and the
+accent painted opaque black. Themed icons are tinted by the system from the
+layer's **alpha channel only**:
+
+- the backdrop is opaque, so alpha is 255 across the whole square;
+- black is still opaque, so the counter is not a hole;
+- therefore the system fills the entire square with the tint and the "a"
+  disappears. Measured: **0.551** of the layer was opaque.
+
+Two changes, both dictated by the format:
+
+1. **the backdrop path is removed** — nothing may be drawn where nothing shows;
+2. **the counter and accent become holes** via `fillType="evenOdd"`. This is safe
+   by measurement, not assumption: the counter is **100 %** inside the ring and
+   the accent **100 %** inside the arc, so each is subtracted from its own parent
+   and nothing else.
+
+Everything else is byte-for-byte the supplied pathData. The only other edit is
+that appended subpaths start with an **absolute `M`**: a relative `m` is relative
+to `(0,0)` only as a path's *first* command, and would otherwise be offset by the
+parent's end point — which put the counter at `(398,373)` instead of `(250,187)`.
+
+After the correction the monochrome silhouette agrees with the supplied
+foreground glyph to **0.08 %** of pixels, with identical bounding boxes.
+
+Bleed is safe: the glyph reaches **0.825** of the visible-window radius, inside
+the circle-mask radius (1.0) and the 66dp safe circle, so no launcher clips it.
+
 ### Guarded by a test
 
 `app/src/test/java/net/agora/app/LauncherIconContractTest.kt` asserts every rule

@@ -97,23 +97,47 @@ class LauncherIconContractTest {
     }
 
     /**
-     * The counter must be a hole, not a painted dot: the background is a
-     * gradient, so a solid counter would have to carry its own copy of the
-     * gradient and would drift out of alignment at every density.
+     * The counter and the accent must be holes, not painted shapes.
+     *
+     * The supplied monochrome drew the mark white over an opaque black 512x512
+     * backdrop and painted the counter/accent opaque black. Alpha is then 255
+     * everywhere inside the backdrop, so the system — which tints themed icons
+     * from alpha alone — fills that whole square with the tint and the mark is
+     * invisible (measured: 0.551 of the layer was opaque).
      */
     @Test
     fun monochromePunchesTheCounterOutWithEvenOddFill() {
         val xml = res("drawable/ic_launcher_monochrome.xml").readText()
         assertTrue(
             "ic_launcher_monochrome.xml must use android:fillType=\"evenOdd\" so the " +
-                "counter subpath becomes a hole instead of being filled.",
+                "counter and accent become holes instead of being painted.",
             xml.contains("android:fillType=\"evenOdd\"")
         )
         assertEquals(
-            "The monochrome mark must be a single path with the counter as a subpath; " +
-                "separate filled paths would overlap and lose the hole.",
-            1,
+            "The monochrome mark is two paths: ring+counter and arc+accent, each with " +
+                "its counter/accent appended as a subpath.",
+            2,
             Regex("android:pathData=\"").findAll(xml).count()
+        )
+        assertFalse(
+            "The opaque 512x512 backdrop must not come back: it makes the whole layer " +
+                "opaque, so the system tints a solid square.",
+            xml.contains("m512,0v512h-512v-512z")
+        )
+    }
+
+    /**
+     * Confirms the monochrome actually reaches the layer's edge as a *hole*.
+     * A cheap structural proxy: no path may paint a full-canvas rectangle.
+     */
+    @Test
+    fun monochromeHasNoFullCanvasFill() {
+        val xml = res("drawable/ic_launcher_monochrome.xml").readText()
+        val fullCanvas = Regex("""pathData="[mM]512|pathData="[mM]0,0[vV]512""")
+        assertFalse(
+            "ic_launcher_monochrome.xml paints a full-canvas rectangle. Themed icons are " +
+                "tinted from alpha, so this fills the entire icon with the tint.",
+            fullCanvas.containsMatchIn(xml)
         )
     }
 

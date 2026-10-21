@@ -1,29 +1,22 @@
-<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <!-- Full-bleed brand gradient (#5A57DC -> #3228AD, the ramp measured off
-         ic_logo.png). The launcher applies its own shape mask, so a pre-rounded
-         square would leave gaps behind circle/squircle masks.
-
-         The ramp spans y=18..90, not 0..108: only the central 72dp of an
-         adaptive-icon layer is visible, so ramping the full canvas would show a
-         flatter, washed-out middle third instead of the intended top-to-bottom
-         fall. -->
-    <path android:pathData="M0,0 L108,0 L108,108 L0,108 Z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:type="linear"
-                android:startX="54"
-                android:startY="18"
-                android:endX="54"
-                android:endY="90">
-                <item android:offset="0.0" android:color="#5A57DC" />
-                <item android:offset="1.0" android:color="#3228AD" />
-            </gradient>
-        </aapt:attr>
-    </path>
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+  <path
+      android:pathData="m512,0v512h-512v-512z"
+      android:fillType="evenOdd">
+    <aapt:attr name="android:fillColor">
+      <gradient
+          android:startX="255.99"
+          android:startY="304.98"
+          android:endX="255.46"
+          android:endY="96.57"
+          android:type="linear">
+        <item android:offset="0" android:color="#FF322EBA"/>
+        <item android:offset="1" android:color="#FF4A49DF"/>
+      </gradient>
+    </aapt:attr>
+  </path>
 </vector>
