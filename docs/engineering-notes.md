@@ -1165,3 +1165,83 @@ rotation from replaying the same navigation.
 branch, and `net.agora.app://` — kept for compatibility with links already in
 the wild from the identity migration, even though `https://agora.in.net` is the
 canonical form.
+
+## 15. Launcher icon, themed icon and notification icon
+
+The launcher icon was still the **stock Android template**: a `#3DDC84` grid
+background and the green robot foreground. The brand mark already existed in the
+repo — as `agora_splash.xml` (vector) and `ic_logo.png` (finished artwork) — but
+nothing connected it to `mipmap-anydpi-v26/`.
+
+### What "the icon format" has to cover
+
+Five separate outputs, and they are not interchangeable:
+
+| Asset | Consumed by | Form |
+|---|---|---|
+| `mipmap-anydpi-v26/ic_launcher{,_round}.xml` | launchers, API 26+ | `<adaptive-icon>` |
+| `drawable/ic_launcher_background.xml` | the adaptive icon's back layer | vector |
+| `drawable/ic_launcher_foreground.xml` | the adaptive icon's front layer | vector |
+| `drawable/ic_launcher_monochrome.xml` | Android 13 themed icons | vector |
+| `mipmap-*/ic_launcher{,_round}.webp` | launchers, API ≤ 25 | raster, 5 densities |
+
+plus `drawable/ic_notification.xml` for the status bar.
+
+### Geometry and colour, measured not guessed
+
+Both were taken off `ic_logo.png` rather than eyeballed:
+
+- **Gradient** `#5A57DC → #3228AD`, vertical (left and right edges sample the
+  same, so it is not diagonal).
+- **Glyph width = 63.7 % of the tile**. Only the central **72dp** of an adaptive
+  layer is visible, so `0.637 × 72 ≈ 46dp` — that is where the foreground's
+  46dp comes from, and it is why the launcher icon and the splash tile read as
+  the same mark instead of one looking like a zoomed crop.
+- **Corner radius ≈ 22 %** of the tile width, applied to the legacy rasters only
+  (the adaptive background must stay full-bleed; the launcher applies its own
+  mask, and a pre-rounded square leaves gaps behind a circle mask).
+
+The background gradient ramps across `y = 18..90`, not `0..108`: ramping the
+full 108dp canvas would put only the middle third of the ramp inside the visible
+72dp window and wash the colour out.
+
+### Two bugs fixed on the way
+
+**The themed icon was a WebP.** `<monochrome>` pointed at
+`@mipmap/ic_launcher_foreground`. Android draws themed icons from the layer's
+**alpha channel**, so a raster has no transparent interior — the counter became
+part of the silhouette and the icon rendered as a solid blob. It is now a
+vector whose counter is a **hole** via `fillType="evenOdd"`. Even-odd is not a
+style choice here: the background is a gradient, so a painted counter would need
+its own copy of the gradient and would drift out of alignment at every density.
+A hole shows whatever is behind it, at any size.
+
+**The notification icon was the adaptive icon.** `setSmallIcon(R.mipmap.ic_launcher)`
+is the classic mistake: the tray draws a small icon as a tinted alpha mask, and
+an adaptive icon has no such mask, so it becomes a white square. Worse, when a
+push carries a top-level `notification` block and the app is backgrounded, **FCM
+renders the tray entry itself** — `PushNotificationService` never runs, and
+`setSmallIcon` is irrelevant. Both paths are now covered:
+
+- `setSmallIcon(R.drawable.ic_notification)` for the in-app path;
+- `com.google.firebase.messaging.default_notification_icon` +
+  `default_notification_color` in the manifest for the FCM path.
+
+### Guarded by a test
+
+`app/src/test/java/net/agora/app/LauncherIconContractTest.kt` asserts every rule
+above — monochrome is a vector, it uses even-odd with a single path, no source
+file passes `R.mipmap.ic_launcher` to a notification builder, the FCM meta-data
+exists, and all five legacy densities are present. Every failure mode here is
+silent: nothing crashes, nothing fails to compile, the icon is just wrong on a
+device. That is exactly what a contract test is for.
+
+### Verify by hand
+
+1. Long-press the app icon → **Themed icons** on Android 13+: the "a" silhouette
+   appears as a cut-out, not a filled blob.
+2. Check the launcher on a circle-mask launcher (Pixel): no corner gaps.
+3. `adb shell cmd notification post -S bigtext tag "hi"` while the app is
+   **backgrounded**, triggered from a real push: the status bar shows the "a",
+   not a white square.
+4. API 25 emulator or lower: the rounded raster icon is used.

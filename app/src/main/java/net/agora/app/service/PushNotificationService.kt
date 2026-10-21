@@ -161,7 +161,11 @@ class PushNotificationService : FirebaseMessagingService() {
         }
 
         val notification = NotificationCompat.Builder(this, channelId)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            // 🌟 A dedicated vector, NOT @mipmap/ic_launcher. The system draws a
+            //    small icon as an alpha mask and tints it: an adaptive icon
+            //    flattens to a white blob, and a bitmap one loses its interior.
+            //    ic_notification.xml carries the real "a" silhouette instead.
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(message)
             .setAutoCancel(true)

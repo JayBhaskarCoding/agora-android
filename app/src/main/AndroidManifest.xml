@@ -35,6 +35,21 @@
         android:enableOnBackInvokedCallback="true"
         android:usesCleartextTraffic="false">
 
+        <!-- 🌟 FCM fallback presentation. The backend sends a top-level
+             `notification` block, and when the app is BACKGROUNDED FCM renders
+             that notification itself — PushNotificationService (and therefore
+             setSmallIcon) never runs. Without these two values the tray icon is
+             the launcher icon: an adaptive icon becomes a white square on
+             Android 8+. These are ordinary (non-adaptive) drawables on purpose.
+             When the app is foregrounded, PushNotificationService builds the
+             notification and overrides both with the same values. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/agora_brand" />
+
         <!-- Launcher + deep links. Exported by necessity. -->
         <activity
             android:name=".MainActivity"
