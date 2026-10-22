@@ -1,6 +1,7 @@
 package net.agora.app.ui
 
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -107,7 +108,6 @@ fun getTimeAgo(instantString: String?): String {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 /**
  * Deletes the storage object behind [previousUrl] after an avatar replacement.
  *
@@ -116,6 +116,15 @@ fun getTimeAgo(instantString: String?): String {
  * object key is everything after the bucket name. Best-effort by design: the
  * new avatar is already live, so a cleanup failure must never surface as an
  * upload error — it is logged for later reconciliation instead.
+ *
+ * ⚠️ The method is `delete`, not `remove`. `remove` is the **Supabase JS**
+ * spelling (`storage.from(bucket).remove([...])`); supabase-kt's `BucketApi`
+ * exposes `delete(paths: Collection<String>)` plus a
+ * `delete(vararg paths: String)` convenience overload, and has no `remove` at
+ * all — so this line does not compile if it is written with the JS name.
+ *
+ * The key is passed exactly as it was uploaded (`<userId>/<uuid>.webp`, both
+ * URL-safe), so the extracted path needs no percent-decoding.
  */
 private suspend fun deleteReplacedAvatar(previousUrl: String?, newUrl: String) {
     val old = previousUrl?.takeIf { it.isNotBlank() && it != newUrl } ?: return
@@ -123,11 +132,11 @@ private suspend fun deleteReplacedAvatar(previousUrl: String?, newUrl: String) {
     val path = old.substringAfter(marker, missingDelimiterValue = "").substringBefore('?')
     if (path.isBlank()) return
     try {
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            supabaseClient.storage.from("avatars").remove(path)
+        withContext(Dispatchers.IO) {
+            supabaseClient.storage.from("avatars").delete(path)
         }
     } catch (e: Exception) {
-        android.util.Log.w(
+        Log.w(
             "AvatarCleanup",
             "could not delete replaced avatar '$path': ${e.localizedMessage}",
             e
@@ -135,6 +144,7 @@ private suspend fun deleteReplacedAvatar(previousUrl: String?, newUrl: String) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AccountDetailsScreen(
     viewModel: AuthViewModel,

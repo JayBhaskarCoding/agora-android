@@ -1491,3 +1491,70 @@ Two lessons worth keeping:
 Gradle has now run somewhere — the user's machine — and this is the only
 diagnostic it produced for this file. The rest of the static evidence still
 stands, but the compiler remains the only judge.
+
+### 16.7 Second compiler contact: the Supabase *JS* spelling, and a misplaced opt-in
+
+```
+e: AccountDetailsScreen.kt:127:52 Unresolved reference 'remove'.
+```
+
+Column 52 is `remove` in `supabaseClient.storage.from("avatars").remove(path)`.
+That is the **Supabase JavaScript** SDK's method name
+(`storage.from(bucket).remove([...])`). supabase-kt's `BucketApi` (3.7.0) has no
+`remove` at all — it exposes
+
+```kotlin
+suspend fun delete(paths: Collection<String>)
+suspend fun delete(vararg paths: String)
+```
+
+so the correct call is `.delete(path)`. This file is the only storage *deletion*
+in the app, which is why it is the only place the mistake appears.
+
+The class of defect matters more than the instance: this repository contains
+code translated from Supabase JS snippets, and JS→Kotlin renames (`remove` →
+`delete`, `update` semantics, snake_case payload keys) produce errors that no
+grammar parser and no "does the import resolve" check can see. Every
+supabase-kt call in the tree was therefore checked against the 3.7.0 sources:
+
+| Plugin | Calls used | Verified against |
+|---|---|---|
+| `auth` | `currentUserOrNull`, `updateUser`, `signInWith`, `verifyEmailOtp`, `signOut`, `sessionStatus`, `reauthenticate`, `resetPasswordForEmail` | `Auth.kt` @ 3.7.0 |
+| `storage` | `from`, `upload`, `publicUrl`, **`delete`** | `Storage.kt`, `BucketApi.kt` @ 3.7.0 |
+| `postgrest` | `rpc`, `from(...).select/update/delete/insert` | `Postgrest.kt` @ 3.7.0 |
+| `realtime` | `connect`, `channel`, `removeChannel` | `Realtime.kt` @ 3.7.0 |
+| `functions` | `invoke` (an `operator fun`) | `Functions.kt` @ 3.7.0 |
+
+The same treatment was applied to the two media caches, since they are the other
+place where a wrong name hides behind a plausible-looking call:
+`coil.imageLoader` (`inline val Context.imageLoader` in coil-singleton),
+`DiskCache.remove(String)`, `MemoryCache.remove(MemoryCache.Key)`,
+`SimpleCache.removeResource(String)`, `Cache.getKeys()`.
+
+#### The latent error in the same file
+
+Line 110 carried `@OptIn(ExperimentalMaterial3Api::class)` immediately above the
+KDoc of the private helper `deleteReplacedAvatar` — an annotation stranded one
+declaration early. Kotlin attaches annotations to whatever declaration follows,
+so it compiled, but it was spent on a suspend helper that uses no Compose API,
+while `AccountDetailsScreen` — which calls `rememberDatePickerState`, `DatePicker`,
+`ExposedDropdownMenuBox` and `menuAnchor(ExposedDropdownMenuAnchorType…)` —
+had **no** opt-in at all.
+
+That is invisible to a grep for the annotation (the file contained exactly one,
+as it should) and invisible to a parser (the file is well-formed). It shows up
+only when the compiler reaches the experimental call sites. Every other file
+using those APIs (`FeedScreen`, `SinglePostScreen`, `ReactorsBottomSheet`,
+`ProfileSetupScreen`, `OnboardingFlowScreen`, `CommentsBottomSheet`) already had
+the annotation on the composable, which is what confirmed the intended
+convention. The annotation now sits on `AccountDetailsScreen`, and a tree-wide
+scan for *any* annotation separated from its declaration by a KDoc block returns
+zero hits.
+
+Two rules from this:
+
+* Never leave an annotation adjacent to a doc comment — it looks attached to the
+  documented declaration but binds to the next one.
+* A compile error is a better oracle than any static gate built here. Both of
+  these defects passed 105-file parsing, 244-import resolution, duplicate-symbol
+  detection and every contract test.
