@@ -261,8 +261,19 @@ fun PasswordResetScreen(
                                         isDark = isDark,
                                         onSubmit = { viewModel.submitNewPassword(newPasswordInput, onSuccess) }
                                     )
-                                }
 
+                                    // `step` is `PasswordResetStep?`, so `currentStep` is
+                                    // nullable even though MainActivity only composes this
+                                    // screen while the step is non-null: cancelPasswordReset()
+                                    // and the tail of submitNewPassword() set it to null, and
+                                    // AnimatedContent still renders this lambda for the
+                                    // outgoing frame while it fades. Nothing to draw.
+                                    //
+                                    // Deliberately `null ->` and not `else ->`: a fourth
+                                    // step added to the enum must fail to compile here rather
+                                    // than silently render an empty card.
+                                    null -> Unit
+                                }
                             }
                         }
                     }

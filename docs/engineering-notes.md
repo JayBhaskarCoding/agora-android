@@ -1558,3 +1558,80 @@ Two rules from this:
 * A compile error is a better oracle than any static gate built here. Both of
   these defects passed 105-file parsing, 244-import resolution, duplicate-symbol
   detection and every contract test.
+
+### 16.8 Third compiler contact: a non-exhaustive `when` I introduced myself
+
+```
+e: PasswordResetScreen.kt:225:33 'when' expression must be exhaustive.
+   Add the 'null' branch or an 'else' branch.
+```
+
+This one is a **regression from the §16.4 extraction**, not an inherited defect,
+and it is worth writing down precisely because of that.
+
+`passwordResetStep` is a `StateFlow<PasswordResetStep?>`, so
+`AnimatedContent(targetState = step)` hands the content lambda a
+`PasswordResetStep?`. The pre-refactor file ended its `when` with
+
+```kotlin
+PasswordResetStep.NEW_PASSWORD -> { … }
+
+else -> {}
+```
+
+The extraction script sliced the `when` body between the `{` after
+`when (currentStep)` and its matching `}`, then rebuilt the block from the three
+enum branches. The `else -> {}` was not one of the three branches, so it was
+dropped — leaving a `when` that handled EMAIL, OTP and NEW_PASSWORD and nothing
+else. Kotlin 2 requires `when` statements over enum, sealed and **nullable**
+subjects to be exhaustive, so the missing `null` became an error.
+
+Restored, but as a precise arm rather than the original blanket `else`:
+
+```kotlin
+null -> Unit   // AnimatedContent still renders the outgoing frame after
+               // cancelPasswordReset()/submitNewPassword() set the step to null
+```
+
+`else ->` would also compile, and that is exactly the problem: if a fourth step
+is ever added to `PasswordResetStep`, `else` silently renders an empty card,
+while `null ->` makes the compiler stop the build. After a day of finding
+silently-wrong `when` usage, the variant that fails loudly wins.
+
+**The generalisable lesson:** a mechanical body extraction is only as safe as the
+accounting for everything between the anchors. The three enum branches were
+counted; the fallback arm was not part of the count. Any future extraction of a
+`when` must assert that the number of `when_entry` nodes before and after matches.
+
+#### A checker for this class, and the two bugs that nearly made it useless
+
+`when` exhaustiveness is statically checkable without a compiler, so a scanner
+was written: collect enum/sealed types, resolve each `when` subject to a type
+(including `AnimatedContent(targetState = …) { param -> … }` lambda parameters
+and `by …collectAsState()` delegates), then flag subjects that are nullable or
+enum-typed without full coverage.
+
+It reported **0 findings on the current tree — and 0 on the deliberately broken
+file.** Two bugs, both worth remembering:
+
+1. **The subject could not be read.** `AnimatedContent`'s node `start_byte` does
+   not begin at the `when` keyword, so an anchored `re.match` never matched. The
+   fix is to read the grammar's `when_subject` child instead of slicing the text.
+2. **Byte offsets vs `str` slicing.** tree-sitter reports **byte** offsets. The
+   script decoded the file to `str` and then sliced with those offsets, which
+   after the first emoji or em-dash shifts every subsequent slice by one
+   character per multi-byte code point. `PasswordResetStep.EMAIL` was being read
+   as `swordResetStep.EMAIL`. Every `txt(node, src)` in these scripts must take
+   `bytes`. This repository is full of `✦`, `—` and `…`, so the drift starts
+   almost immediately.
+
+Only after both fixes did the checker report exactly one finding — line 225 of
+the pre-fix file, the compiler's own line — and zero on the fixed tree. A
+detector that has never been shown to fire on a known-bad input is not evidence.
+
+Both false positives it produced before the type-aware rewrite are instructive
+too: `when (handle)` in `AgoraImageCropper` (subject is `Int`) and
+`when (step)` in `OnboardingFlowScreen` (`mutableIntStateOf`, also `Int`).
+Kotlin only demands exhaustiveness for enum, sealed, `Boolean` and nullable
+subjects — **not** for `Int` — so name-based matching alone would have produced
+noise forever.
