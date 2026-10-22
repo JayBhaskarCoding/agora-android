@@ -1,27 +1,45 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- ★ SPLASH — the Agora mark with a gold ring that spins once as it lands.
-     Bound to windowSplashScreenAnimatedIcon in values/themes.xml (and its
-     values-night twin), so it is the first thing drawn on both themes.
+<!-- ★ AGORA SPLASH — the app icon, rotating once as the app opens.
 
-     Geometry: the indigo tile + white glyph below are copied VERBATIM from the
-     launcher icon (ic_launcher_background / ic_launcher_foreground). Launching
-     the app and tapping its icon must never show two different logos, so the
-     mark is not redrawn here — only wrapped.
+     Three things this file is responsible for, and nothing else:
 
-     Motion, in a single 800 ms beat that the OS splash screens play while the
-     session resolves:
-       • `gold`  — a 280° ring (the gap is what makes the rotation readable; a
-                   closed circle would spin invisibly), scaling 0.75 -> 1.0 while
-                   it turns 0 -> 360 degrees exactly once;
-       • `mark`  — the logo settling 0.9 -> 1.0 slightly behind it.
-     Both use fast_out_slow_in, so they accelerate off the mark and decelerate
-     into place instead of stopping dead.
+     1. ONE LOGO. The purple rounded badge (`tile`) and the white mark (`glyph`)
+        are the artwork the launcher shows, inside a single `logo` group.
+        Launching the app and tapping its icon must never show two different
+        logos, so neither shape is redrawn here: both pathData are carried over
+        byte-for-byte from the previous revision.
 
-     aapt2 notes: the inner <vector> is supplied through <aapt:attr>, and each
-     <target> names a group declared in it and points at an animator in
-     res/animator/. Every property animated here (rotation, scaleX, scaleY) is
-     an animatable <group> property — VectorDrawable has no group alpha, which is
-     why the entrance is a scale rather than a fade. -->
+     2. ONE ROTATION. `logo` turns 0 -> 360 degrees exactly once (see
+        res/animator/splash_logo_entrance.xml). Badge AND mark turn together,
+        because they are inside that one group — nothing spins around a static
+        logo.
+
+     3. AN INSET MARK. The mark's own coordinate space runs out to ~392 units,
+        which rendered it at 84% of the badge's width; its lower-right arc
+        strokes sat about 8% from the badge edge and read as if they were about
+        to collide with it. The `glyph` group scales the mark to 0.32, i.e. 62%
+        of the badge, leaving ~19% clear padding on every side — the margin the
+        adaptive launcher icon keeps.
+
+        The two constants that place the mark are measured, not eyeballed:
+          • the mark's untouched bounding box is (107.15, 104.70)-(392.59, 391.07),
+            so its centre is (249.87, 247.885)             -> pivotX / pivotY;
+          • the badge's centre is (143.445, 144.011), so the mark is shifted by
+            (143.445 - 249.87, 144.011 - 247.885)
+              = (-106.425, -103.874)                        -> translateX / translateY.
+        With the pivot sitting on the mark's own centre, `translate` is the only
+        thing that positions it: changing `scale` re-centres the mark about that
+        point instead of shoving it sideways.
+
+     VectorDrawable applies a group transform as
+        translate(pivot) -> scale -> rotate -> translate(-pivot) + translateXY
+     so scale + translate alone are enough to place a group; no matrices here.
+
+     aapt2: the inner <vector> is supplied through <aapt:attr>, the single
+     <target> names the `logo` group declared inside it, and the animation lives
+     in res/animator/ (an inline <set> under <aapt:attr> is not accepted).
+     VectorDrawable has no group `alpha`, so the entrance is a scale — an alpha
+     animator on a <group> fails silently. -->
 <animated-vector
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt">
@@ -32,33 +50,24 @@
             android:height="288dp"
             android:viewportWidth="288"
             android:viewportHeight="288">
-            <!-- Gold ring: r=86 around the centre (144,144), 280 degrees from
-                 straight up, drawn clockwise with a round cap so the two ends
-                 read as deliberate stops rather than a broken circle. -->
-            <group
-                android:name="gold"
-                android:pivotX="144"
-                android:pivotY="144">
-                <path
-                    android:name="gold_arc"
-                    android:fillColor="#00000000"
-                    android:strokeColor="#FFF5C542"
-                    android:strokeWidth="7"
-                    android:strokeLineCap="round"
-                    android:pathData="M144,58 A86,86 0 1 1 59.3,129.1" />
-            </group>
 
-            <!-- The mark itself, wrapped only so it can scale about the centre. -->
+            <!-- The rotating unit. The pivot is the exact centre of the 288x288
+                 viewport, so one full turn ends precisely where it began and
+                 the icon never drifts off-centre. -->
             <group
-                android:name="mark"
+                android:name="logo"
                 android:pivotX="144"
                 android:pivotY="144">
+
+                <!-- The badge. 0.85 is the icon's framing inside the splash
+                     canvas and is deliberately unchanged. -->
                 <group
-                    android:name="group"
+                    android:name="badge"
                     android:pivotX="144"
                     android:pivotY="144"
                     android:scaleX="0.85"
                     android:scaleY="0.85">
+
                     <path
                         android:name="tile"
                         android:pathData="M 103.62 69.262 C 102.025 69.368 99.521 69.66 98.055 69.91 C 96.588 70.16 94.554 70.634 93.534 70.961 C 92.514 71.289 90.427 72.178 88.897 72.935 C 87.366 73.692 85.226 74.977 84.144 75.794 C 83.061 76.609 81.127 78.356 79.85 79.678 C 78.539 81.032 76.824 83.137 75.912 84.509 C 75.022 85.847 73.835 88.032 73.274 89.37 C 72.71 90.708 71.95 92.998 71.584 94.463 C 71.215 95.928 70.742 98.271 70.531 99.671 C 70.186 101.947 70.137 106.326 70.058 140.759 C 70.005 165.356 70.058 180.808 70.211 183.468 C 70.341 185.759 70.612 188.729 70.814 190.065 C 71.013 191.4 71.394 193.329 71.656 194.347 C 71.918 195.366 72.442 196.981 72.822 197.935 C 73.2 198.889 73.935 200.454 74.454 201.407 C 74.971 202.361 75.975 203.977 76.685 204.995 C 77.394 206.014 79.022 207.894 80.304 209.169 C 81.702 210.56 83.566 212.111 84.955 213.035 C 86.23 213.882 88.187 214.998 89.302 215.514 C 90.418 216.03 92.245 216.718 93.36 217.042 C 94.475 217.363 96.483 217.826 97.823 218.067 C 99.163 218.31 102.085 218.625 104.315 218.771 C 107.174 218.956 119.6 219.005 146.398 218.94 C 174.609 218.87 184.961 218.773 186.51 218.565 C 187.658 218.407 189.796 218.014 191.263 217.69 C 192.731 217.363 194.66 216.836 195.553 216.516 C 196.446 216.194 197.853 215.593 198.683 215.178 C 199.513 214.764 201.129 213.801 202.277 213.037 C 203.425 212.273 205.187 210.88 206.195 209.942 C 207.202 209.005 208.676 207.403 209.467 206.384 C 210.26 205.366 211.391 203.699 211.983 202.681 C 212.574 201.662 213.476 199.866 213.986 198.688 C 214.496 197.509 215.168 195.53 215.481 194.289 C 215.794 193.049 216.237 190.836 216.467 189.37 C 216.856 186.88 216.884 183.991 216.884 144.463 C 216.884 104.465 216.861 102.069 216.453 99.44 C 216.216 97.912 215.732 95.516 215.375 94.116 C 215.015 92.715 214.32 90.632 213.826 89.486 C 213.334 88.34 212.553 86.725 212.094 85.898 C 211.632 85.069 210.603 83.56 209.801 82.542 C 209.001 81.523 207.554 79.903 206.587 78.942 C 205.618 77.979 203.939 76.535 202.856 75.731 C 201.774 74.926 199.842 73.748 198.567 73.109 C 197.292 72.47 195.05 71.556 193.582 71.076 C 192.114 70.597 189.872 70.042 188.597 69.84 C 187.322 69.641 184.767 69.373 182.916 69.241 C 180.806 69.093 165.949 69.016 143.036 69.035 C 122.95 69.053 105.213 69.155 103.62 69.262 Z">
@@ -71,22 +80,26 @@
                                 android:endY="219">
                                 <item android:offset="0.0" android:color="#FF4A49DF" />
                                 <item android:offset="1.0" android:color="#FF322EBA" />
-                            </gradient>
+                                </gradient>
                         </aapt:attr>
                     </path>
+
+                    <!-- The white mark, inset to 62% of the badge. -->
                     <group
                         android:name="glyph"
-                        android:pivotX="252.0"
-                        android:pivotY="249.0"
-                        android:scaleX="0.43282"
-                        android:scaleY="0.43282"
-                        android:translateX="-108.55"
-                        android:translateY="-105.00">
+                        android:pivotX="249.87"
+                        android:pivotY="247.885"
+                        android:scaleX="0.32"
+                        android:scaleY="0.32"
+                        android:translateX="-106.425"
+                        android:translateY="-103.874">
+
                         <path
                             android:name="glyph_ring"
                             android:fillColor="#FFFEFEFE"
                             android:fillType="evenOdd"
                             android:pathData="m142.05,163.23c2.71,0.37 13.78,11.85 14.82,14.49 -0.74,2.54 -3.13,5.8 -4.43,8.28 -13.07,24.71 -4.8,52.51 15.74,70.31 -0.43,-17.71 0.61,-30.42 9.25,-46.52 10.27,-19.59 28.05,-34.27 49.34,-40.74 21.62,-6.59 45,-4.4 64.99,6.1 23.16,12.5 39.12,35.03 43.12,60.9 1.32,8.65 0.9,18.63 0.9,27.44l-0.01,37.77c0,10.64 -0.84,21.94 2.35,31.98 5.93,18.61 21.21,31.28 41,32.57 3.64,0.5 8.28,-0.25 11.7,0.84 0.87,0.29 1.04,3.18 0.9,4.07 -0.51,3.15 0.87,15.74 -0.7,17.76 -1.76,0.82 -8.02,0.46 -10.26,0.34 -19.15,-0.86 -37.13,-9.36 -49.85,-23.6 -15.25,-16.89 -19.08,-37.31 -17.79,-59.26 -1.98,1.74 -4.08,4.08 -6.15,5.97 -5.07,4.65 -10.79,8.56 -16.98,11.62 -20.97,10.52 -44.36,11.17 -66.49,4 -12.64,-4.49 -25.12,-13.16 -34.07,-23.06 -2.71,-3.01 -6.55,-8.65 -9.26,-10.98 -5.35,-4.6 -12.06,-8.89 -17.81,-13.14 -12.34,-9.11 -19.54,-18.43 -28.05,-30.81 0.05,4.31 0.17,10.01 0.81,14.3 1.61,10.69 5.45,22.73 9.72,32.6 12.35,28.59 36.69,50.37 65.75,61.67 21.12,8.16 44.2,9.93 66.34,5.1 9.57,-2.19 16.67,-4.88 25.6,-8.74 3.47,4.88 9.13,13.85 10.85,19.36q-0.53,0.38 -1.1,0.72c-3.7,2.13 -10.17,4.75 -14.17,6.21 -25.74,9.13 -53.69,10.29 -80.11,3.3 -36.76,-9.76 -68.19,-33.47 -87.5,-66 -18.49,-32.42 -23.35,-70.78 -13.54,-106.72 3.85,-14.22 9.97,-27.73 18.11,-40.03 1.82,-2.75 4.14,-6.47 6.98,-8.1z M250.98,187.71c34.02,-0.51 61.99,26.47 62.46,60.22 0.47,33.76 -26.76,61.48 -60.78,61.89 -33.95,0.42 -61.83,-26.54 -62.29,-60.22 -0.46,-33.69 26.66,-61.38 60.61,-61.89z" />
+
                         <path
                             android:name="glyph_arc"
                             android:fillColor="#FFFEFEFE"
@@ -98,11 +111,8 @@
         </vector>
     </aapt:attr>
 
+    <!-- Exactly one target: the whole logo, exactly one turn. -->
     <target
-        android:name="gold"
-        android:animation="@animator/splash_gold_ring_in" />
-
-    <target
-        android:name="mark"
-        android:animation="@animator/splash_mark_settle" />
+        android:name="logo"
+        android:animation="@animator/splash_logo_entrance" />
 </animated-vector>

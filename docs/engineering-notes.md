@@ -1857,7 +1857,7 @@ only write LIGHT or DARK cannot express the third state, and keeping it invites
 the same bug back. `"Manual override"` no longer appears anywhere in the
 repository, comments included.
 
-### 18.5 The gold splash did not exist to restore
+### 18.5 The splash: the app icon, turning exactly once
 
 **Reported:** *restore the logo + gold circle animating in and rotating once.*
 
@@ -1868,24 +1868,63 @@ rotation, and no gold: `grep -riE "gold|#ffd700|#d4af37|#f5c542|#e8b923"` over
 `res/` returns nothing in any revision. There was no animation to bring back, so
 this is new work, and saying "restored" would have been false.
 
-**What was authored:** the indigo tile and white glyph are copied **verbatim**
-from the launcher icon (only wrapped, never redrawn), plus a 280° gold arc
-(`#F5C542`, r=86) that scales 0.75 → 1.0 while it rotates exactly once, with the
-mark settling 0.9 → 1.0 slightly behind it. Both use `fast_out_slow_in`.
+**What was authored, and then corrected.** The first attempt added a 280° gold
+arc around the badge and rotated *that*, leaving the logo static. That was a
+misreading of the request and is now removed — a ring spinning beside a still
+logo reads as a progress spinner attached to the icon, which is the opposite of
+what a splash entrance should say. The palette is pinned by a test so no
+decoration can come back quietly.
+
+The splash is now the app icon and nothing else:
+
+* the badge and the mark are the launcher's own `pathData`, carried over
+  byte-for-byte (the mark's two shapes are the launcher's white shapes with the
+  launcher's accent subpaths appended, exactly as `ic_launcher_monochrome.xml`
+  does it, so the counters are holes rather than painted accents);
+* both are inside **one** `logo` group pivoted at `(144, 144)` — the exact centre
+  of the 288×288 viewport — so the entire icon turns 0 → 360 exactly once, with
+  a 0.88 → 1.0 scale-in behind it;
+* the mark is inset to **62%** of the badge, giving ~19% clear padding on all
+  four sides.
+
+The inset is measured, not eyeballed. The mark's own coordinate space runs out
+to ~392 units, and at the previous scale it covered **84%** of the badge: its
+lower-right arc strokes sat ~8% from the edge. The numbers that fix it:
+
+| Quantity | Value |
+|---|---|
+| mark bounding box (own units) | `(107.15, 104.70) – (392.59, 391.07)` |
+| mark centre → `pivotX` / `pivotY` | `(249.87, 247.885)` |
+| badge centre | `(143.445, 144.011)` |
+| centre offset → `translateX` / `translateY` | `(-106.425, -103.874)` |
+| new `scaleX` / `scaleY` | `0.32` → mark is 62.2% wide, 61.1% tall |
+| resulting padding | 18.9% L/R, 19.5% T/B |
+
+Putting the pivot on the mark's own centre is what makes `translate` the only
+positioning term: changing `scale` re-centres the mark about that point instead
+of shoving it sideways, so the two constants stay correct for any scale.
 
 Four details that are easy to get wrong, and are therefore written down:
 
-1. the ring has a **gap**. A closed circle rotating 360° looks static.
-2. `VectorDrawable` has no group `alpha`, so the entrance is a *scale* — an
-   `alpha` animator on a `<group>` fails silently.
-3. the animation targets a `<group>` and animates only `rotation` / `scaleX` /
-   `scaleY`; animators live in `res/animator/` and are referenced from
-   `<target android:animation=…>`, which is the form aapt2 accepts.
+1. `VectorDrawable` applies a group transform as
+   `translate(pivot) → scale → rotate → translate(-pivot) + translateXY`, so
+   scale and translate alone place a group; no matrix is needed or used.
+2. `VectorDrawable` has **no group `alpha`**, so the entrance is a scale — an
+   alpha animator on a `<group>` fails silently. The platform's own exit
+   transition supplies the fade.
+3. the animator must **not** set `android:repeatCount`; omitting it means
+   play-once. `valueType="floatType"` is required or the platform can treat
+   0 → 360 as an integer step and drop the intermediate frames.
 4. the **first frame is what pre-Android-12 compat draws**, so the entrance
-   scale is small (0.9, not 0.5): on those devices the icon must not look
-   shrunken for the whole cold start.
+   scale is only 0.88 — a dramatic 0.5 start would leave the icon visibly
+   shrunken for the whole cold start on those devices.
 
-`windowSplashScreenAnimationDuration` stays `800`, matching the ring's duration.
+`windowSplashScreenAnimationDuration` (`800`) matches the animator's duration.
+One consequence worth stating plainly: the AVD starts when the splash appears
+and the platform removes the view when `setKeepOnScreenCondition` releases it,
+so on a very fast session resolve the turn is cut short. Making the full turn
+guaranteed would take an `setOnExitAnimationListener` in `MainActivity`, which
+is a deliberate non-goal of this change — the splash XML is self-contained.
 
 ### 18.6 A token refresh is not a sign-in
 
@@ -1936,7 +1975,7 @@ so nothing here is a substitute for `assembleDebug`:
 | duplicate top-level declaration per package | 0 |
 | `when` exhaustiveness (enum + nullable subject) | 0 violations |
 | stranded-annotation scan | 0 |
-| XML well-formedness, `res/**/*.xml` + manifest | 18 files, 0 failures |
+| XML well-formedness, `res/**/*.xml` + manifest | 17 files, 0 failures |
 | `<target>` names / animator references in the splash | resolve |
 | raw `.svg` under `res/` | none |
 

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ★ ONE TURN, ONE ENTRANCE.
+
+     The `logo` group in res/drawable/agora_splash.xml holds the badge and the
+     mark together, so animating `rotation` here turns the entire icon once —
+     0 to 360 degrees — while it eases up from 88% to full size.
+
+     Durations match `windowSplashScreenAnimationDuration` (800) in
+     values/themes.xml: the platform starts this as the splash appears and then
+     plays its own exit transition, so the number here should not outlive the
+     number declared there.
+
+     Notes on the two details that are easy to get wrong:
+       • `repeatCount` is absent on purpose. It defaults to 0 = play once; adding
+         any repeat value here would spin the logo more than once.
+       • `valueType="floatType"` is required. Without it the platform infers the
+         type from the literals, and a 0 -> 360 rotation can be treated as an
+         integer, which drops the intermediate frames on some renderers. -->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:ordering="together">
+
+    <objectAnimator
+        android:propertyName="rotation"
+        android:valueFrom="0"
+        android:valueTo="360"
+        android:valueType="floatType"
+        android:duration="800"
+        android:interpolator="@android:interpolator/fast_out_slow_in" />
+
+    <!-- fast_out_slow_in is the ease-out: the icon accelerates off the mark and
+         decelerates into its resting size instead of stopping dead. -->
+    <objectAnimator
+        android:propertyName="scaleX"
+        android:valueFrom="0.88"
+        android:valueTo="1.0"
+        android:valueType="floatType"
+        android:duration="800"
+        android:interpolator="@android:interpolator/fast_out_slow_in" />
+
+    <objectAnimator
+        android:propertyName="scaleY"
+        android:valueFrom="0.88"
+        android:valueTo="1.0"
+        android:valueType="floatType"
+        android:duration="800"
+        android:interpolator="@android:interpolator/fast_out_slow_in" />
+
+</set>

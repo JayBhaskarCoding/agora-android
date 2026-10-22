@@ -250,4 +250,263 @@ class LauncherIconContractTest {
         assertTrue(manifest.contains("android:icon=\"@mipmap/ic_launcher\""))
         assertTrue(manifest.contains("android:roundIcon=\"@mipmap/ic_launcher_round\""))
     }
+
+    // ── splash screen ───────────────────────────────────────────────────────
+    //
+    // The splash icon is the app icon, drawn once, and it fails quietly in both
+    // directions: an extra element on it reads as a loading spinner bolted to
+    // the logo, and a mark scaled too large silently crowds the badge. Neither
+    // shows up in a build log, so both are pinned here.
+
+    /**
+     * The mark's ink box, measured from its own path data with control points
+     * included — i.e. a superset of the drawn ink, which makes the padding
+     * assertion in [splashMarkIsInsetInsideTheBadge] conservative. It is safe to
+     * hardcode because [splashKeepsTheLauncherMark] fails if the path data ever
+     * changes.
+     */
+    private val markBox = floatArrayOf(107.15f, 104.70f, 392.59f, 391.07f)
+
+    /** The badge's box in the same 288x288 space, before the badge group scale. */
+    private val badgeBox = floatArrayOf(70.005f, 69.016f, 216.884f, 219.005f)
+
+    /**
+     * Returns the body of `<group android:name="...">`, honouring nesting.
+     *
+     * A regex cannot match balanced tags, and the splash nests three groups, so
+     * the scan below is deliberate rather than lazy.
+     */
+    private fun groupBody(xml: String, name: String): String {
+        val open = Regex("<group[^>]*android:name=\"" + name + "\"[^>]*>").find(xml)
+            ?: throw AssertionError("agora_splash.xml has no <group android:name=\"$name\">")
+        var depth = 1
+        var i = open.range.last + 1
+        val bodyStart = i
+        while (true) {
+            val nextOpen = xml.indexOf("<group", i)
+            val nextClose = xml.indexOf("</group>", i)
+            if (nextClose < 0) throw AssertionError("unbalanced <group> for \"$name\"")
+            if (nextOpen in 0 until nextClose) {
+                depth++
+                i = nextOpen + "<group".length
+            } else {
+                depth--
+                if (depth == 0) return xml.substring(bodyStart, nextClose)
+                i = nextClose + "</group>".length
+            }
+        }
+    }
+
+    private fun floatAttr(block: String, name: String): Float {
+        val raw = Regex("android:" + name + "=\"(-?[0-9.]+)\"").find(block)?.groupValues?.get(1)
+            ?: throw AssertionError("missing android:$name in:\n$block")
+        return raw.toFloat()
+    }
+
+    /**
+     * There is no ring on the splash.
+     *
+     * An earlier revision drew a 280-degree gold arc around the badge and spun
+     * *that* while the logo stood still — which is the opposite of what a splash
+     * logo entrance should be, and reads as a progress spinner stuck to the
+     * icon. The whole palette is pinned instead of merely banning known golds,
+     * so any new decoration fails here rather than shipping.
+     */
+    @Test
+    fun splashDrawsNothingButTheAppIcon() {
+        val xml = res("drawable/agora_splash.xml").readText()
+        val colours = Regex("#[0-9A-Fa-f]{6,8}").findAll(xml)
+            .map { it.value.uppercase() }
+            .toSet()
+
+        assertEquals(
+            "The splash may only paint the badge gradient and the white mark. Found $colours — " +
+                "anything else is decoration on the app icon (the removed gold ring was one).",
+            setOf("#FF4A49DF", "#FF322EBA", "#FFFEFEFE"),
+            colours
+        )
+        assertFalse(
+            "agora_splash.xml still declares a group named \"gold\"; that was the rotating ring.",
+            Regex("android:name=\"gold").containsMatchIn(xml)
+        )
+        assertFalse(
+            "agora_splash.xml still contains a stroked arc; the ring was the only stroked shape.",
+            xml.contains("android:strokeColor")
+        )
+    }
+
+    /**
+     * The LOGO rotates — badge and mark together — exactly once.
+     *
+     * The single `<target>` must name a group that actually contains both
+     * shapes. A target pointing at an empty wrapper would satisfy "has a
+     * rotation" while leaving the icon static, which is precisely the bug this
+     * replaces.
+     */
+    @Test
+    fun splashRotatesTheWholeLogoExactlyOnce() {
+        val xml = res("drawable/agora_splash.xml").readText()
+
+        val targets = Regex("<target\\s+android:name=\"([\\w]+)\"\\s+android:animation=\"@animator/([\\w]+)\"")
+            .findAll(xml)
+            .toList()
+        assertEquals(
+            "The splash must animate exactly one thing — the logo. Found " +
+                "${targets.map { it.groupValues[1] }}.",
+            1,
+            targets.size
+        )
+        assertEquals("logo", targets[0].groupValues[1])
+
+        val logo = groupBody(xml, "logo")
+        assertTrue(
+            "The rotating `logo` group does not contain the badge, so the badge would stay " +
+                "static while something else turned.",
+            logo.contains("android:name=\"tile\"")
+        )
+        assertTrue(
+            "The rotating `logo` group does not contain the mark, so the mark would stay " +
+                "static while the badge turned.",
+            logo.contains("android:name=\"glyph_ring\"") && logo.contains("android:name=\"glyph_arc\"")
+        )
+
+        val animator = res("animator/" + targets[0].groupValues[2] + ".xml").readText()
+        assertTrue(
+            "The splash animator does not animate `rotation`.",
+            Regex("android:propertyName=\"rotation\"").containsMatchIn(animator)
+        )
+        assertTrue(
+            "The logo must rotate a full turn: rotation 0 -> 360.",
+            Regex("android:propertyName=\"rotation\"[\\s\\S]{0,200}?android:valueFrom=\"0\"").containsMatchIn(animator) &&
+                Regex("android:propertyName=\"rotation\"[\\s\\S]{0,200}?android:valueTo=\"360\"").containsMatchIn(animator)
+        )
+        assertFalse(
+            "android:repeatCount makes the logo keep spinning; the rotation must happen exactly " +
+                "once. Omitting the attribute entirely means play-once.",
+            animator.contains("android:repeatCount")
+        )
+        assertTrue(
+            "The rotation must declare android:valueType=\"floatType\". Without it the platform " +
+                "infers the type from the literals and can treat 0 -> 360 as an integer step.",
+            Regex("android:propertyName=\"rotation\"[\\s\\S]{0,300}?android:valueType=\"floatType\"")
+                .containsMatchIn(animator)
+        )
+        assertTrue(
+            "The entrance must ease out rather than run linearly.",
+            animator.contains("fast_out_slow_in")
+        )
+    }
+
+    /**
+     * The splash draws the LAUNCHER's mark, not a second copy of it.
+     *
+     * The splash carries the launcher's two white shapes with the launcher's two
+     * accent subpaths appended (that is what makes the counters holes under
+     * `fillType="evenOdd"`), so each splash path must *start with* the launcher
+     * path verbatim. Redrawing the mark by hand is how the two drift apart.
+     */
+    @Test
+    fun splashKeepsTheLauncherMark() {
+        val splash = res("drawable/agora_splash.xml").readText()
+        val launcher = res("drawable/ic_launcher_foreground.xml").readText()
+
+        val launcherPaths = Regex("android:pathData=\"([^\"]+)\"").findAll(launcher)
+            .map { it.groupValues[1] }
+            .toList()
+        val splashPaths = Regex("android:pathData=\"([^\"]+)\"").findAll(splash)
+            .map { it.groupValues[1] }
+            .toList()
+
+        assertEquals(
+            "Expected the badge plus the mark's two shapes in agora_splash.xml, found " +
+                "${splashPaths.size} paths.",
+            3,
+            splashPaths.size
+        )
+        assertTrue(
+            "The splash's ring shape is not the launcher's ring shape. The splash must reuse " +
+                "drawable/ic_launcher_foreground.xml's geometry, never a redrawn mark.",
+            splashPaths[1].startsWith(launcherPaths[0])
+        )
+        assertTrue(
+            "The splash's arc shape is not the launcher's arc shape.",
+            splashPaths[2].startsWith(launcherPaths[2])
+        )
+    }
+
+    /**
+     * The mark sits comfortably inside the badge.
+     *
+     * The regression: the mark's own coordinate space runs to ~392 units, and at
+     * the previous scale it covered 84% of the badge — its lower-right strokes
+     * came within ~8% of the edge and looked about to collide with it. The
+     * target band is 55-70%, matching the margin the adaptive launcher icon
+     * keeps, with at least 12% clear on every side.
+     */
+    @Test
+    fun splashMarkIsInsetInsideTheBadge() {
+        val xml = res("drawable/agora_splash.xml").readText()
+        val glyphTag = Regex("<group[^>]*android:name=\"glyph\"[^>]*>").find(xml)!!.value
+        val badgeTag = Regex("<group[^>]*android:name=\"badge\"[^>]*>").find(xml)!!.value
+
+        val pivotX = floatAttr(glyphTag, "pivotX")
+        val pivotY = floatAttr(glyphTag, "pivotY")
+        val scaleX = floatAttr(glyphTag, "scaleX")
+        val scaleY = floatAttr(glyphTag, "scaleY")
+        val translateX = floatAttr(glyphTag, "translateX")
+        val translateY = floatAttr(glyphTag, "translateY")
+        val badgeScale = floatAttr(badgeTag, "scaleX")
+
+        /* VectorDrawable applies a group transform as
+         *   translate(pivot) -> scale -> translate(-pivot) + translateXY
+         * and the enclosing `badge` group then scales about (144,144).
+         *
+         * The badge itself is NOT inside the glyph group, so it gets the badge
+         * scale only — mapping it through the glyph matrix would shrink it by
+         * 0.32 and make this test pass on an icon that actually overflows. */
+        fun glyphX(x: Float) = 144f + (pivotX + (x - pivotX) * scaleX + translateX - 144f) * badgeScale
+        fun glyphY(y: Float) = 144f + (pivotY + (y - pivotY) * scaleY + translateY - 144f) * badgeScale
+        fun badgeX(x: Float) = 144f + (x - 144f) * badgeScale
+        fun badgeY(y: Float) = 144f + (y - 144f) * badgeScale
+
+        val markLeft = glyphX(markBox[0]); val markRight = glyphX(markBox[2])
+        val markTop = glyphY(markBox[1]); val markBottom = glyphY(markBox[3])
+        val badgeLeft = badgeX(badgeBox[0]); val badgeRight = badgeX(badgeBox[2])
+        val badgeTop = badgeY(badgeBox[1]); val badgeBottom = badgeY(badgeBox[3])
+
+        val badgeWidth = badgeRight - badgeLeft
+        val badgeHeight = badgeBottom - badgeTop
+
+        val widthRatio = (markRight - markLeft) / badgeWidth
+        assertTrue(
+            "The mark covers ${"%.1f".format(widthRatio * 100)}% of the badge width. It must stay " +
+                "in 55-70% so no stroke comes near the badge edge.",
+            widthRatio in 0.55f..0.70f
+        )
+
+        val pads = listOf(
+            "left" to ((markLeft - badgeLeft) / badgeWidth),
+            "right" to ((badgeRight - markRight) / badgeWidth),
+            "top" to ((markTop - badgeTop) / badgeHeight),
+            "bottom" to ((badgeBottom - markBottom) / badgeHeight)
+        )
+        pads.forEach { (side, fraction) ->
+            assertTrue(
+                "Only ${"%.1f".format(fraction * 100)}% clear padding on the $side of the badge. " +
+                    "The mark must sit inset on all four sides, not nearly touching the edge.",
+                fraction >= 0.12f
+            )
+        }
+
+        val markCentreX = (markLeft + markRight) / 2f
+        val markCentreY = (markTop + markBottom) / 2f
+        val badgeCentreX = (badgeLeft + badgeRight) / 2f
+        val badgeCentreY = (badgeTop + badgeBottom) / 2f
+        assertTrue(
+            "The mark is off-centre in the badge: mark ($markCentreX, $markCentreY) vs badge " +
+                "($badgeCentreX, $badgeCentreY).",
+            kotlin.math.abs(markCentreX - badgeCentreX) < 1f &&
+                kotlin.math.abs(markCentreY - badgeCentreY) < 1f
+        )
+    }
 }
