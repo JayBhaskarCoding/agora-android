@@ -1,5 +1,6 @@
 package net.agora.app.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -24,6 +25,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.agora.app.ui.components.VibrantGlassBackground
+import net.agora.app.ui.components.AuthWordmarkSizes
+import net.agora.app.ui.components.rememberAgoraWordmark
 import net.agora.app.ui.theme.LocalDarkTheme
 import net.agora.app.ui.theme.glassmorphic
 import net.agora.app.viewmodel.AuthViewModel
@@ -86,6 +89,19 @@ fun OtpInputField(
     )
 }
 
+/**
+ * ✦ PASSWORD FLOW HOST — Change Password (3 steps) and Reset Password (2 steps).
+ *
+ * The screen is presented as a MODAL over the app (see MainActivity): the tree
+ * underneath — including MainScreen's NavHost — stays composed, so whatever the
+ * user was looking at is still there when this closes. That is what makes Back
+ * return to Account Details rather than to the Feed, and what keeps a completed
+ * password update from dumping the user on Home.
+ *
+ * Both exits (the top-bar arrow and the system Back gesture / button) run
+ * `cancelFlow`, so they cannot drift apart: leaving the flow always cancels it
+ * and always hands control back to the caller, never to a rebuilt NavHost.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PasswordResetScreen(
@@ -116,6 +132,23 @@ fun PasswordResetScreen(
 
     var isPasswordVisible by remember { mutableStateOf(false) }
     var isConfirmPasswordVisible by remember { mutableStateOf(false) }
+
+    /* ★ ONE EXIT PATH. Intercepting system Back here is not cosmetic: the app
+     *   tree underneath is still composed and its NavHost would happily consume
+     *   the press and pop Account Details -> Feed behind the modal, leaving the
+     *   flow open over a screen the user never navigated to. A modal owns Back
+     *   while it is shown, so this handler is the last one registered and wins.
+     *
+     *   Back is deliberately a CANCEL, not a step-back: the OTP step has already
+     *   emailed a code and re-entering step 1 with a live code is an ambiguous
+     *   state. Cancelling is the same outcome as the arrow, and lands the user
+     *   exactly where they started. */
+    val cancelFlow = {
+        viewModel.cancelPasswordReset()
+        onCancel()
+    }
+
+    BackHandler(enabled = true, onBack = cancelFlow)
 
     LaunchedEffect(errorMessage) {
         errorMessage?.let { error ->
@@ -158,10 +191,7 @@ fun PasswordResetScreen(
                         )
                     },
                     navigationIcon = {
-                        IconButton(onClick = {
-                            viewModel.cancelPasswordReset()
-                            onCancel()
-                        }) {
+                        IconButton(onClick = cancelFlow) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = "Back",
@@ -189,16 +219,16 @@ fun PasswordResetScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
+                    // ✦ The SAME wordmark as Login and Register: crisp ink in
+                    //   Light Mode, glow in Dark, one accent period. This screen
+                    //   used to draw its own "Agora" at 36.sp in solid primary /
+                    //   hard-coded indigo, which read as a different product's
+                    //   header. Brand typography now comes from AuthWordmarkSizes
+                    //   only — nothing is re-declared locally.
                     Text(
-                        text = "Agora",
-                        fontSize = 36.sp,
-                        fontWeight = FontWeight.Black,
-                        color = if (isDark) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            // Indigo on pearl: keep the brand hue readable.
-                            Color(0xFF4338CA)
-                        },
+                        text = rememberAgoraWordmark("agora"),
+                        fontSize = AuthWordmarkSizes.Login,
+                        letterSpacing = (-1.2).sp,
                         modifier = Modifier.padding(bottom = 20.dp)
                     )
 

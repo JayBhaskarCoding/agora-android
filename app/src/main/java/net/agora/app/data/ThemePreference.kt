@@ -44,7 +44,7 @@ enum class ThemePreference {
  * A single string preference is now authoritative:
  *  - key absent / `SYSTEM`  → follow `isSystemInDarkTheme()`
  *  - `LIGHT` / `DARK`       → explicit user override (only written from the
- *                             Account Details switch or the onboarding picker)
+ *                             Account Details selector or the onboarding picker)
  *
  * The legacy boolean is removed on first read: it cannot express "follow
  * system", and users who genuinely toggled the switch already have an explicit

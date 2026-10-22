@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.SystemClock
 import net.agora.app.utils.DateOfBirth
+import net.agora.app.utils.SessionContinuity
 import net.agora.app.utils.PasswordPolicy
 import net.agora.app.utils.PasswordResetRouting
 import net.agora.app.utils.OtpCooldown
@@ -323,7 +324,34 @@ class AuthViewModel : ViewModel() {
                         _userState.value = user
                         user?.id?.let { userId ->
                             startDeviceSession(userId)
-                            // Verify profile completeness to guard against abandoned onboarding on cold start
+
+                            /* ★ A TOKEN REFRESH IS NOT A SIGN-IN.
+                             *
+                             *   Supabase re-emits `Authenticated` every time the access
+                             *   token is renewed — returning to the app from the launcher,
+                             *   unlocking the phone, or simply an hour elapsing. The
+                             *   session inside `status` is the SAME session, only its
+                             *   credentials are fresher (`status.isNew` is false).
+                             *
+                             *   This collector used to run the cold-start profile check on
+                             *   every one of those emits. That check raises
+                             *   `isCheckingProfileCompleteness`, and the shell renders a
+                             *   spinner instead of MainScreen while it is up — which tears
+                             *   down MainScreen's `rememberNavController()` and rebuilds the
+                             *   NavHost at `startDestination = feed`. Result: the user comes
+                             *   back from the Home screen and is standing on the Feed with
+                             *   Account Details / the open post gone from the back stack.
+                             *
+                             *   So the check is now claimed exactly ONCE per authenticated
+                             *   session. [verifyProfileCompleteness] takes the claim
+                             *   synchronously, before it launches anything, which also closes
+                             *   the window where two back-to-back emits could both get past
+                             *   the old in-coroutine flag and check twice.
+                             *
+                             *   Nothing here resets navigation: the shell only reacts to a
+                             *   real identity transition (signed out -> signed in, or back),
+                             *   and both of those still land through `navEvent` /
+                             *   `isOnboarding` as before. */
                             verifyProfileCompleteness(userId)
                         }
                     }
@@ -387,15 +415,26 @@ class AuthViewModel : ViewModel() {
     }
 
     private fun verifyProfileCompleteness(userId: String) {
-        // Cold-start guard: If cold-start check has already completed, bypass to prevent race conditions during active registration
-        if (hasCompletedColdStartCheck) {
+        /* ★ ONE-SHOT CLAIM — taken synchronously, before any suspension point.
+         *
+         *   `sessionStatus` replays into a single collector, but a token refresh can
+         *   land while the previous check is still awaiting the network. Setting the
+         *   flag here (rather than inside the launched coroutine) means the second
+         *   emit returns at the guard below instead of starting a duplicate check —
+         *   a duplicate that would wipe an account whose profile is a legitimate
+         *   in-progress placeholder, and would bounce the user out of whatever screen
+         *   they were on.
+         *
+         *   Reset only by [signOut], i.e. exactly on a signed-in -> signed-out
+         *   transition, so a fresh sign-in gets its own single check. */
+        if (!SessionContinuity.shouldRunStartupVerification(hasCompletedColdStartCheck)) {
             return
         }
+        hasCompletedColdStartCheck = true
 
         // If user is actively completing onboarding in this session, bypass
         if (_isOnboarding.value) {
             _isCheckingProfileCompleteness.value = false
-            hasCompletedColdStartCheck = true
             return
         }
 
@@ -427,7 +466,6 @@ class AuthViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 _isCheckingProfileCompleteness.value = true
-                hasCompletedColdStartCheck = true
                 Log.d("AuthDiagnostics", "[coldStart] querying profiles by id for currentUser.id=$userId")
 
                 val profile = withContext(Dispatchers.IO) {
@@ -729,9 +767,16 @@ class AuthViewModel : ViewModel() {
     }
 
     /**
-     * Entry point for *Change Password* (authenticated). Requires a live
-     * session; without one it degrades to the strict recovery flow rather than
-     * opening the new-password step unverified.
+     * Entry point for *Change Password* (authenticated).
+     *
+     * Runs the SAME three steps as recovery — email, emailed code, new password
+     * — because a live session proves *an account is open on this device*, not
+     * that the person holding it is the owner. Steps 1 and 2 re-establish that
+     * with something the owner physically possesses.
+     *
+     * Without a session there is nothing to change, so it degrades to the
+     * signed-out recovery flow rather than starting a CHANGE that can never
+     * pass its own email check.
      */
     fun startChangePassword() {
         if (supabaseClient.auth.currentUserOrNull() == null) {
@@ -742,6 +787,7 @@ class AuthViewModel : ViewModel() {
         _isRecoveryCodeRequested.value = false
         _isRecoverySessionVerified.value = false
         _passwordResetResendAvailableAt.value = 0L
+        recoveryEmail = ""
         _passwordResetStep.value = PasswordResetRouting.startStep(PasswordResetMode.CHANGE)
         clearError()
     }
@@ -761,14 +807,15 @@ class AuthViewModel : ViewModel() {
         clearError()
     }
 
-    /** Back from the code step to the email step (recovery only). */
+    /** Back from the code step to the email step — valid in both modes. */
     fun editRecoveryEmail() {
-        if (_passwordResetMode.value != PasswordResetMode.RECOVERY) return
         if (_isPasswordResetBusy.value) return
         _isRecoveryCodeRequested.value = false
         _isRecoverySessionVerified.value = false
         _passwordResetResendAvailableAt.value = 0L
-        _passwordResetStep.value = PasswordResetStep.EMAIL
+        // Back to step 1 through the same policy both entry points use, so this
+        // path can never drift to a different starting step.
+        _passwordResetStep.value = PasswordResetRouting.startStep(_passwordResetMode.value)
         clearError()
     }
 
@@ -779,7 +826,6 @@ class AuthViewModel : ViewModel() {
             return
         }
         if (_isPasswordResetBusy.value) return
-        if (_passwordResetMode.value != PasswordResetMode.RECOVERY) return
         // A resend must respect the same 60-second window as the shared OTP card;
         // the very first send (EMAIL step) is never gated by it.
         if (_passwordResetStep.value == PasswordResetStep.OTP &&
@@ -788,20 +834,40 @@ class AuthViewModel : ViewModel() {
             return
         }
 
+        /* ★ OWNERSHIP CHECK — runs BEFORE any mail is sent, in BOTH modes.
+         *
+         *   CHANGE  : the typed address must be the account this device is
+         *             signed in as. This is the whole point of step 1 on a
+         *             device somebody else may be holding: issuing a code to a
+         *             *different* mailbox would let the holder of the phone
+         *             drive a takeover of that other account.
+         *   RECOVERY: a session may still exist (an interrupted flow, a
+         *             reinstated process). If so, the same rule applies; a
+         *             signed-out device skips it and falls through to the
+         *             profiles lookup below.
+         *
+         *   Case-insensitive: mail domains normalise case, and "Jay@x.com" is
+         *   the same mailbox as "jay@x.com". */
+        val mode = _passwordResetMode.value
+        val activeEmail = supabaseClient.auth.currentUserOrNull()?.email
+        if (mode == PasswordResetMode.CHANGE && activeEmail.isNullOrBlank()) {
+            _errorMessage.value =
+                "We could not read the email on this account. Please sign in again."
+            return
+        }
+        if (!activeEmail.isNullOrBlank() && !cleanEmail.equals(activeEmail, ignoreCase = true)) {
+            _errorMessage.value = if (mode == PasswordResetMode.CHANGE) {
+                "That email does not match the account you are signed in as."
+            } else {
+                "This email does not match your active account."
+            }
+            return
+        }
+
         _isPasswordResetBusy.value = true
         viewModelScope.launch {
             try {
                 clearError()
-
-                // Active Session Email Validation (if user is currently logged in)
-                val currentSessionUser = supabaseClient.auth.currentUserOrNull()
-                if (currentSessionUser != null && currentSessionUser.email != null) {
-                    val activeSessionEmail = currentSessionUser.email!!
-                    if (!cleanEmail.equals(activeSessionEmail, ignoreCase = true)) {
-                        _errorMessage.value = "This email does not match your active account."
-                        return@launch
-                    }
-                }
 
                 // Pre-verification check: Ensure an account with this email exists in Supabase database
                 val existingProfiles = withContext(Dispatchers.IO) {
@@ -818,7 +884,12 @@ class AuthViewModel : ViewModel() {
                 withContext(Dispatchers.IO) {
                     supabaseClient.auth.resetPasswordForEmail(cleanEmail)
                 }
-                recoveryEmail = cleanEmail
+                // Canonical address when a session tells us what it is: Supabase
+                // mints and verifies the code against the account's own email,
+                // and the ownership check above already proved these are the same
+                // mailbox (case-insensitively). Signed-out recovery keeps exactly
+                // what the user typed.
+                recoveryEmail = activeEmail ?: cleanEmail
                 _passwordResetResendAvailableAt.value =
                     SystemClock.elapsedRealtime() + OtpCooldown.DURATION_MS
                 _isRecoveryCodeRequested.value = true

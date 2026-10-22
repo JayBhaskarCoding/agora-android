@@ -1,49 +1,74 @@
 package net.agora.app.utils
 
-/**
- * Ported from the retired template package history (branch side that was never
- * merged into the current line). Behaviour unchanged; package updated.
- *
- * The reset flow's POLICY lives here — free of Android types, so it is unit
- * tested instead of being asserted by comments.
- */
-
 import net.agora.app.viewmodel.PasswordResetMode
 import net.agora.app.viewmodel.PasswordResetStep
 
 /**
- * The password-reset state machine's *policy*, kept free of Android types so it
- * can be unit-tested.
+ * The password-reset state machine's *policy*.
  *
- * Entry points are explicit — never inferred from whatever session happens to be
- * lying around:
+ * Both entry points run the SAME strict three steps:
  *
- *  - [PasswordResetMode.CHANGE]   — a signed-in user tapped *Change Password*.
- *    The session JWT already proved identity, so the flow opens on the new
- *    password step.
+ * ```
+ * EMAIL  ->  OTP  ->  NEW_PASSWORD
+ * ```
+ *
+ * There are two modes because the wording and the exit differ, not because the
+ * security does:
+ *
+ *  - [PasswordResetMode.CHANGE]   — a signed-in user tapped *Change Password* in
+ *    Account Details. The session proves identity, but a live session is also
+ *    exactly what an unattended phone has: re-authenticating against the inbox
+ *    is what stops somebody holding an unlocked device from silently taking the
+ *    account over. The email typed at step 1 must match the signed-in account,
+ *    Supabase mails a recovery code, and only a code that verifies unlocks the
+ *    new-password step.
  *  - [PasswordResetMode.RECOVERY] — a signed-out user tapped *Forgot password?*.
- *    Strict three steps: email → 6-digit recovery code → new password.
- *    It ALWAYS starts at the email step, even if a stale or half-finished
- *    recovery session exists, so the OTP step can never be skipped.
+ *    Same three steps; unrelated to any session, so it also works on a device
+ *    that has never signed in.
+ *
+ * `CHANGE` used to short-circuit straight to NEW_PASSWORD, which compiled, was
+ * reachable from Account Details, and skipped both the email check and the
+ * OTP — a stolen unlocked phone was enough to change the password. The graph
+ * below no longer has that edge.
  */
 object PasswordResetRouting {
 
+    /**
+     * Both modes enter at the email step. There is no mode that can start any
+     * later, so no path exists that reaches [PasswordResetStep.NEW_PASSWORD]
+     * without passing through [PasswordResetStep.OTP].
+     */
     fun startStep(mode: PasswordResetMode): PasswordResetStep = when (mode) {
-        PasswordResetMode.CHANGE -> PasswordResetStep.NEW_PASSWORD
+        PasswordResetMode.CHANGE -> PasswordResetStep.EMAIL
         PasswordResetMode.RECOVERY -> PasswordResetStep.EMAIL
     }
 
     /**
-     * The new-password step is reachable only with proven identity: a live
-     * session (CHANGE) or a recovery code that Supabase actually verified and
-     * that minted the temporary recovery session (RECOVERY).
+     * The new-password step is reachable ONLY with a recovery session that
+     * Supabase actually minted by verifying the emailed code.
+     *
+     * Note the missing `mode == CHANGE` escape hatch: a live JWT is not proof
+     * that the person holding the phone is the account owner, so [mode] is
+     * accepted only to keep the call sites symmetric and to make the intent
+     * explicit at every guard.
      */
     fun canOpenNewPasswordStep(
         mode: PasswordResetMode,
         recoverySessionVerified: Boolean
-    ): Boolean = mode == PasswordResetMode.CHANGE || recoverySessionVerified
+    ): Boolean = when (mode) {
+        // Both modes are gated on the same proof. Written as an exhaustive
+        // `when` (no `else`) so a third mode has to state its rule here.
+        PasswordResetMode.CHANGE, PasswordResetMode.RECOVERY -> recoverySessionVerified
+    }
 
-    /** A recovery code may only be verified after one was successfully requested. */
-    fun canOpenOtpStep(mode: PasswordResetMode, codeRequested: Boolean): Boolean =
-        mode == PasswordResetMode.RECOVERY && codeRequested
+    /**
+     * A code may only be verified after one was successfully requested for this
+     * flow. Applies to both modes: `CHANGE` requests a real recovery code too.
+     */
+    fun canOpenOtpStep(
+        mode: PasswordResetMode,
+        codeRequested: Boolean
+    ): Boolean = when (mode) {
+        PasswordResetMode.CHANGE, PasswordResetMode.RECOVERY -> codeRequested
+    }
 }

@@ -1730,3 +1730,222 @@ installs side by side, keeps its own data, and a store listing under the old id
 does not transfer. If the intent is to migrate an existing install base rather
 than publish a new listing, the applicationId must keep matching the store
 record — which is exactly what the previous split was buying.
+
+---
+
+## 18. Six regressions, one pass
+
+Six unrelated-looking reports. Only one of them was a missing feature; the rest
+were places where a decision had been made twice — in the policy *and* in the
+screen, in the shell *and* in the ViewModel — and the two copies had drifted.
+Each section below names the root cause rather than the diff.
+
+### 18.1 Change Password was not the recovery flow
+
+**Reported:** *Change Password jumps straight to the new-password step.*
+
+**Root cause:** `PasswordResetRouting.startStep(CHANGE)` returned
+`NEW_PASSWORD`, and `canOpenNewPasswordStep` carried a `mode == CHANGE` escape
+hatch. The reasoning was "the user is already signed in, so they are
+authenticated" — which conflates *an account is open on this device* with *the
+person holding it is the owner*. A signed-in session is exactly what an
+unattended phone has.
+
+**Fix:** the graph has no such edge any more. Both modes run
+`EMAIL -> OTP -> NEW_PASSWORD`:
+
+| Guard | Rule |
+|---|---|
+| `startStep(mode)` | `EMAIL`, for both modes, as an exhaustive `when` with no default |
+| `canOpenOtpStep(mode, codeRequested)` | `codeRequested` |
+| `canOpenNewPasswordStep(mode, verified)` | `verified` — the `mode` parameter is kept only to keep call sites symmetric |
+
+`requestPasswordResetOtp` additionally enforces step 1 for **both** modes: the
+typed address must equal the signed-in account (case-insensitively) *before any
+mail is sent*. That check used to live inside the coroutine, after the busy flag
+was set and after the `profiles` lookup — a mismatch sent no mail, but it also
+meant the only thing standing between a stranger and a reset mail for a
+**different** mailbox was a later branch. It now returns before the coroutine,
+so there is no path on which a code is issued for an address the device does not
+own.
+
+Two smaller corrections fell out of this:
+
+* the OTP is requested and verified against the **canonical** session address
+  (`activeEmail ?: cleanEmail`) — Supabase mints the code against the account's
+  own email, and mail domains do not treat `Jay@x.com` and `jay@x.com` as two
+  mailboxes;
+* `editRecoveryEmail()` no longer refuses outside RECOVERY, and it routes back
+  through `startStep(mode)` rather than naming `EMAIL` itself.
+
+`PasswordResetRoutingTest` is the executable form of the invariant: seven tests,
+all iterating `PasswordResetMode.entries`, so a third mode has to state its rule
+before it can compile past the exhaustive `when`.
+
+### 18.2 The wordmark was declared in three places
+
+**Reported:** *the reset screens show an outdated plain purple "AGORA".*
+
+**Root cause:** `PasswordResetScreen` drew its own header — `Text("Agora", 36.sp,
+FontWeight.Black)` in `primary`, or hard-coded `#FF4338CA` in light mode. Login
+and Register had moved to `rememberAgoraWordmark()` + `AuthWordmarkSizes`; the
+reset screen had not, because it never shared that code.
+
+**Fix:** it now renders `rememberAgoraWordmark("agora")` at
+`AuthWordmarkSizes.Login` with `letterSpacing = (-1.2).sp` — the same three
+expressions as `LoginScreen`, not a lookalike. `AuthWordmarkSizes` is the only
+place brand typography is declared.
+
+The three step composables (`PasswordResetEmailStep`, `…OtpStep`,
+`…NewPasswordStep`) never had headers of their own; they render inside the host
+card. There was one rogue header, not four.
+
+### 18.3 Back from Change Password landed on the Feed
+
+**Reported:** *closing the flow returns to Home instead of Account Details.*
+
+**Root cause:** `MainActivity` composed the flow as a **replacement**:
+
+```kotlin
+if (passwordResetStep != null) PasswordResetScreen(...) else when (sessionStatus) { ... }
+```
+
+`MainScreen` therefore left the composition, and `rememberNavController()`
+inside it was destroyed with it. Closing the flow rebuilt the NavHost at
+`startDestination = "feed"`. The `account_details` back stack was never
+preserved — it was *deleted*, so no amount of "returning" could find it.
+
+**Fix:** the flow is a **modal on top**, not a replacement. The `when` stays
+composed inside a `Box` and the overlay is the last child:
+
+```kotlin
+Box(Modifier.fillMaxSize()) {
+    when (sessionStatus) { ... }            // MainScreen + NavHost, never torn down
+    if (passwordResetStep != null) PasswordResetScreen(...)
+}
+```
+
+`PasswordResetScreen` also gains a `BackHandler`, because a modal that leaves
+Back to the tree underneath lets the *composed* NavHost pop Account Details →
+Feed behind the overlay. Back is deliberately a **cancel**, not a step-back: the
+OTP step has already emailed a code, and re-entering step 1 with a live code is
+an ambiguous state. The arrow and the system gesture now share one `cancelFlow`
+lambda so they cannot diverge.
+
+Completion is unaffected: `submitNewPassword` signs out only for RECOVERY (a
+recovery session is temporary). A CHANGE keeps the session and simply closes the
+overlay, leaving the user on the Account Details screen they started from.
+
+### 18.4 A two-state switch cannot express three states
+
+**Reported:** *delete "Manual override"; give me System / Light / Dark.*
+
+**Root cause:** the control was a `Switch` bound to `themePreference != SYSTEM`,
+with a supporting line that read `"Manual override"` whenever the preference was
+anything else. "Follow the device" was not an option — it was the *absence* of a
+choice, described in implementation vocabulary: the user read the source code's
+word for "you have not picked one yet".
+
+**Fix:** `ui/components/ThemeModeSelector.kt`, three pills (`selectable`, so
+TalkBack announces the selection and the group behaves as radios), backed by the
+existing `ThemePreferenceStore` (`SYSTEM` / `LIGHT` / `DARK`) and the existing
+`ThemeViewModel.setThemePreference`. Recomposition only — no activity restart,
+which is also why the `SYSTEM` branch reads `isSystemInDarkTheme()` reactively.
+
+The now-dead `ThemeViewModel.setDarkMode(Boolean)` is removed: a setter that can
+only write LIGHT or DARK cannot express the third state, and keeping it invites
+the same bug back. `"Manual override"` no longer appears anywhere in the
+repository, comments included.
+
+### 18.5 The gold splash did not exist to restore
+
+**Reported:** *restore the logo + gold circle animating in and rotating once.*
+
+**What the history actually contains:** every revision of
+`res/drawable/agora_splash.xml` is **static**. `git show a8d6228` (the only
+revision with any `<target>` at all) animates a `scaleX` on the tile — no
+rotation, and no gold: `grep -riE "gold|#ffd700|#d4af37|#f5c542|#e8b923"` over
+`res/` returns nothing in any revision. There was no animation to bring back, so
+this is new work, and saying "restored" would have been false.
+
+**What was authored:** the indigo tile and white glyph are copied **verbatim**
+from the launcher icon (only wrapped, never redrawn), plus a 280° gold arc
+(`#F5C542`, r=86) that scales 0.75 → 1.0 while it rotates exactly once, with the
+mark settling 0.9 → 1.0 slightly behind it. Both use `fast_out_slow_in`.
+
+Four details that are easy to get wrong, and are therefore written down:
+
+1. the ring has a **gap**. A closed circle rotating 360° looks static.
+2. `VectorDrawable` has no group `alpha`, so the entrance is a *scale* — an
+   `alpha` animator on a `<group>` fails silently.
+3. the animation targets a `<group>` and animates only `rotation` / `scaleX` /
+   `scaleY`; animators live in `res/animator/` and are referenced from
+   `<target android:animation=…>`, which is the form aapt2 accepts.
+4. the **first frame is what pre-Android-12 compat draws**, so the entrance
+   scale is small (0.9, not 0.5): on those devices the icon must not look
+   shrunken for the whole cold start.
+
+`windowSplashScreenAnimationDuration` stays `800`, matching the ring's duration.
+
+### 18.6 A token refresh is not a sign-in
+
+**Reported:** *minimising and reopening loses the inner screen.*
+
+**Root cause:** the `sessionStatus` collector ran the cold-start profile check on
+every `SessionStatus.Authenticated` emit. Supabase re-emits that on every token
+renewal — returning from the launcher, unlocking the phone, an hour passing. The
+check raises `isCheckingProfileCompleteness`, the shell renders a spinner
+*instead of* `MainScreen`, and that unmounts the NavHost exactly as in §18.3.
+
+The internal guard was not enough: the flag was set **inside** the launched
+coroutine, so two emits arriving back-to-back could both pass the guard and check
+twice — one of which wipes an account whose profile is a legitimate in-progress
+placeholder.
+
+**Fix:** `verifyProfileCompleteness` takes the claim **synchronously**, before
+any suspension point, and only `signOut()` releases it. A refresh now reaches
+the guard and returns. The distinction is named in `utils/SessionContinuity.kt`
+so it can be pointed at (and tested) instead of living in prose:
+
+| `wasAuthenticated` | `isAuthenticated` | Meaning | May reset |
+|---|---|---|---|
+| `true` | `true` | token refresh | **no** |
+| `false` | `false` | still signed out | no |
+| `false` | `true` | sign-in | yes |
+| `true` | `false` | sign-out | yes |
+
+The same rule now gates the logout theme reset in `MainActivity`, so a refresh
+can no longer drop the user's LIGHT/DARK choice either.
+
+`SessionContinuityTest` covers all four rows. The shell's existing guards are
+kept and were re-verified rather than rewritten: `launchMode="singleTop"`,
+the `isTaskRoot` ghost-instance guard in `onCreate`, the `savedInstanceState ==
+null` gate on deep-link injection, and `handleIntent` returning early for an
+`ACTION_MAIN` intent (nothing to parse, nothing submitted). `onNewIntent` reuses
+the same Activity and therefore the same `AuthViewModel`.
+
+### 18.7 What was verified, and what could not be
+
+Static gates only — this environment has no JDK, no Android SDK, and no device,
+so nothing here is a substitute for `assembleDebug`:
+
+| Gate | Result |
+|---|---|
+| tree-sitter Kotlin parse, `app/src/**/*.kt` | 108 files, 0 `ERROR`/missing nodes |
+| import resolution | 2098 imports, 0 unresolved |
+| duplicate top-level declaration per package | 0 |
+| `when` exhaustiveness (enum + nullable subject) | 0 violations |
+| stranded-annotation scan | 0 |
+| XML well-formedness, `res/**/*.xml` + manifest | 18 files, 0 failures |
+| `<target>` names / animator references in the splash | resolve |
+| raw `.svg` under `res/` | none |
+
+The `when` checker was itself validated against a deliberately broken fixture
+(missing enum arm; nullable subject with no `null ->` and no `else`) before its
+"0" was believed.
+
+Still unproven here, and the honest list: that the project **compiles** (unused
+imports, getter-vs-property, `@Composable` context restrictions and the
+`material-icons-extended` names `DarkMode` / `LightMode` / `SettingsBrightness`
+are all compiler facts), that the splash actually looks right on a device, and
+that the three external preconditions in §17 are met.

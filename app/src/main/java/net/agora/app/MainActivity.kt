@@ -44,6 +44,7 @@ import net.agora.app.data.supabaseClient
 import net.agora.app.model.FcmTokenUpdate
 import net.agora.app.navigation.AuthCallbackGate
 import net.agora.app.navigation.DeepLinkRouter
+import net.agora.app.utils.SessionContinuity
 import net.agora.app.service.PushNotificationService
 import net.agora.app.ui.InAppNotificationManager
 import net.agora.app.ui.LoginScreen
@@ -404,7 +405,14 @@ class MainActivity : ComponentActivity() {
                 var hadAuthenticatedSession by remember { mutableStateOf(false) }
                 LaunchedEffect(sessionStatus) {
                     val authenticated = sessionStatus is SessionStatus.Authenticated
-                    if (hadAuthenticatedSession && !authenticated) {
+                    /* ★ Only a real signed-in -> signed-out transition resets anything.
+                     *   A token refresh re-emits Authenticated with the SAME identity;
+                     *   `isIdentityTransition` is false for it, so what the user chose —
+                     *   the theme override here, and the NavHost back stack in the shell —
+                     *   survives coming back from the launcher. */
+                    if (SessionContinuity.isIdentityTransition(hadAuthenticatedSession, authenticated) &&
+                        !authenticated
+                    ) {
                         themeViewModel.resetToSystem()
                     }
                     if (authenticated) hadAuthenticatedSession = true
@@ -519,15 +527,8 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
                     ) {
-                        if (passwordResetStep != null) {
-                            PasswordResetScreen(
-                                viewModel = authViewModel,
-                                onCancel = { authViewModel.cancelPasswordReset() },
-                                onSuccess = {
-                                    Toast.makeText(applicationContext, "Password updated successfully!", Toast.LENGTH_LONG).show()
-                                }
-                            )
-                        } else {
+                        Box(modifier = Modifier.fillMaxSize()) {
+
                             when (sessionStatus) {
                                 is SessionStatus.Authenticated -> {
                                     /* ★ Prefer the explicit destination emitted when the
@@ -614,6 +615,27 @@ class MainActivity : ComponentActivity() {
                                         )
                                     }
                                 }
+                            }
+
+                            /* ★ MODAL, NOT A REPLACEMENT — this screen used to replace the
+                             *   whole `when (sessionStatus)` tree, which unmounted MainScreen
+                             *   and destroyed its rememberNavController(). Leaving the flow
+                             *   then rebuilt the NavHost from `startDestination = feed`, so a
+                             *   user who came from Account Details landed on the Feed with
+                             *   their back stack gone.
+                             *
+                             *   Composed after the main tree inside the same Box, the flow
+                             *   sits on top and the feed / Account Details NavHost is never
+                             *   torn down: Back returns to where the user started, and
+                             *   finishing the update leaves them there. */
+                            if (passwordResetStep != null) {
+                                PasswordResetScreen(
+                                    viewModel = authViewModel,
+                                    onCancel = { authViewModel.cancelPasswordReset() },
+                                    onSuccess = {
+                                        Toast.makeText(applicationContext, "Password updated successfully!", Toast.LENGTH_LONG).show()
+                                    }
+                                )
                             }
                         }
                     }

@@ -11,7 +11,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -50,12 +49,12 @@ import net.agora.app.data.supabaseClient
 import net.agora.app.media.MediaCompressor
 import net.agora.app.model.Profile
 import net.agora.app.utils.DateOfBirth
-import net.agora.app.data.ThemePreference
 import net.agora.app.viewmodel.AuthViewModel
 import net.agora.app.viewmodel.ThemeViewModel
 import net.agora.app.ui.components.AgoraPrimaryButton
 import net.agora.app.ui.components.DobSelectableDates
 import net.agora.app.ui.components.MinorAccountWarningBanner
+import net.agora.app.ui.components.ThemeModeSelector
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.storage.storage
@@ -160,15 +159,11 @@ fun AccountDetailsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val errorMessage by viewModel.errorMessage.collectAsState()
 
-    /* 🌟 EFFECTIVE THEME for the switch: an explicit override wins, otherwise
-     *   the device setting decides — `userOverride ?: isSystemInDarkTheme()`.
-     *   Toggling writes an explicit LIGHT/DARK override via setDarkMode(). */
+    /* 🌟 THEME CHOICE, straight from the persisted store. There is deliberately
+     *   no derived `isDark` boolean here any more: the selector shows the three
+     *   stored states (SYSTEM / LIGHT / DARK) rather than collapsing them into a
+     *   two-state switch, so the UI can never disagree with what was saved. */
     val themePreference by themeViewModel.themePreference.collectAsState()
-    val isDarkMode = when (themePreference) {
-        ThemePreference.LIGHT -> false
-        ThemePreference.DARK -> true
-        ThemePreference.SYSTEM -> isSystemInDarkTheme()
-    }
 
     var profile by remember { mutableStateOf<Profile?>(null) }
     var isUploading by remember { mutableStateOf(false) }
@@ -767,13 +762,7 @@ fun AccountDetailsScreen(
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             modifier = Modifier
@@ -784,29 +773,30 @@ fun AccountDetailsScreen(
                         ) {
                             Icon(
                                 Icons.Default.Palette,
-                                contentDescription = "Theme",
+                                contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
-                            Text("Dark Mode", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                            Text("Theme", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
                             Text(
-                                if (themePreference == ThemePreference.SYSTEM) {
-                                    "Following system theme"
-                                } else {
-                                    "Manual override"
-                                },
+                                "How Agora looks on this device",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
 
-                    Switch(
-                        checked = isDarkMode,
-                        onCheckedChange = { themeViewModel.setDarkMode(it) }
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // ✦ System / Light / Dark — no "override" wording left, and
+                    // "follow the device" is a real, selectable option instead
+                    // of the silent absence of one.
+                    ThemeModeSelector(
+                        selected = themePreference,
+                        onSelect = { themeViewModel.setThemePreference(it) }
                     )
                 }
             }

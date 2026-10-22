@@ -1,37 +1,32 @@
 package net.agora.app.utils
 
-/**
- * Ported from the retired template package history. Guards the reset state machine:
- * recovery must always start at EMAIL, and the new-password step must stay
- * locked until Supabase actually verified the emailed code.
- */
-
 import net.agora.app.viewmodel.PasswordResetMode
 import net.agora.app.viewmodel.PasswordResetStep
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * Guards the reset state machine.
+ *
+ * The invariant this file exists to protect: **no path reaches
+ * `NEW_PASSWORD` without a Supabase-verified emailed code, in either mode.**
+ * That includes *Change Password* from Account Details, which used to skip
+ * straight there on the strength of a live session alone.
+ */
 class PasswordResetRoutingTest {
 
-    // ── Signed-in *Change Password*: session is proof of identity ──────────
+    // ── Both modes enter at the email step ─────────────────────────────────
 
     @Test
-    fun changePasswordOpensOnTheNewPasswordStep() {
+    fun changePasswordStartsAtTheEmailStep() {
         assertEquals(
-            PasswordResetStep.NEW_PASSWORD,
+            PasswordResetStep.EMAIL,
             PasswordResetRouting.startStep(PasswordResetMode.CHANGE)
         )
     }
-
-    @Test
-    fun changePasswordNeverNeedsAnEmailedCode() {
-        assertTrue(PasswordResetRouting.canOpenNewPasswordStep(PasswordResetMode.CHANGE, false))
-        assertFalse(PasswordResetRouting.canOpenOtpStep(PasswordResetMode.CHANGE, true))
-    }
-
-    // ── Signed-out recovery: strict email → OTP → new password ─────────────
 
     @Test
     fun recoveryAlwaysStartsAtTheEmailStep() {
@@ -41,23 +36,79 @@ class PasswordResetRoutingTest {
         )
     }
 
+    /**
+     * The regression guard. A previous revision opened CHANGE on
+     * NEW_PASSWORD, so a stolen unlocked phone was enough to change the
+     * password: no email check, no emailed code.
+     */
     @Test
-    fun newPasswordStepIsLockedUntilTheRecoverySessionIsVerified() {
-        assertFalse(PasswordResetRouting.canOpenNewPasswordStep(PasswordResetMode.RECOVERY, false))
-        assertTrue(PasswordResetRouting.canOpenNewPasswordStep(PasswordResetMode.RECOVERY, true))
+    fun noModeCanStartPastTheEmailStep() {
+        PasswordResetMode.entries.forEach { mode ->
+            assertEquals(
+                "mode $mode must start at EMAIL",
+                PasswordResetStep.EMAIL,
+                PasswordResetRouting.startStep(mode)
+            )
+        }
     }
+
+    // ── The new-password step is locked until the code is verified ─────────
+
+    @Test
+    fun newPasswordStepIsLockedForBothModesUntilVerified() {
+        PasswordResetMode.entries.forEach { mode ->
+            assertFalse(
+                "mode $mode opened NEW_PASSWORD without a verified code",
+                PasswordResetRouting.canOpenNewPasswordStep(mode, recoverySessionVerified = false)
+            )
+            assertTrue(
+                "mode $mode stayed locked after a verified code",
+                PasswordResetRouting.canOpenNewPasswordStep(mode, recoverySessionVerified = true)
+            )
+        }
+    }
+
+    /** CHANGE in particular: a session alone must not unlock step 3. */
+    @Test
+    fun changePasswordSessionAloneDoesNotUnlockTheNewPasswordStep() {
+        assertFalse(
+            PasswordResetRouting.canOpenNewPasswordStep(
+                PasswordResetMode.CHANGE,
+                recoverySessionVerified = false
+            )
+        )
+    }
+
+    // ── The OTP step requires a code to have actually been requested ───────
 
     @Test
     fun otpStepRequiresAnAcceptedCodeRequest() {
-        assertFalse(PasswordResetRouting.canOpenOtpStep(PasswordResetMode.RECOVERY, false))
-        assertTrue(PasswordResetRouting.canOpenOtpStep(PasswordResetMode.RECOVERY, true))
+        PasswordResetMode.entries.forEach { mode ->
+            assertFalse(
+                "mode $mode opened OTP before a code was requested",
+                PasswordResetRouting.canOpenOtpStep(mode, codeRequested = false)
+            )
+            assertTrue(
+                "mode $mode stayed locked after a code was requested",
+                PasswordResetRouting.canOpenOtpStep(mode, codeRequested = true)
+            )
+        }
     }
 
+    /**
+     * Named separately from [noModeCanStartPastTheEmailStep] on purpose: that
+     * test pins the *current* entry step, this one pins the rule that survives
+     * the entry step changing — NEW_PASSWORD is never an entry point, in any
+     * mode, for any future revision.
+     */
     @Test
-    fun everyModeGetsAGraphEntryPoint() {
+    fun noModeStartsAtTheNewPasswordStep() {
         PasswordResetMode.entries.forEach { mode ->
-            val route = PasswordResetStep.entries.contains(PasswordResetRouting.startStep(mode))
-            assertTrue("no start step for $mode", route)
+            assertNotEquals(
+                "mode $mode started at NEW_PASSWORD",
+                PasswordResetStep.NEW_PASSWORD,
+                PasswordResetRouting.startStep(mode)
+            )
         }
     }
 }

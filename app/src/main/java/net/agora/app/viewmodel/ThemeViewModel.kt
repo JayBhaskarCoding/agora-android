@@ -26,13 +26,10 @@ class ThemeViewModel(application: Application) : AndroidViewModel(application) {
         ThemePreferenceStore.set(getApplication<Application>(), preference)
     }
 
-    /**
-     * Account Details switch: writing here records an EXPLICIT override
-     * (`LIGHT` / `DARK`), never `SYSTEM`.
-     */
-    fun setDarkMode(isDark: Boolean) {
-        setThemePreference(if (isDark) ThemePreference.DARK else ThemePreference.LIGHT)
-    }
+    /* Note: there is deliberately no `setDarkMode(Boolean)` here any more. A
+     * two-state setter cannot express "follow the device" — it can only ever
+     * write LIGHT or DARK — which is why Account Details now offers the three
+     * states explicitly and calls [setThemePreference] instead. */
 
     /** Logout: forget the override so auth screens follow the device again. */
     fun resetToSystem() {
