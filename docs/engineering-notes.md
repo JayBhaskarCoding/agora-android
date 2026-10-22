@@ -2460,3 +2460,158 @@ local functions capturing `by`-delegated state are compiler facts, and there is 
 JDK or SDK in this environment), and how the expand animation feels on a device —
 `expandVertically()` + `fadeIn()` on default specs is a considered starting point,
 not a measurement.
+
+---
+
+## 22. "The dialog jumps on every keystroke": the card was resizing
+
+§21 built the report dialog. This fixes a defect introduced by it, and the cause
+was not the keyboard.
+
+### 22.1 Two causes, both read from the Compose source
+
+**The card sized itself to its content.** Material3's `AlertDialogContent` places
+the text slot in:
+
+```kotlin
+Box(Modifier.weight(weight = 1f, fill = false) …) { text() }
+```
+
+`fill = false` means the box takes the height of what it measures, and the
+`Surface` wraps that — so the dialog has **no intrinsic height of its own**. The
+field was declared `minLines = 3, maxLines = 6`, which makes its height a function
+of the text: it grows one line at a time as characters wrap. Every wrap therefore
+re-measured the entire card, and because a dialog is centred, it grew upward *and*
+downward. That is the page appearing to jump while typing.
+
+**Every keystroke recomposed the whole dialog.** `selectedReason`, `explanation`
+and the derived `payload` were all read in the body of `ReportPostDialog`, so one
+character re-ran the five option rows, the disclaimer and both buttons. That alone
+does not move pixels, but it re-ran the measurement of a card whose size was
+input-dependent — the two causes compounded.
+
+### 22.2 The fix: constant geometry
+
+```kotlin
+private val ExplanationFieldHeight = 132.dp   // fixed — was minLines = 3, maxLines = 6
+private val DialogBodyMaxHeight   = 420.dp
+
+Column(Modifier.heightIn(max = DialogBodyMaxHeight).verticalScroll(rememberScrollState()))
+OutlinedTextField(… Modifier.height(ExplanationFieldHeight))
+```
+
+The field is now a constant-size box; overlong text scrolls *inside* it, and text is
+added without the field ever changing size. The body is capped, so once the field
+and the notice exceed the cap the **content** scrolls and the card does not move.
+
+Modifier order matters and is asserted: `heightIn` is applied *before*
+`verticalScroll`, so the cap constrains the scroll container's own size rather than
+the unbounded content inside it.
+
+`heightIn(max = …)` rather than a fixed height is deliberate. It is an upper bound,
+so the card still shrinks to fit a short screen or a raised keyboard (the platform
+resizes the dialog window — see 22.4) instead of overflowing it. The card now
+changes size exactly once, when "Other" opens its field, and that transition is the
+existing `expandVertically()` animation rather than a jump.
+
+### 22.3 The fix: state read in the leaf that displays it
+
+`ReportFormState` holds `MutableState` values, and each is read by exactly one
+composable:
+
+| state | read by | recomposes on |
+|---|---|---|
+| `selectedReason` | `ReportDialogBody` | a tap on an option |
+| `explanation` | `ExplanationField` | a keystroke |
+| derived `canSubmit` | `SubmitReportButton` | the Boolean flipping |
+
+`ExplanationField` takes `MutableState<TextFieldValue>` rather than a `String` +
+callback **on purpose**: passing a value would move the read up into
+`ReportDialogBody` and put the option rows and the notice back in the per-keystroke
+recomposition path. `ReportFlowContractTest` brace-matches that function and asserts
+it never touches `state.explanation.value`.
+
+The button's `enabled` is a `derivedStateOf` Boolean. The payload is a `String?` that
+changes on every character, but submittability only changes when the text crosses
+blank → non-blank, so a whole sentence's worth of keystrokes collapses to at most one
+recomposition of the button. The click handler reads the live values directly: a
+click is not a composition, so reading there subscribes to nothing and cannot submit
+a stale payload.
+
+`TextFieldValue` instead of `String` also preserves selection and composition ranges,
+so IME composition is not reset on every change.
+
+### 22.4 Why there is no `imePadding()` — and why that is not an omission
+
+This was checked in the source rather than assumed, because the obvious fix here is
+wrong.
+
+`AlertDialog` renders in its own window. `DialogProperties.decorFitsSystemWindows`
+defaults to `true`, and `AndroidDialog` reacts to it in two places:
+
+```kotlin
+val softInput = when {
+    decorFitsSystemWindows -> SOFT_INPUT_ADJUST_UNSPECIFIED     // platform owns IME
+    SDK_INT < S            -> SOFT_INPUT_ADJUST_RESIZE
+    else                   -> SOFT_INPUT_ADJUST_NOTHING
+}
+```
+
+The property is documented as: *"Set to `false` to use WindowInsets."* With the
+default, the **window** is resized or panned by the platform and the IME insets are
+consumed before Compose sees them — so `Modifier.imePadding()` inside the dialog
+would measure 0 and do nothing. It would be dead code that looks like a fix.
+
+Making it real requires `decorFitsSystemWindows = false`, which also sets
+`window.isFloating = false`, switches API 31+ to `ADJUST_NOTHING`, and lets content
+draw under the system bars — Material3's `AlertDialogContent` applies only
+`dialogPadding` (24 dp), not system-bar padding. That is a window-level behaviour
+change whose regressions (content under the status bar, changed scrim/positioning)
+cannot be validated without a device, and the reported bug was the **layout**, not
+the keyboard. Shipping it blind would trade a verified fix for an unverifiable risk.
+
+So the goal — "the keyboard slides up without jarring layout shifts" — is met by
+giving the platform's existing resize nothing to re-lay-out per keystroke. If IME
+jank is still observed on hardware after this, `decorFitsSystemWindows = false` plus
+`imePadding()` is the follow-up, and it needs a device to sign off.
+
+### 22.5 Tests
+
+Guards were rewritten, not merely extended, because four of them described the old
+implementation and would have been satisfied by code that no longer exists:
+
+| guard | change |
+|---|---|
+| `theExplanationFieldHasAConstantHeight` | new — fixed height present, no `minLines` in code |
+| `theDialogBodyIsHeightCappedAndScrollable` | new — cap, scroller, and their order |
+| `onlyTheFieldReadsTheExplanationText` | new — brace-matches the body, asserts no text read |
+| `submitEnabledStateIsDerivedNotRecomputedPerKeystroke` | new — `derivedStateOf`, no `val payload` |
+| `theExplanationFieldIsConditional` | updated: `requiresExplanation(selectedReason)` → `(selected)` |
+| `submitIsDisabledUntilAPayloadExists` | updated: `payload != null` → `canSubmit`; `payload?.let` → `)?.let` |
+| `selectingAPredefinedReasonClearsTheExplanation` | updated: inline lambda → `ReportFormState.select` |
+
+Two defects were found in the new guards before they were trusted, both in the tests
+rather than the code:
+
+- the "no `minLines`" assertion failed on the KDoc that explains why `minLines` was
+  removed. It now scans with comments stripped — the same prose-vs-code trap as §21.7,
+  which is why `codeOnly` already existed;
+- the "body does not read the text" assertion sliced to the next `@Composable`, which
+  swept `ExplanationField` — whose entire job is to read the text — into the region
+  under test. It now brace-matches the function exactly.
+
+### 22.6 Verification
+
+| Gate | Result |
+|---|---|
+| tree-sitter Kotlin parse, `app/src/{main,test,androidTest}/**/*.kt` | 116 files, 0 `ERROR`/missing |
+| import resolution | 2182 imports, 0 unresolved |
+| duplicate top-level declarations per package | 0 |
+| `when` exhaustiveness | 4 enums, 3 whens, 0 violations |
+| unused imports, 2 touched files | 0 (`getValue` is the `by`-delegation operator import, required) |
+| structural assertions simulated against source | 39/39 |
+
+Still unproven here: that this **compiles** (there is no JDK or SDK in this
+environment), and how the fixed-height field feels in the hand — 132 dp is sized to
+show roughly four lines at 15 sp, which is a considered starting point, not a
+measurement.
