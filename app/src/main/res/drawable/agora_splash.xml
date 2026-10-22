@@ -15,11 +15,11 @@
         logo.
 
      3. AN INSET MARK. The mark's own coordinate space runs out to ~392 units,
-        which rendered it at 84% of the badge's width; its lower-right arc
-        strokes sat about 8% from the badge edge and read as if they were about
-        to collide with it. The `glyph` group scales the mark to 0.32, i.e. 62%
-        of the badge, leaving ~19% clear padding on every side — the margin the
-        adaptive launcher icon keeps.
+        which once rendered it at 84% of the badge's width, with its lower-right
+        arc strokes about 8% from the edge — close enough to look like a
+        collision. The `glyph` group scales the mark to 0.355: 69% of the badge,
+        which fills the badge properly without the dead space a 62% mark left,
+        and still keeps ~15% clear padding on every side.
 
         The two constants that place the mark are measured, not eyeballed:
           • the mark's untouched bounding box is (107.15, 104.70)-(392.59, 391.07),
@@ -84,13 +84,13 @@
                         </aapt:attr>
                     </path>
 
-                    <!-- The white mark, inset to 62% of the badge. -->
+                    <!-- The white mark, inset to 69% of the badge. -->
                     <group
                         android:name="glyph"
                         android:pivotX="249.87"
                         android:pivotY="247.885"
-                        android:scaleX="0.32"
-                        android:scaleY="0.32"
+                        android:scaleX="0.355"
+                        android:scaleY="0.355"
                         android:translateX="-106.425"
                         android:translateY="-103.874">
 

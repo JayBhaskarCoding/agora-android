@@ -1882,10 +1882,12 @@ The splash is now the app icon and nothing else:
   launcher's accent subpaths appended, exactly as `ic_launcher_monochrome.xml`
   does it, so the counters are holes rather than painted accents);
 * both are inside **one** `logo` group pivoted at `(144, 144)` — the exact centre
-  of the 288×288 viewport — so the entire icon turns 0 → 360 exactly once, with
-  a 0.88 → 1.0 scale-in behind it;
-* the mark is inset to **62%** of the badge, giving ~19% clear padding on all
-  four sides.
+  of the 288×288 viewport — so the entire icon turns 0 → 360 exactly once while
+  it grows 0.3 → 1.0; rotation and scale share one `<set>` and one duration, so
+  the entrance reads as a single motion rather than a spin plus a pop;
+* the mark is inset to **69%** of the badge, leaving ~15% clear padding on all
+  four sides — large enough that the badge does not look empty, small enough
+  that no stroke approaches the rim.
 
 The inset is measured, not eyeballed. The mark's own coordinate space runs out
 to ~392 units, and at the previous scale it covered **84%** of the badge: its
@@ -1897,12 +1899,13 @@ lower-right arc strokes sat ~8% from the edge. The numbers that fix it:
 | mark centre → `pivotX` / `pivotY` | `(249.87, 247.885)` |
 | badge centre | `(143.445, 144.011)` |
 | centre offset → `translateX` / `translateY` | `(-106.425, -103.874)` |
-| new `scaleX` / `scaleY` | `0.32` → mark is 62.2% wide, 61.1% tall |
-| resulting padding | 18.9% L/R, 19.5% T/B |
+| `scaleX` / `scaleY` | `0.355` → mark is 69.0% wide, 67.8% tall |
+| resulting padding | 15.5% L/R, 16.1% T/B |
 
 Putting the pivot on the mark's own centre is what makes `translate` the only
 positioning term: changing `scale` re-centres the mark about that point instead
-of shoving it sideways, so the two constants stay correct for any scale.
+of shoving it sideways, so the two constants stayed correct when the mark was
+enlarged from 62% to 69% — only the one number changed.
 
 Four details that are easy to get wrong, and are therefore written down:
 
@@ -1915,9 +1918,12 @@ Four details that are easy to get wrong, and are therefore written down:
 3. the animator must **not** set `android:repeatCount`; omitting it means
    play-once. `valueType="floatType"` is required or the platform can treat
    0 → 360 as an integer step and drop the intermediate frames.
-4. the **first frame is what pre-Android-12 compat draws**, so the entrance
-   scale is only 0.88 — a dramatic 0.5 start would leave the icon visibly
-   shrunken for the whole cold start on those devices.
+4. a small `valueFrom` is safe on old devices **because the compat path never
+   animates**. `androidx.core:core-splashscreen`'s pre-Android-12 implementation
+   contains no `startAnimation` / `Animatable` / `AnimatedVector` handling at
+   all (checked in the source, not assumed), so those devices draw the
+   drawable's *declared* attributes: full size, unrotated. The 0.3 start exists
+   only on API 31+, which is exactly where the platform plays it.
 
 `windowSplashScreenAnimationDuration` (`800`) matches the animator's duration.
 One consequence worth stating plainly: the AVD starts when the splash appears

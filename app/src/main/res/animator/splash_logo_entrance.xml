@@ -3,7 +3,15 @@
 
      The `logo` group in res/drawable/agora_splash.xml holds the badge and the
      mark together, so animating `rotation` here turns the entire icon once —
-     0 to 360 degrees — while it eases up from 88% to full size.
+     0 to 360 degrees — while it grows 0.3 -> 1.0. Rotation and scale run in the
+     same <set> over the same duration, so this reads as one motion, not a spin
+     and a pop.
+
+     Why a 0.3 start is safe on older devices: androidx core-splashscreen's
+     pre-Android-12 implementation never starts an AnimatedVectorDrawable — it
+     has no startAnimation/Animatable code at all — so those devices draw the
+     drawable's DECLARED attributes, i.e. full size and unrotated. The small
+     start only exists on API 31+, which is exactly where the platform plays it.
 
      Durations match `windowSplashScreenAnimationDuration` (800) in
      values/themes.xml: the platform starts this as the splash appears and then
@@ -31,7 +39,7 @@
          decelerates into its resting size instead of stopping dead. -->
     <objectAnimator
         android:propertyName="scaleX"
-        android:valueFrom="0.88"
+        android:valueFrom="0.3"
         android:valueTo="1.0"
         android:valueType="floatType"
         android:duration="800"
@@ -39,7 +47,7 @@
 
     <objectAnimator
         android:propertyName="scaleY"
-        android:valueFrom="0.88"
+        android:valueFrom="0.3"
         android:valueTo="1.0"
         android:valueType="floatType"
         android:duration="800"

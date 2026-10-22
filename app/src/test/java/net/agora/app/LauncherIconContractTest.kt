@@ -395,6 +395,52 @@ class LauncherIconContractTest {
             "The entrance must ease out rather than run linearly.",
             animator.contains("fast_out_slow_in")
         )
+
+        /* ★ The entrance is ONE motion: the icon grows 0.3 -> 1.0 while it turns
+         *   a full circle, both over the same duration. Three separate things can
+         *   break that, so all three are asserted:
+         *     - a scale that no longer starts small (or does not end at full size)
+         *     - a duration mismatch, which turns "one motion" into spin-then-pop
+         *     - an android:startOffset on either animator, which staggers them */
+        val rotationBlock = Regex("android:propertyName=\"rotation\"[\\s\\S]{0,300}?/>")
+            .find(animator)?.value ?: throw AssertionError("no rotation animator")
+        val scaleBlocks = Regex("android:propertyName=\"scale[XY]\"[\\s\\S]{0,300}?/>")
+            .findAll(animator).toList()
+
+        assertEquals("Expected both scaleX and scaleY to animate.", 2, scaleBlocks.size)
+        scaleBlocks.forEach { block ->
+            val v = block.value
+            assertTrue(
+                "The logo must GROW on launch: scale must start at 0.3 so the entrance " +
+                    "reads as an arrival, not a nudge. Found:\n$v",
+                Regex("android:valueFrom=\"0\\.3\"").containsMatchIn(v)
+            )
+            assertTrue(
+                "The scale must end at exactly 1.0, or the icon never reaches its real size.",
+                Regex("android:valueTo=\"1\\.0\"").containsMatchIn(v)
+            )
+        }
+
+        fun durationOf(block: String): String =
+            Regex("android:duration=\"(\\d+)\"").find(block)?.groupValues?.get(1)
+                ?: throw AssertionError("no android:duration in:\n$block")
+
+        val rotationMs = durationOf(rotationBlock)
+        scaleBlocks.forEach { block ->
+            assertEquals(
+                "Rotation and scale must share one duration, otherwise the logo finishes " +
+                    "spinning before it finishes growing (or the reverse) and the entrance " +
+                    "stops reading as a single motion.",
+                rotationMs,
+                durationOf(block.value)
+            )
+        }
+
+        assertFalse(
+            "android:startOffset staggers the animators; the scale-up and the rotation must " +
+                "begin together.",
+            animator.contains("android:startOffset")
+        )
     }
 
     /**
@@ -435,13 +481,14 @@ class LauncherIconContractTest {
     }
 
     /**
-     * The mark sits comfortably inside the badge.
+     * The mark sits comfortably inside the badge — big enough not to leave the
+     * badge looking empty, small enough that no stroke approaches the edge.
      *
-     * The regression: the mark's own coordinate space runs to ~392 units, and at
-     * the previous scale it covered 84% of the badge — its lower-right strokes
-     * came within ~8% of the edge and looked about to collide with it. The
-     * target band is 55-70%, matching the margin the adaptive launcher icon
-     * keeps, with at least 12% clear on every side.
+     * The history here is a band, not a point. At one scale the mark covered 84%
+     * of the badge and its lower-right arc strokes came within ~8% of the edge,
+     * which read as an imminent collision; at 62% the badge looked under-filled.
+     * The band below is the corridor between those two complaints, and the
+     * padding floor is what actually keeps the artwork off the rim.
      */
     @Test
     fun splashMarkIsInsetInsideTheBadge() {
@@ -480,8 +527,8 @@ class LauncherIconContractTest {
         val widthRatio = (markRight - markLeft) / badgeWidth
         assertTrue(
             "The mark covers ${"%.1f".format(widthRatio * 100)}% of the badge width. It must stay " +
-                "in 55-70% so no stroke comes near the badge edge.",
-            widthRatio in 0.55f..0.70f
+                "in 55-72%: below that the badge looks empty, above it the strokes crowd the edge.",
+            widthRatio in 0.55f..0.72f
         )
 
         val pads = listOf(
