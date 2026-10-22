@@ -104,6 +104,43 @@ internal object NavTransitions {
         }
     }
 
+    /**
+     * ✦ THE MODAL AUTH FLOWS — Change Password / Reset Password.
+     *
+     * These are deliberately NOT NavHost destinations: the flow must be reachable
+     * while signed out ([net.agora.app.MainActivity] composes it above whichever
+     * tree is current), so it cannot depend on a nav graph existing. That means it
+     * gets no NavHost transition — it used to mount and unmount on a bare `if`,
+     * which is a one-frame cut in both directions. Opening it popped in with no
+     * motion; cancelling it deleted a full-screen opaque surface between two
+     * frames, uncovering the screen behind in a single step. That is the "snap"
+     * this pair removes.
+     *
+     * The move is the same as a hierarchical push, on purpose: opening Change
+     * Password from Account Details should read as one more step *deeper* into the
+     * app, not as a platform dialog appearing from nowhere. Depth is encoded the
+     * same way everywhere, so the user learns it once.
+     *
+     * No fade, for the same reason the graph slides have none: the surface is
+     * opaque, so fading it would alpha-blend it against the screen underneath —
+     * reintroducing the double exposure this whole change exists to remove. A slide
+     * over an opaque neighbour needs no alpha at all.
+     */
+    fun overlayEnter(): EnterTransition = slideInHorizontally(
+        animationSpec = tween<IntOffset>(
+            durationMillis = NavMotion.DURATION_MS,
+            easing = FastOutSlowInEasing
+        )
+    ) { fullWidth -> fullWidth }
+
+    /** The exact inverse of [overlayEnter]: the panel leaves the way it arrived. */
+    fun overlayExit(): ExitTransition = slideOutHorizontally(
+        animationSpec = tween<IntOffset>(
+            durationMillis = NavMotion.DURATION_MS,
+            easing = FastOutSlowInEasing
+        )
+    ) { fullWidth -> fullWidth }
+
     private fun kindOf(initial: NavBackStackEntry, target: NavBackStackEntry): NavMotion.Kind =
         NavMotion.kindOf(
             initialRoute = initial.destination.route,

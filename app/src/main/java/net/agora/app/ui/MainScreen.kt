@@ -444,6 +444,35 @@ fun MainScreen(
                     popEnterTransition = { NavTransitions.enter(initialState, targetState, isPop = true) },
                     popExitTransition = { NavTransitions.exit(initialState, targetState, isPop = true) },
 
+                    /* ★ SWIPE-BACK MUST BE THE SAME MOVE AS BUTTON-BACK.
+                     *
+                     *   The four above only run when Back is *committed*. With
+                     *   `enableOnBackInvokedCallback` on (it is — see the manifest)
+                     *   a back GESTURE is a different path: NavHost seeks these two
+                     *   slots against the finger — `transitionState.seekTo(progress,
+                     *   previousEntry)` — and only hands over to popEnter/popExit if
+                     *   the gesture completes.
+                     *
+                     *   Left at their defaults they are NOT the pop slide. Verified
+                     *   in DefaultNavTransitions: `predictivePopExitTransition` is
+                     *   `scaleOut(targetScale = 0.7f)` and `predictivePopEnterTransition`
+                     *   is `fadeIn(spring(stiffness = 1600))`. So a swipe shrank the
+                     *   whole page to 70% inside the window — background showing at
+                     *   all four edges — and on release snapped it back to full size
+                     *   and slid it away. Two motions stitched together at the commit
+                     *   frame: the tearing was still there, just on the gesture route
+                     *   instead of the button route.
+                     *
+                     *   Delegating to popEnter/popExit makes the preview a true
+                     *   preview: whatever the finger reveals is exactly what release
+                     *   finishes, because it is the same function of the same pair.
+                     *   `swipeEdge` is ignored deliberately — this app only ever
+                     *   pushes from the right, so a popped screen always leaves to
+                     *   the right regardless of which edge the gesture started on,
+                     *   which is what popExitTransition does too. */
+                    predictivePopEnterTransition = { NavTransitions.enter(initialState, targetState, isPop = true) },
+                    predictivePopExitTransition = { NavTransitions.exit(initialState, targetState, isPop = true) },
+
                     // sizeTransform stays at its default (null = no container-size
                     // animation). Animating the container would clip the outgoing
                     // screen into a shrinking box in the middle of the slide.

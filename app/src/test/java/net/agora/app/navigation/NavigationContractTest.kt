@@ -29,6 +29,9 @@ class NavigationContractTest {
     private val mainScreen: String
         get() = File(repoRoot(), "app/src/main/java/net/agora/app/ui/MainScreen.kt").readText()
 
+    private fun source(relativePath: String): String =
+        File(repoRoot(), relativePath).readText()
+
     private fun mainSources(): List<File> =
         File(repoRoot(), "app/src/main/java")
             .walkTopDown()
@@ -78,6 +81,106 @@ class NavigationContractTest {
         assertTrue(
             "popExitTransition must pass isPop = true.",
             Regex("popExitTransition\\s*=\\s*\\{[^}]*isPop\\s*=\\s*true").containsMatchIn(source)
+        )
+    }
+
+    /**
+     * The predictive-back slots must exist and must reuse the POP transition.
+     *
+     * These are a separate code path from the four above: during a back *gesture*
+     * NavHost seeks `predictivePop*` against the finger rather than running
+     * `popEnter`/`popExit`, and it only commits on release. Left at their library
+     * defaults — `scaleOut(0.7f)` / `fadeIn(spring)` — the preview shrank the page
+     * to 70% inside the window and then snapped back to full size to slide away,
+     * so the tearing survived on the gesture route after the button route was
+     * fixed. Asserting `isPop = true` pins the preview to the same motion the
+     * release commits to; without it the two disagree at the commit frame.
+     */
+    @Test
+    fun predictiveBackPreviewsThePopTransition() {
+        val source = mainScreen()
+
+        val enter = Regex(
+            "predictivePopEnterTransition\\s*=\\s*\\{\\s*NavTransitions\\.enter\\(" +
+                "[^)]*isPop\\s*=\\s*true\\s*\\)"
+        )
+        val exit = Regex(
+            "predictivePopExitTransition\\s*=\\s*\\{\\s*NavTransitions\\.exit\\(" +
+                "[^)]*isPop\\s*=\\s*true\\s*\\)"
+        )
+
+        assertTrue(
+            "predictivePopEnterTransition must delegate to NavTransitions.enter(..., isPop = true) " +
+                "so the swipe preview is the pop it commits to.",
+            enter.containsMatchIn(source)
+        )
+        assertTrue(
+            "predictivePopExitTransition must delegate to NavTransitions.exit(..., isPop = true). " +
+                "Its default is scaleOut(0.7f), which shrinks the page inside the window.",
+            exit.containsMatchIn(source)
+        )
+    }
+
+    // ── the modal auth flow ─────────────────────────────────────────────────
+
+    /**
+     * Change / Reset Password is not a NavHost destination — it must work signed
+     * out, when no graph exists — so it gets its own enter/exit pair.
+     *
+     * The regression: it was composed as a bare `if (passwordResetStep != null)`,
+     * which mounts and unmounts a full-screen opaque surface between two frames.
+     * Opening had no motion; Back deleted the screen in a single step.
+     */
+    @Test
+    fun passwordResetFlowIsAnimatedRatherThanSwapped() {
+        val activity = source("app/src/main/java/net/agora/app/MainActivity.kt")
+
+        assertFalse(
+            "PasswordResetScreen is still behind a bare `if (passwordResetStep != null)` — " +
+                "that is an instant swap, not a transition.",
+            activity.contains("if (passwordResetStep != null)")
+        )
+        assertTrue(
+            "PasswordResetScreen must be wrapped in AnimatedVisibility.",
+            Regex("AnimatedVisibility\\(\\s*\\n?\\s*visible\\s*=\\s*passwordResetStep\\s*!=\\s*null")
+                .containsMatchIn(activity)
+        )
+        assertTrue(
+            "The overlay must use NavTransitions.overlayEnter().",
+            activity.contains("NavTransitions.overlayEnter()")
+        )
+        assertTrue(
+            "The overlay must use NavTransitions.overlayExit().",
+            activity.contains("NavTransitions.overlayExit()")
+        )
+    }
+
+    /**
+     * Its content must survive the exit frame.
+     *
+     * `passwordResetStep` is null the moment the flow is cancelled, and the step
+     * card deliberately renders nothing for null. Animating the panel out while
+     * reading the live step would therefore slide an EMPTY glass panel away — the
+     * form vanishing first, its frame following. `targetState` must be pinned to a
+     * value that remembers the last step that was actually shown.
+     */
+    @Test
+    fun passwordResetExitKeepsItsLastStepPainted() {
+        val screen = source("app/src/main/java/net/agora/app/ui/PasswordResetScreen.kt")
+
+        assertTrue(
+            "The last non-null step must be remembered for the exit animation.",
+            Regex("val\\s+displayStep:\\s*PasswordResetStep\\?\\s*=\\s*step\\s*\\?:\\s*lastVisibleStep")
+                .containsMatchIn(screen)
+        )
+        assertTrue(
+            "AnimatedContent must target displayStep, not the live (already null) step.",
+            screen.contains("targetState = displayStep")
+        )
+        assertFalse(
+            "AnimatedContent is still targeting the live step; it will blank the card " +
+                "before the panel finishes sliding away.",
+            Regex("targetState\\s*=\\s*step\\s*,").containsMatchIn(screen)
         )
     }
 

@@ -110,6 +110,18 @@ fun PasswordResetScreen(
     onSuccess: () -> Unit
 ) {
     val step by viewModel.passwordResetStep.collectAsState()
+
+    /* ★ THE EXIT FRAME.
+     *   `passwordResetStep` flips to null the instant the flow is cancelled or the
+     *   new password is accepted — but the container now slides this screen out over
+     *   NavMotion.DURATION_MS instead of deleting it. The card below deliberately
+     *   draws nothing for a null step, so animating straight to null would slide an
+     *   EMPTY glass panel away: the form would vanish first, then its frame would
+     *   follow. Remembering the last step that was actually shown keeps the content
+     *   the user was reading on screen for the whole exit. */
+    var lastVisibleStep by remember { mutableStateOf<PasswordResetStep?>(null) }
+    LaunchedEffect(step) { if (step != null) lastVisibleStep = step }
+    val displayStep: PasswordResetStep? = step ?: lastVisibleStep
     val errorMessage by viewModel.errorMessage.collectAsState()
 
     // Owned by the ViewModel so they survive configuration changes: the mode
@@ -244,7 +256,10 @@ fun PasswordResetScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         AnimatedContent(
-                            targetState = step,
+                            // displayStep, not step: during the exit animation `step`
+                            // is already null and this would fade the card to nothing
+                            // before the panel finishes sliding away.
+                            targetState = displayStep,
                             transitionSpec = { fadeIn() togetherWith fadeOut() },
                             label = "PasswordResetStepTransition"
                         ) { currentStep ->

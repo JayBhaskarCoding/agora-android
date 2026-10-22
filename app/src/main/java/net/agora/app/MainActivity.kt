@@ -19,6 +19,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -44,6 +45,7 @@ import net.agora.app.data.supabaseClient
 import net.agora.app.model.FcmTokenUpdate
 import net.agora.app.navigation.AuthCallbackGate
 import net.agora.app.navigation.DeepLinkRouter
+import net.agora.app.navigation.NavTransitions
 import net.agora.app.utils.SessionContinuity
 import net.agora.app.service.PushNotificationService
 import net.agora.app.ui.InAppNotificationManager
@@ -628,7 +630,19 @@ class MainActivity : ComponentActivity() {
                              *   sits on top and the feed / Account Details NavHost is never
                              *   torn down: Back returns to where the user started, and
                              *   finishing the update leaves them there. */
-                            if (passwordResetStep != null) {
+                            /* ★ ANIMATED, NOT A BARE `if`.
+                             *   Composed as a plain conditional, this screen mounted
+                             *   and unmounted between two frames: it appeared with no
+                             *   motion and Back deleted a full-screen opaque surface
+                             *   in a single step. Now it slides over the app tree on
+                             *   the same clock and easing as every NavHost push, so
+                             *   leaving Change Password looks like leaving Account
+                             *   Details. */
+                            AnimatedVisibility(
+                                visible = passwordResetStep != null,
+                                enter = NavTransitions.overlayEnter(),
+                                exit = NavTransitions.overlayExit()
+                            ) {
                                 PasswordResetScreen(
                                     viewModel = authViewModel,
                                     onCancel = { authViewModel.cancelPasswordReset() },

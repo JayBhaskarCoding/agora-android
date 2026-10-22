@@ -2141,3 +2141,183 @@ Still unproven here, stated plainly: that it **compiles** (the `slideInHorizonta
 / `fadeIn` overloads and `NavHost`'s four transition parameters are compiler
 facts), and that the motion feels right on a device — 320 ms with
 `FastOutSlowInEasing` is a considered starting point, not a measurement.
+
+---
+
+## 20. Back navigation tearing, part two: the two paths §19 did not cover
+
+§19 fixed the paths it looked at. It did not look at all of them — and it said so,
+listing predictive back and the Change Password flow as "deliberately unchanged"
+rather than pretending they were fine. Both were the bug. This section closes them.
+
+The lesson worth keeping: **"Back" is not one code path.** In this app it is three
+— a committed pop through the `NavHost`, a *gesture* that previews that pop before
+committing, and a modal that owns Back entirely. Fixing the first one fixes the
+path the tests can reach and leaves the other two untouched, which is exactly how a
+user can report "it still tears" after a change that genuinely did work.
+
+### 20.1 Path two: swipe-back shrank the page
+
+`AndroidManifest.xml` sets `enableOnBackInvokedCallback="true"` (§9), so on
+Android 13+ a back *gesture* does not run `popEnterTransition` / `popExitTransition`.
+Read from `NavHost.kt`, the transition spec branches before it consults them:
+
+```kotlin
+if (inPredictiveBack) {
+    destination.createPredictivePopExitTransition(this, swipeEdge)
+        ?: predictivePopExitTransition.invoke(this, swipeEdge)
+} else if (composeNavigator.isPop.value) {
+    ... popExitTransition ...
+}
+```
+
+and the gesture drives it by *seeking*, not animating:
+
+```kotlin
+LaunchedEffect(progress) {
+    transitionState.seekTo(progress, previousEntry)
+}
+```
+
+Those two slots have their own defaults, and they are not the pop. From
+`DefaultNavTransitions.android.kt`:
+
+| slot | default |
+|---|---|
+| `predictivePopEnterTransition` | `fadeIn(spring(dampingRatio = 1f, stiffness = 1600f))` |
+| `predictivePopExitTransition` | `scaleOut(targetScale = 0.7f)` |
+
+So a swipe shrank the entire page to 70 % about its centre — window background
+showing at all four edges — and on release **snapped it back to full size and slid
+it away**. Two unrelated motions stitched at the commit frame. That is a better
+description of "tearing apart" than anything the button path ever did, because a
+scale-down physically detaches the page from the window's edges.
+
+Both slots now delegate to the same functions as the pop:
+
+```kotlin
+predictivePopEnterTransition = { NavTransitions.enter(initialState, targetState, isPop = true) },
+predictivePopExitTransition = { NavTransitions.exit(initialState, targetState, isPop = true) },
+```
+
+Now the preview *is* the pop: the finger reveals exactly what release finishes,
+because both are the same function of the same pair. `kindOf` is symmetric (PEER
+requires **both** ends to be tabs), so reversing the pair for a gesture yields the
+same kind the push used.
+
+`swipeEdge` is deliberately ignored. The app only ever pushes from the right, so a
+popped screen always leaves to the right no matter which edge the gesture began on
+— which is also what `popExitTransition` does, since it has no notion of edges.
+Honouring `swipeEdge` here would make the preview disagree with the commit, which
+is the defect, not the fix.
+
+### 20.2 Path three: Change Password had no transition at all
+
+`PasswordResetScreen` is not a `NavHost` destination, and cannot be: the same
+screen serves "Change Password" from Account Details *and* "Reset Password" from
+Login, and the second case runs when no nav graph exists. It is composed above
+whichever tree is current, in `MainActivity`:
+
+```kotlin
+if (passwordResetStep != null) { PasswordResetScreen(...) }   // before
+```
+
+A bare conditional. `PasswordResetScreen`'s root is `VibrantGlassBackground`,
+which is `fillMaxSize()` and opaque, so:
+opening it mounted a full-screen surface between two frames with no motion, and
+Back — via `BackHandler(enabled = true) { cancelFlow() }` — deleted that surface in
+a single step, uncovering Account Details instantly. §18.3 deliberately made this a
+modal rather than a tree replacement, which fixed the *back-stack* problem and left
+the *motion* problem: a modal that appears and disappears between frames.
+
+It is now wrapped in `AnimatedVisibility` with a dedicated pair:
+
+```kotlin
+AnimatedVisibility(
+    visible = passwordResetStep != null,
+    enter = NavTransitions.overlayEnter(),
+    exit = NavTransitions.overlayExit()
+) { PasswordResetScreen(...) }
+```
+
+`overlayEnter` / `overlayExit` are the same move as a hierarchical push and its
+mirror, on the same `NavMotion.DURATION_MS` and `FastOutSlowInEasing`. One motion
+vocabulary: leaving Change Password looks like leaving Account Details, because it
+is the same animation. Deliberately **no fade** — for the same reason the graph
+slides have none (§19.2): the surface is opaque, so fading it would alpha-blend it
+against the screen underneath and reintroduce the double exposure this whole arc
+exists to remove.
+
+### 20.3 The trap: animating the exit would have emptied the card first
+
+The naive version of 20.2 is worse than the bug. `cancelPasswordReset()` sets
+`_passwordResetStep.value = null`, and the step card is an `AnimatedContent` whose
+`when` has an explicit branch:
+
+```kotlin
+null -> Unit        // deliberate: nothing to draw
+```
+
+`AnimatedVisibility` keeps its content composed while it animates out — but that
+content now recomposes with a **null** step and paints an empty glass panel. The
+result would be: form vanishes on frame 1, empty panel slides away over the next
+320 ms. A flash, in a change meant to remove one.
+
+So the screen remembers the last step it actually showed, and the card reads that
+rather than the live value:
+
+```kotlin
+var lastVisibleStep by remember { mutableStateOf<PasswordResetStep?>(null) }
+LaunchedEffect(step) { if (step != null) lastVisibleStep = step }
+val displayStep: PasswordResetStep? = step ?: lastVisibleStep
+...
+AnimatedContent(targetState = displayStep, ...)
+```
+
+The `null -> Unit` branch stays — `displayStep` is still nullable, and the branch
+is what makes a fourth enum entry a compile error instead of a blank card. It is
+now simply unreachable during an exit.
+
+### 20.4 Re-audited, still correct, still untouched
+
+Re-checked rather than assumed, and left alone:
+
+- all **7** `onBack` callbacks call `popBackStack()`; none call `navigate(`;
+- `setGraph(` appears nowhere in `app/src/main`;
+- both bottom-pill switches (feed, profile) use `popUpTo(startDestination) { saveState = true }`
+  + `launchSingleTop = true` + `restoreState = true` — §19.4 already verified the
+  scroll/selection survive;
+- all **13** `navController.navigate()` calls carry `launchSingleTop`.
+
+Back while the exit animation runs is harmless by construction: the modal's
+`BackHandler` is still registered for those 320 ms and `cancelPasswordReset()` is
+idempotent, so a second press cannot reach the `NavHost` underneath and pop
+Account Details behind a panel that is still visible.
+
+### 20.5 Verification
+
+| Gate | Result |
+|---|---|
+| tree-sitter Kotlin parse, `app/src/{main,test,androidTest}/**/*.kt` | 112 files, 0 `ERROR`/missing |
+| import resolution | 2124 imports, 0 unresolved |
+| duplicate top-level declarations per package | 0 |
+| `when` exhaustiveness (enum + nullable) | 4 enums, 3 whens, 0 violations |
+| unused imports in the 5 touched files | 0 |
+| XML well-formedness | 17 files, 0 failures |
+| `NavMotionTest` (policy) | 13 cases |
+| `NavigationContractTest` (wiring) | 9 guards, all 30 simulated assertions pass |
+
+The gate script itself was wrong twice before it was trusted, and both were caught
+by disbelieving a red result rather than the code: a regex name-extractor read
+`fun Modifier.glassmorphic` as a declaration of `Modifier` (so 22 real-looking
+"unresolved imports"), and it treated Kotlin **overloads** in one file as duplicate
+declarations. Rewritten against the AST (`property_declaration` carries its name on
+a `variable_declaration` child, not a `name` field). A gate that lies in either
+direction is worse than no gate.
+
+Still unproven here, stated plainly: that this **compiles** — the `predictivePop*`
+parameters take `AnimatedContentTransitionScope<NavBackStackEntry>.(Int) -> …`,
+a signature read from `androidx-main` and *not* from the 2.10.0 tag, because the
+GitHub API exposes no `androidx-navigation` tags (same caveat as §19.6) — and that
+the motion feels right on a device. 320 ms `FastOutSlowInEasing` remains a
+considered starting point, not a measurement.
