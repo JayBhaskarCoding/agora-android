@@ -1994,3 +1994,150 @@ imports, getter-vs-property, `@Composable` context restrictions and the
 `material-icons-extended` names `DarkMode` / `LightMode` / `SettingsBrightness`
 are all compiler facts), that the splash actually looks right on a device, and
 that the three external preconditions in §17 are met.
+
+---
+
+## 19. Back navigation tearing: two defaults nobody chose
+
+**Reported:** *pressing Back from a sub-screen (Account Details) makes the page
+tear apart, flash, or snap.*
+
+The graph was fine. Every one of the seven `onBack` callbacks already called
+`popBackStack()`, the tab switches already used the canonical
+`popUpTo(start) { saveState = true } + launchSingleTop + restoreState` triple,
+and nothing anywhere called `setGraph`. The defect was **the absence of a
+decision**: the NavHost declared no transitions, so the library supplied its own.
+
+### 19.1 What the default actually is
+
+`NavHost`'s transition parameters default to `DefaultNavTransitions`, and reading
+that source settles it — these are the shipped defaults, not "no animation":
+
+| slot | default |
+|---|---|
+| `enterTransition` | `fadeIn(tween(700))` |
+| `exitTransition` | `fadeOut(tween(700))` |
+| `popEnterTransition` | **the same fade as `enter`** |
+| `popExitTransition` | **the same fade as `exit`** |
+| `sizeTransform` | `null` |
+
+Two consequences, and together they are the whole bug:
+
+1. **A cross-fade renders both screens at once.** For 700 ms the outgoing and
+   incoming full-screen destinations are both on screen at partial alpha. On this
+   app's screens — opaque gradient canvases stacked over one another — that is a
+   literal double exposure. It does not read as a transition; it reads as the
+   page coming apart.
+2. **Back is not the reverse of forward.** `popEnter`/`popExit` default to the
+   *forward* transitions, so popping had no direction at all. A Back press and a
+   Forward press produced the identical animation.
+
+That is exactly the "tears apart / flashes / snaps" report, and it needed no
+broken code to happen — only a missing one.
+
+### 19.2 The fix: direction, and no alpha on the slide
+
+The policy lives in `navigation/NavMotion.kt` — pure Kotlin, no Compose, no
+Android, unit tested — and `navigation/NavTransitions.kt` turns it into
+`EnterTransition`/`ExitTransition` values. Two motions:
+
+**Hierarchical** (push/pop between levels). The incoming screen slides a full
+width; the outgoing one drifts a quarter width the other way and **does not
+fade**. That second part is the actual fix: because both surfaces are opaque and
+the slide keeps them adjacent, the viewport is fully covered at every frame, so
+there is never a background flash and never a blend.
+
+```
+  push:   [ old ⇒ -25% ]  ←  [ new        ]
+  pop:    [ old        ]  →  [ new -25% ⇒ ]
+```
+
+The coverage holds at every fraction `f`: when pushing, the incoming screen's
+left edge is at `(1-f)·W` while the outgoing screen still reaches `W - f·W/4`, and
+`W - f·W/4 ≥ (1-f)·W` for all `f ∈ [0,1]`. Popping is the mirror image. There is
+no value of `f` at which a gap opens.
+
+**Peer** (feed ↔ own profile, i.e. the two bottom-pill tabs). These are siblings,
+so a horizontal slide would claim a hierarchy that does not exist. They use a
+fade *through*: the outgoing tab is fully gone (90 ms) on exactly the frame the
+incoming one starts to appear (+90 ms delay, 210 ms fade). The two are never both
+readable. (At that single seam the Scaffold's `canvasTop` shows through, and
+`ProfileScreen` has no background of its own — it already sits on `canvasTop` —
+so the seam is invisible by construction.)
+
+Classification keys off the destination **and** its arguments: the profile route
+is declared `profile?userId={userId}`, so "my profile" (a tab) and "someone's
+profile" (a pushed detail) share a route string and are distinguished only by
+whether `userId` is present. Unknown routes fall back to the slide, because a
+slide is always readable while a fade on a push silently loses depth.
+
+### 19.3 The other things that moved on the wrong clock
+
+Three smaller contributors, all the same class of problem — a second animation
+running to a different schedule than the content:
+
+* **The nav pill** animated on a ~500 ms spring while the content faded for
+  700 ms, so the chrome arrived well after the screen settled. It now shares
+  `NavMotion.DURATION_MS` and `FastOutSlowInEasing` with the content.
+* **The post-detail frost** was `if (isPostDetailOpen) 16f else 0f` inside a
+  `graphicsLayer` — dropping 16 dp → 0 in a single frame on dismiss, a visible
+  snap on the way out of a post. That case is now eased. The **drag** path is
+  untouched: `drawerFraction` is still read inside the draw lambda and combined
+  with `maxOf`, so the drawer frost still tracks the finger frame-for-frame, and
+  the animated value is read inside that lambda (draw phase) so it never enters
+  recomposition.
+* **Back with the drawer open** had no handler in this screen. A `BackHandler`
+  now closes the sheet instead of popping the graph behind it.
+
+### 19.4 What the audit found already correct (and left alone)
+
+| Checked | Result |
+|---|---|
+| every `onBack` callback | 7/7 call `popBackStack()` |
+| graph root replacement | no `setGraph()` anywhere in `app/src/main/java` |
+| tab switches | both already `popUpTo(start){saveState} + launchSingleTop + restoreState` |
+| feed scroll position | `rememberLazyListState()` — saveable, survives the pop |
+| profile tab selection | `rememberSaveable` — survives the pop |
+| `refreshProfile()` on route change | keeps the previous value on failure; never nulls, so no flash |
+
+One gap **was** real: most pushes had no `launchSingleTop`, so a double-tap on
+"Account Details" or on an avatar pushed two identical destinations — the first
+Back then landed on a pixel-identical copy, which reads as "Back did nothing,
+then jumped two screens". All 13 `navigate()` calls are now guarded.
+
+### 19.5 What is deliberately unchanged
+
+* **Predictive back.** `enableOnBackInvokedCallback="true"` is already set, and
+  navigation-compose drives that gesture with its own `predictivePop*`
+  transitions (spring fade-in / `scaleOut(0.7)`). Those parameters were left at
+  their defaults: this change is about the button, arrow and 3-button paths, and
+  passing a different signature into `NavHost` without a compiler here is a risk
+  with no upside. Noted as a follow-up, not silently assumed.
+* **Post detail is a `dialog()` destination**, not a NavHost composable, so it
+  does not participate in these transitions at all — it is a full-screen dialog
+  window (`usePlatformDefaultWidth = false`). Its back path is the dialog dismiss
+  plus the now-eased frost behind it.
+
+### 19.6 Verification
+
+No JDK, SDK or device in this environment, so again: static gates only.
+
+| Gate | Result |
+|---|---|
+| tree-sitter Kotlin parse, `app/src/**/*.kt` | 112 files, 0 `ERROR`/missing |
+| import resolution | 2122 imports, 0 unresolved |
+| duplicate top-level declarations per package | 0 |
+| `when` exhaustiveness (enum + nullable) | 0 violations |
+| unused imports in the touched files | 0 |
+| `NavMotionTest` (policy) | 13 cases |
+| `NavigationContractTest` (wiring) | 6 guards, simulated against the source |
+
+`NavigationContractTest` earns its place: writing it caught two real problems
+before it ever ran — two navigations in the deletion chain that genuinely lacked
+`launchSingleTop`, and a regex of mine that stopped *at* `restoreState` and so
+could never have asserted `restoreState = true`. Both are fixed.
+
+Still unproven here, stated plainly: that it **compiles** (the `slideInHorizontally`
+/ `fadeIn` overloads and `NavHost`'s four transition parameters are compiler
+facts), and that the motion feels right on a device — 320 ms with
+`FastOutSlowInEasing` is a considered starting point, not a measurement.

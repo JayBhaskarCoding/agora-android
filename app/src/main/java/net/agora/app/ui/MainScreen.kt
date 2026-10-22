@@ -2,7 +2,9 @@ package net.agora.app.ui
 
 import android.os.Build
 import android.util.Log
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -65,6 +67,8 @@ import coil.request.ImageRequest
 import net.agora.app.data.supabaseClient
 import net.agora.app.model.Post
 import net.agora.app.navigation.DeepLinkRouter
+import net.agora.app.navigation.NavMotion
+import net.agora.app.navigation.NavTransitions
 import net.agora.app.ui.theme.AgoraAccentGradient
 import net.agora.app.ui.theme.AgoraRingGradient
 import net.agora.app.ui.theme.AgoraType
@@ -155,6 +159,14 @@ fun MainScreen(
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val coroutineScope = rememberCoroutineScope()
+
+    /* ✦ Back with the drawer open must CLOSE THE DRAWER, not pop the graph
+     *   underneath it. Registered here so it is the most recent enabled handler
+     *   while the sheet is open; it disables itself the moment it closes, so it
+     *   never competes with normal back navigation. */
+    BackHandler(enabled = drawerState.isOpen) {
+        coroutineScope.launch { drawerState.close() }
+    }
     // 🌟 Drawer identity flows from AuthViewModel.profileState — the VM owns
     //    the Supabase fetch (single source of truth) and the UI just collects
     //    it. Refresh re-fires on every route change, so an avatar edited in
@@ -330,7 +342,7 @@ fun MainScreen(
                         tint = colors.textSecondary,
                         onClick = {
                             coroutineScope.launch { drawerState.close() }
-                            navController.navigate("account_details")
+                            navController.navigate("account_details") { launchSingleTop = true }
                         }
                     )
 
@@ -374,9 +386,24 @@ fun MainScreen(
             //    is open. No animated-Dp chain lagging behind the gesture, no
             //    blur-node attach/detach re-rasterization, and on API < 31 the
             //    layer is skipped entirely (the dark scrim carries the look).
+            /* ✦ The post-detail frost is a DISCRETE state change, so it can be
+             *   eased without lagging anything — dismissing the dialog used to
+             *   drop the blur 16dp -> 0 in a single frame, an abrupt snap on the
+             *   way back out of a post.
+             *
+             *   The DRAG path is untouched: `drawerFraction` is still read inside
+             *   the draw lambda below and combined with max(), so the frost still
+             *   tracks the finger frame-for-frame. Reading the animated value
+             *   inside that lambda (not above it) keeps it off the recomposition
+             *   path — it only invalidates the layer. */
+            val postDetailBlur = animateFloatAsState(
+                targetValue = if (isPostDetailOpen) 16f else 0f,
+                animationSpec = tween(durationMillis = NavMotion.DURATION_MS),
+                label = "PostDetailBlur"
+            )
             val scaffoldModifier = if (supportsBlur) {
                 Modifier.graphicsLayer {
-                    val radius = if (isPostDetailOpen) 16f else drawerFraction * 22f
+                    val radius = maxOf(postDetailBlur.value, drawerFraction * 22f)
                     renderEffect = if (radius > 0.01f) {
                         val px = radius.dp.toPx()
                         // TileMode.Clamp == clipped-rect semantics (no soft
@@ -398,6 +425,28 @@ fun MainScreen(
                 NavHost(
                     navController = navController,
                     startDestination = "feed",
+
+                    /* ★ EXPLICIT MOTION — do not delete these four lambdas.
+                     *
+                     *   Left at the library defaults, push AND pop are both a
+                     *   700 ms symmetric cross-dissolve (verified in
+                     *   navigation-compose's DefaultNavTransitions): the two
+                     *   full-screen destinations are alpha-blended for the whole
+                     *   transition, with no direction cue at all. On opaque,
+                     *   gradient screens that double exposure is the "tearing /
+                     *   flashing" seen on Back, and pop looked identical to push.
+                     *
+                     *   The rules live in NavMotion (unit tested); NavTransitions
+                     *   turns them into these values. Slides never fade, so the
+                     *   screen stays fully covered and nothing shows through. */
+                    enterTransition = { NavTransitions.enter(initialState, targetState, isPop = false) },
+                    exitTransition = { NavTransitions.exit(initialState, targetState, isPop = false) },
+                    popEnterTransition = { NavTransitions.enter(initialState, targetState, isPop = true) },
+                    popExitTransition = { NavTransitions.exit(initialState, targetState, isPop = true) },
+
+                    // sizeTransform stays at its default (null = no container-size
+                    // animation). Animating the container would clip the outgoing
+                    // screen into a shrinking box in the middle of the slide.
                     modifier = Modifier
                         .padding(innerPadding)
                         .hazeSource(state = hazeState)
@@ -408,10 +457,10 @@ fun MainScreen(
                             themeViewModel = themeViewModel,
                             hazeState = hazeState,
                             onNavigateToProfile = { clickedUserId ->
-                                navController.navigate("profile?userId=$clickedUserId")
+                                navController.navigate("profile?userId=$clickedUserId") { launchSingleTop = true }
                             },
                             onNavigateToSearch = {
-                                navController.navigate("search")
+                                navController.navigate("search") { launchSingleTop = true }
                             },
                             onCreatePost = { showComposeScreen = true }
                         )
@@ -431,7 +480,7 @@ fun MainScreen(
                             themeViewModel = themeViewModel,
                             userId = userId,
                             onBack = { navController.popBackStack() },
-                            onNavigateToSettings = { navController.navigate("account_details") },
+                            onNavigateToSettings = { navController.navigate("account_details") { launchSingleTop = true } },
                             onOpenDrawer = {
                                 coroutineScope.launch { drawerState.open() }
                             }
@@ -443,8 +492,8 @@ fun MainScreen(
                             viewModel = authViewModel,
                             themeViewModel = themeViewModel,
                             onBack = { navController.popBackStack() },
-                            onNavigateToPendingDeletion = { navController.navigate("pending_deletion") },
-                            onNavigateToDeletionOtp = { navController.navigate("verify_deletion") }
+                            onNavigateToPendingDeletion = { navController.navigate("pending_deletion") { launchSingleTop = true } },
+                            onNavigateToDeletionOtp = { navController.navigate("verify_deletion") { launchSingleTop = true } }
                         )
                     }
 
@@ -459,6 +508,7 @@ fun MainScreen(
                             onVerified = {
                                 navController.navigate("deletion_mode") {
                                     popUpTo("verify_deletion") { inclusive = true }
+                                    launchSingleTop = true
                                 }
                             }
                         )
@@ -475,6 +525,7 @@ fun MainScreen(
                             onScheduled = {
                                 navController.navigate("pending_deletion") {
                                     popUpTo("deletion_mode") { inclusive = true }
+                                    launchSingleTop = true
                                 }
                             }
                         )
@@ -494,7 +545,7 @@ fun MainScreen(
                             themeViewModel = themeViewModel,
                             onBack = { navController.popBackStack() },
                             onUserClick = { clickedUserId ->
-                                navController.navigate("profile?userId=$clickedUserId")
+                                navController.navigate("profile?userId=$clickedUserId") { launchSingleTop = true }
                             }
                         )
                     }
@@ -559,7 +610,7 @@ fun MainScreen(
                             viewModel = postDetailViewModel,
                             onBack = { navController.popBackStack() },
                             onNavigateToProfile = { clickedUserId ->
-                                navController.navigate("profile?userId=$clickedUserId")
+                                navController.navigate("profile?userId=$clickedUserId") { launchSingleTop = true }
                             },
                             onPostChanged = { updated -> feedViewModel.syncPostState(updated) },
                             onDeletePost = { id -> feedViewModel.deletePost(context, id) },
@@ -585,14 +636,25 @@ fun MainScreen(
 
             // ✦ FLOATING MORPHING NAVIGATION PILL — slides and fades with route
             //    changes instead of snapping in/out of existence.
+            // ✦ The pill moves on the CONTENT's clock. `showBottomBar` flips the
+            //   moment the route changes, so the pill starts exactly as the NavHost
+            //   transition does — with mismatched durations (a ~500 ms spring
+            //   against the transition) the chrome arrived well after the screen
+            //   settled, reading as a second, unrelated animation on Back.
             AnimatedVisibility(
                 visible = showBottomBar,
                 enter = slideInVertically(
-                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
-                ) { it } + fadeIn(tween(220)),
+                    animationSpec = tween(
+                        durationMillis = NavMotion.DURATION_MS,
+                        easing = FastOutSlowInEasing
+                    )
+                ) { it } + fadeIn(tween(NavMotion.DURATION_MS)),
                 exit = slideOutVertically(
-                    animationSpec = tween(220)
-                ) { it } + fadeOut(tween(160)),
+                    animationSpec = tween(
+                        durationMillis = NavMotion.DURATION_MS,
+                        easing = FastOutSlowInEasing
+                    )
+                ) { it } + fadeOut(tween(NavMotion.DURATION_MS)),
                 modifier = Modifier.align(Alignment.BottomCenter)
             ) {
                 val isHome = currentRoute == "feed"
