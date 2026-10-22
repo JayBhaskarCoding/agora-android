@@ -40,6 +40,7 @@ import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import net.agora.app.model.Comment
 import net.agora.app.model.Post
+import net.agora.app.ui.components.ReportPostDialog
 import net.agora.app.ui.theme.rememberAgoraColors
 import net.agora.app.viewmodel.PostDetailUiState
 import net.agora.app.viewmodel.PostDetailViewModel
@@ -81,8 +82,6 @@ fun SinglePostScreen(
     var optionsPost by remember { mutableStateOf<Post?>(null) }
     var postToDelete by remember { mutableStateOf<Post?>(null) }
     var postToReport by remember { mutableStateOf<Post?>(null) }
-    var reportReason by remember { mutableStateOf("Spam") }
-    val reportOptions = remember { listOf("Spam", "Harassment", "Hate Speech", "Misinformation", "Other") }
 
     // 🌟 COMMENT FETCH ON DIRECT NAVIGATION: when parachuting in from a
     //    notification deep link, the ViewModel's init-time fetch can complete
@@ -355,56 +354,16 @@ fun SinglePostScreen(
         )
     }
 
-    // --- REPORT POST DIALOG (mirrors FeedScreen) ---
-    if (postToReport != null) {
-        val targetReport = postToReport!!
-        AlertDialog(
-            onDismissRequest = { postToReport = null },
-            shape = RoundedCornerShape(26.dp),
-            containerColor = colors.cardSurface,
-            title = { Text("Report Post", fontWeight = FontWeight.Bold, color = colors.textPrimary) },
-            text = {
-                Column {
-                    Text(
-                        "Why are you reporting this post?",
-                        color = colors.textSecondary,
-                        modifier = Modifier.padding(bottom = 12.dp)
-                    )
-                    reportOptions.forEach { reason ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable { reportReason = reason }
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = reportReason == reason,
-                                onClick = { reportReason = reason },
-                                colors = RadioButtonDefaults.colors(selectedColor = colors.danger)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(reason, fontSize = 15.sp, color = colors.textPrimary)
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                AgoraPrimaryButton(
-                    onClick = {
-                        onReportPost?.invoke(targetReport.id, reportReason)
-                        Toast.makeText(context, "Report submitted. Thank you.", Toast.LENGTH_SHORT).show()
-                        postToReport = null
-                    }
-                ) {
-                    Text("Submit Report", fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { postToReport = null }) {
-                    Text("Cancel", color = colors.textTertiary)
-                }
+    // --- REPORT POST DIALOG ---
+    //    Shared with the feed and profile grids; the report itself is delegated to
+    //    the host's callback so the shared feed list stays in sync.
+    postToReport?.let { targetReport ->
+        ReportPostDialog(
+            onDismiss = { postToReport = null },
+            onSubmit = { reason ->
+                onReportPost?.invoke(targetReport.id, reason)
+                Toast.makeText(context, "Report submitted. Thank you.", Toast.LENGTH_SHORT).show()
+                postToReport = null
             }
         )
     }

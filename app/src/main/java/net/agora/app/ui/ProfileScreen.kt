@@ -46,11 +46,11 @@ import net.agora.app.model.Profile
 import net.agora.app.ui.components.VibrantGlassBackground
 import net.agora.app.ui.theme.AgoraRingGradient
 import net.agora.app.ui.theme.AgoraType
+import net.agora.app.ui.components.ReportPostDialog
 import net.agora.app.ui.theme.rememberAgoraColors
 import net.agora.app.viewmodel.AuthViewModel
 import net.agora.app.viewmodel.FeedViewModel
 import net.agora.app.viewmodel.ThemeViewModel
-import net.agora.app.ui.components.AgoraPrimaryButton
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
 
@@ -98,7 +98,6 @@ fun ProfileScreen(
     var selectedTabIndex by rememberSaveable { mutableIntStateOf(0) }
     var expandedPostId by rememberSaveable { mutableStateOf<String?>(null) }
 
-    val reportOptions = remember { listOf("Spam", "Harassment", "Hate Speech", "Misinformation", "Other") }
 
     var profileFullName by remember { mutableStateOf("Loading...") }
     var handle by remember { mutableStateOf("loading") }
@@ -110,7 +109,6 @@ fun ProfileScreen(
     var postToEdit by remember { mutableStateOf<Post?>(null) }
 
     var postToReport by remember { mutableStateOf<Post?>(null) }
-    var reportReason by remember { mutableStateOf("Spam") }
 
     var showCommentSheet by remember { mutableStateOf(false) }
     var selectedPostId by remember { mutableStateOf<String?>(null) }
@@ -226,50 +224,16 @@ fun ProfileScreen(
     }
 
     // --- REPORT POST DIALOG ---
-    if (postToReport != null) {
-        val targetReport = postToReport!!
-        AlertDialog(
-            onDismissRequest = { postToReport = null },
-            shape = RoundedCornerShape(26.dp),
-            containerColor = colors.cardSurface,
-            title = { Text("Report Post", fontWeight = FontWeight.Bold, color = colors.textPrimary) },
-            text = {
-                Column {
-                    Text(
-                        "Why are you reporting this post?",
-                        color = colors.textSecondary,
-                        modifier = Modifier.padding(bottom = 12.dp)
-                    )
-                    reportOptions.forEach { reason ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable { reportReason = reason }
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = reportReason == reason,
-                                onClick = { reportReason = reason },
-                                colors = RadioButtonDefaults.colors(selectedColor = colors.danger)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(reason, fontSize = 15.sp, color = colors.textPrimary)
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                AgoraPrimaryButton(
-                    onClick = {
-                        feedViewModel.reportPost(targetReport.id, reportReason)
-                        coroutineScope.launch { snackbarHostState.showSnackbar("Report submitted. Thank you.") }
-                        postToReport = null
-                    }
-                ) { Text("Submit Report", fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = { TextButton(onClick = { postToReport = null }) { Text("Cancel", color = colors.textTertiary) } }
+    //    Shared with the feed and the single-post page; see ReportPostDialog for
+    //    the five reasons and the "Other" explanation rule.
+    postToReport?.let { targetReport ->
+        ReportPostDialog(
+            onDismiss = { postToReport = null },
+            onSubmit = { reason ->
+                feedViewModel.reportPost(targetReport.id, reason)
+                coroutineScope.launch { snackbarHostState.showSnackbar("Report submitted. Thank you.") }
+                postToReport = null
+            }
         )
     }
 

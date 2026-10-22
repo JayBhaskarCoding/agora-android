@@ -56,6 +56,7 @@ import net.agora.app.model.Post
 import net.agora.app.ui.theme.AgoraRingGradient
 import net.agora.app.ui.theme.AgoraType
 import net.agora.app.ui.theme.hazeChild
+import net.agora.app.ui.components.ReportPostDialog
 import net.agora.app.ui.theme.rememberAgoraColors
 import net.agora.app.viewmodel.FeedViewModel
 import net.agora.app.viewmodel.ThemeViewModel
@@ -105,7 +106,6 @@ fun GlobalFeedScreen(
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
-    val reportOptions = remember { listOf("Spam", "Harassment", "Hate Speech", "Misinformation", "Other") }
 
     // ✦ Scroll-reactive top bar: the frosted header materializes only once
     //    content actually slides underneath it.
@@ -142,7 +142,6 @@ fun GlobalFeedScreen(
     var postToEdit by remember { mutableStateOf<Post?>(null) }
 
     var postToReport by remember { mutableStateOf<Post?>(null) }
-    var reportReason by remember { mutableStateOf("Spam") }
 
     val isCommentsSheetOpen = showCommentSheet && selectedPostId != null
     val feedBlurRadius by animateDpAsState(
@@ -436,55 +435,16 @@ fun GlobalFeedScreen(
     }
 
     // --- REPORT POST DIALOG ---
-    if (postToReport != null) {
-        val targetReport = postToReport!!
-        AlertDialog(
-            onDismissRequest = { postToReport = null },
-            shape = RoundedCornerShape(26.dp),
-            containerColor = colors.cardSurface,
-            title = { Text("Report Post", fontWeight = FontWeight.Bold, color = colors.textPrimary) },
-            text = {
-                Column {
-                    Text(
-                        "Why are you reporting this post?",
-                        color = colors.textSecondary,
-                        modifier = Modifier.padding(bottom = 12.dp)
-                    )
-                    reportOptions.forEach { reason ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable { reportReason = reason }
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = reportReason == reason,
-                                onClick = { reportReason = reason },
-                                colors = RadioButtonDefaults.colors(selectedColor = colors.danger)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(reason, fontSize = 15.sp, color = colors.textPrimary)
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                AgoraPrimaryButton(
-                    onClick = {
-                        viewModel.reportPost(targetReport.id, reportReason)
-                        Toast.makeText(context, "Report submitted. Thank you.", Toast.LENGTH_SHORT).show()
-                        postToReport = null
-                    }
-                ) {
-                    Text("Submit Report", fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { postToReport = null }) {
-                    Text("Cancel", color = colors.textTertiary)
-                }
+    //    One shared dialog owns the five reasons, the explanation field for
+    //    "Other" and the moderation-contact notice; its onSubmit hands back the
+    //    final `reports.reason` string, so this screen never formats it.
+    postToReport?.let { targetReport ->
+        ReportPostDialog(
+            onDismiss = { postToReport = null },
+            onSubmit = { reason ->
+                viewModel.reportPost(targetReport.id, reason)
+                Toast.makeText(context, "Report submitted. Thank you.", Toast.LENGTH_SHORT).show()
+                postToReport = null
             }
         )
     }

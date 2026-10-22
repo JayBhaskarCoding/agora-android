@@ -2321,3 +2321,142 @@ a signature read from `androidx-main` and *not* from the 2.10.0 tag, because the
 GitHub API exposes no `androidx-navigation` tags (same caveat as §19.6) — and that
 the motion feels right on a device. 320 ms `FastOutSlowInEasing` remains a
 considered starting point, not a measurement.
+
+---
+
+## 21. Report Post: three copies, two of which would have been forgotten
+
+The report flow existed as **three** hand-copied `AlertDialog`s — in `FeedScreen`,
+`ProfileScreen` and `SinglePostScreen` — byte-identical except for how each
+submitted (a `Toast`, a snackbar, and a delegated `onReportPost` callback). Adding
+a conditional text field, a validation rule and a legal notice to that shape means
+three places to get each of them right, and the copies had already drifted from
+the spec in the one field the backend actually reads.
+
+### 21.1 What was wrong before any new requirement
+
+`"Hate Speech"` was the stored value in all three copies. The specified label is
+`"Hate speech"`. That is not a cosmetic variant — `reason` is a free-text column
+in `reports`, so `'Hate Speech'` and `'Hate speech'` are two different values and
+any `WHERE reason = …` grouping silently splits. The correction is a data change,
+so it is pinned by a test rather than left to review.
+
+### 21.2 One dialog, one definition of the five reasons
+
+`ui/components/ReportPostDialog.kt` now owns the UI; `report/ReportReasons.kt`
+owns the policy. The three screens each dropped ~50 lines of duplicated dialog
+and kept only their submit side effect:
+
+```kotlin
+postToReport?.let { targetReport ->
+    ReportPostDialog(
+        onDismiss = { postToReport = null },
+        onSubmit = { reason -> viewModel.reportPost(targetReport.id, reason); … }
+    )
+}
+```
+
+The option rows iterate `ReportReasons.ALL`, so the displayed list and the
+allow-list in `payloadFor` cannot disagree — there is exactly one definition of the
+five reasons in the app, and `ReportFlowContractTest` fails if a screen re-types a
+label.
+
+State moved **into** the dialog. It was previously hoisted on the screen
+(`var reportReason by remember { mutableStateOf("Spam") }`), which meant the
+selection survived dismissal and the next open silently restored it — including,
+after this change, "Other" with an empty field, i.e. a dialog that opens in an
+unsubmittable state. Inside the composable, dismissal leaves composition and the
+next open starts at "Spam" with an empty field, for free.
+
+### 21.3 The wire format
+
+`reports` is `(id, post_id, reporter_id, reason, created_at)`; `reason` is one
+free-text column, so the choice and the explanation have to share it:
+
+| selection | `reason` stored |
+|---|---|
+| Spam / Harassment / Hate speech / Misinformation | verbatim, e.g. `"Spam"` |
+| Other + `"the caption is a scam"` | `"Other: the caption is a scam"` |
+| Other + `"   "` | *nothing — not submittable* |
+
+Verbatim storage keeps the four predefined reasons groupable; the `"Other: "`
+prefix keeps *the fact that Other was chosen* queryable while preserving the
+user's own words. Storing the bare explanation would lose the distinction;
+storing only `"Other"` would throw the explanation away.
+
+`payloadFor` returns `String?`, and the dialog binds **both** the Submit button's
+`enabled` and the value it sends to that single call. "Cannot submit" and "has a
+payload" are therefore one decision rather than two that can drift apart.
+
+Only the edges are trimmed. `"  line one\nline two  "` becomes
+`"Other: line one\nline two"` — interior whitespace is what the user wrote.
+Whitespace-only input is rejected outright: `"Other:    "` would be a reason
+nobody can read.
+
+### 21.4 The conditional field, and the trap in "just hide it"
+
+Selecting "Other" expands a multi-line `OutlinedTextField` directly below the
+options (`AnimatedVisibility` + `expandVertically()`/`fadeIn()`, reversed on
+exit) so the list never jumps under the finger between tap and release.
+
+Switching back to a predefined reason **clears** the explanation as well as
+hiding the field. Hiding alone would leave the text alive in state and invisible
+on screen — a value the user believes they discarded, which reappears if they
+select "Other" again, and which would be submitted if it were ever not
+overwritten. Clearing on the way out keeps "what you see is what will be sent".
+`payloadFor` also ignores the explanation for the four predefined reasons, so even
+a leaked value cannot be appended to `"Spam"`.
+
+The dialog body scrolls. Without it, revealing the field plus the notice on a
+short device pushes the Submit button out of the dialog — at exactly the moment
+the user needs it.
+
+### 21.5 The notice
+
+> Note: If you submit a report, our moderation team may contact you via the email
+> address registered to your Agora account if additional details are needed.
+
+It lives in `ReportReasons.CONTACT_DISCLAIMER` rather than inline in the
+composable, because the wording is a requirement: a typo in a legal-adjacent
+notice should fail a test, not ship. Rendered as a quiet inset panel (12 sp,
+`textTertiary`, hairline border, 16 dp info glyph) inside the dialog's text slot
+— which places it above the action buttons — and deliberately styled unlike the
+option labels, so it does not read as a sixth choice.
+
+### 21.6 What was deliberately not done
+
+- **The three screens' submit side effects are untouched** — same `Toast`, same
+  snackbar, same delegated callback. Only the dialog was replaced.
+- **`FeedViewModel.reportPost` is unchanged.** The reason arrives already
+  formatted; the ViewModel persists it verbatim. `ReportFlowContractTest` asserts
+  the `post_id`/`reporter_id`/`reason` insert and the `reports` table, so a future
+  "helpful" re-format there fails loudly.
+- **Two pre-existing unused imports** (`Icons.Filled.Close` in `FeedScreen`,
+  `Close`/`Warning` in `ProfileScreen`) were left alone as out of scope. The one
+  my change actually orphaned (`AgoraPrimaryButton` in `ProfileScreen`) was
+  removed.
+
+### 21.7 Verification
+
+| Gate | Result |
+|---|---|
+| tree-sitter Kotlin parse, `app/src/{main,test,androidTest}/**/*.kt` | 116 files, 0 `ERROR`/missing |
+| import resolution | 2178 imports, 0 unresolved |
+| duplicate top-level declarations per package | 0 |
+| `when` exhaustiveness | 4 enums, 3 whens, 0 violations |
+| unused imports, 7 touched files | 0 (excluding `by`-delegation `getValue`/`setValue`, which are operator imports) |
+| `ReportReasonsTest` (policy) | 18 cases |
+| `ReportFlowContractTest` (wiring) | 10 guards, 38 structural assertions simulated against the source |
+
+One assertion had to be corrected during verification, and it is worth recording:
+`ReportFlowContractTest` initially failed because `ReportReasons.kt` contains the
+literal `"Hate Speech"` — inside its own KDoc, explaining the bug. The assertion
+was wrong, not the code: it now scans with comments stripped (`codeOnly`), so
+prose may name the mistake while the *value* cannot become it.
+
+Still unproven here, stated plainly: that this **compiles** (`minLines`,
+`OutlinedTextFieldDefaults.colors`, the `+` composition of enter transitions and
+local functions capturing `by`-delegated state are compiler facts, and there is no
+JDK or SDK in this environment), and how the expand animation feels on a device —
+`expandVertically()` + `fadeIn()` on default specs is a considered starting point,
+not a measurement.
