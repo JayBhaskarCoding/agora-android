@@ -8,23 +8,18 @@ import org.junit.Test
 /**
  * Guards the app identity and the Kotlin package headers.
  *
- * The rule this file exists to enforce: **one namespace, one applicationId,
- * and they are deliberately different strings.**
+ * The rule this file exists to enforce: **one identity, `net.agora.app`, used
+ * for both `namespace` and `applicationId`.**
  *
  * ```
- * namespace     = "net.agora.app"   // Kotlin package, R, BuildConfig
- * applicationId = "net.in.agora"    // device identity, Play, Firebase, OAuth
+ * namespace     = "net.agora.app"
+ * applicationId = "net.agora.app"
  * ```
  *
- * The split is forced from both sides:
+ * History matters here, because both wrong answers were shipped at some point:
  *
- * 1. `applicationId` cannot be `net.agora.app`: no Android OAuth client, no
- *    entry in `google-services.json`, and no `package_name` in the live
- *    `/.well-known/assetlinks.json` is registered under it, so Play App Links
- *    and Google Sign-In both fail closed (status 16 / `DEVELOPER_ERROR`).
- *
- * 2. `namespace` cannot be `net.in.agora`: `in` is a hard keyword, so
- *    `package net.in.agora` is a syntax error —
+ * 1. `namespace = "net.in.agora"` did not compile. `in` is a hard keyword, so
+ *    `package net.in.agora` is a syntax error:
  *
  *    ```
  *    AgoraApplication.kt:1:13 Syntax error:
@@ -35,12 +30,24 @@ import org.junit.Test
  *    (tree-sitter lexes `in` as an ordinary identifier) — only the compiler
  *    does, which is why the rule is encoded here as a plain assertion.
  *
- * AGP supports the split natively: `namespace` only feeds R/BuildConfig and the
- * manifest's relative class names, while `applicationId` is what ends up in the
- * APK manifest, on the device, in Play, and in the Digital Asset Links
- * statement. A previous revision of this file asserted the two were equal, back
- * when the namespace still sat at the template default `com.example.agora` —
- * that assertion is gone because the premise was wrong.
+ * 2. The identity was briefly split: `namespace = net.agora.app` with
+ *    `applicationId = net.in.agora`. That bought package-name compatibility
+ *    with an older registration at the cost of a second identity to keep in
+ *    sync everywhere — Gradle, Firebase, OAuth, App Links, Supabase redirects.
+ *    It is unified again (docs §17), and this file pins the unified values.
+ *
+ * Unifying on `net.agora.app` is the only choice that satisfies both
+ * constraints at once: it is a legal identifier chain (no hard keyword), and it
+ * is a name that can be registered as a package wherever the app ships.
+ *
+ * ⚠️ Three things outside this repository must match the value asserted here,
+ * and the tests below fail loudly rather than silently until they do:
+ *   - `app/google-services.json` needs a client for `net.agora.app`, or the
+ *     google-services plugin aborts the build;
+ *   - a Google Cloud OAuth *Android* client must exist for `net.agora.app`
+ *     plus the signing SHA-1, or sign-in returns [28444];
+ *   - `https://agora.in.net/.well-known/assetlinks.json` must list
+ *     `net.agora.app`, or App Links stop verifying.
  *
  * Pure JVM test: no device, no Robolectric.
  */
@@ -94,23 +101,22 @@ class PackageDeclarationContractTest {
     // ── Identity ────────────────────────────────────────────────────────────
 
     /**
-     * `namespace` and `applicationId` are deliberately DIFFERENT values:
+     * One identity for both roles.
      *
-     *  - `namespace` = net.agora.app — the Kotlin package, which must be a legal
-     *    identifier chain. `net.in.agora` is not: `in` is a hard keyword, so
-     *    `package net.in.agora` does not compile.
-     *  - `applicationId` = net.in.agora — the shipped identity. It is what
-     *    google-services.json, the Google OAuth Android client and
-     *    /.well-known/assetlinks.json are all registered against.
+     * They were split for a while (`applicationId = net.in.agora`) to match an
+     * older registration. That is a legitimate AGP configuration, but every
+     * split identity is a second thing to keep in sync across Gradle, Firebase,
+     * OAuth, App Links and Supabase — and it produced exactly that class of
+     * drift. Unified again: `net.agora.app` everywhere.
      *
-     * AGP treats them independently on purpose: namespace controls R,
-     * BuildConfig and relative manifest class names, applicationId controls the
-     * device/Play/Firebase identity.
+     * `net.in.agora` can never be the namespace: `in` is a hard keyword, so
+     * `package net.in.agora` does not compile. Since the namespace must be
+     * `net.agora.app`, the applicationId follows it.
      */
     @Test
-    fun namespaceIsTheLegalPackageAndApplicationIdIsTheShippedIdentity() {
+    fun namespaceAndApplicationIdAreTheSameUnifiedIdentity() {
         assertEquals("net.agora.app", gradleValue("namespace"))
-        assertEquals("net.in.agora", gradleValue("applicationId"))
+        assertEquals("net.agora.app", gradleValue("applicationId"))
     }
 
     /**
@@ -133,9 +139,15 @@ class PackageDeclarationContractTest {
             .toSet()
 
         assertTrue(
-            "google-services.json declares no client for applicationId=" +
-                "\"$applicationId\" (it has $declared). The google-services plugin " +
-                "fails the build until a matching Firebase Android app exists.",
+            "app/google-services.json declares no client for applicationId=\"$applicationId\" " +
+                "(it has $declared).\n" +
+                "The google-services Gradle plugin aborts with 'No matching client found " +
+                "for package name' until a matching Firebase Android app exists.\n" +
+                "Fix: Firebase console -> Project settings -> Your apps -> Add app -> " +
+                "Android -> package name \"$applicationId\" -> register -> download " +
+                "google-services.json -> replace app/google-services.json.\n" +
+                "Do NOT hand-edit the file: the plugin verifies its signature and the " +
+                "console is the source of truth for the API keys.",
             applicationId in declared
         )
     }
@@ -158,7 +170,7 @@ class PackageDeclarationContractTest {
         assertEquals(
             "A package segment is a Kotlin hard keyword; `package a.in.b` does not " +
                 "compile. This is why the namespace is net.agora.app while the " +
-                "applicationId is net.in.agora — see docs/engineering-notes.md §16.",
+                "applicationId is net.agora.app — see docs/engineering-notes.md §17.",
             emptyList<String>(),
             offenders
         )
@@ -196,8 +208,10 @@ class PackageDeclarationContractTest {
 
     @Test
     fun retiredIdentitiesDoNotAppearInSources() {
-        // net.in.agora is NOT retired: it is the applicationId. Only the
-        // template package and the old auth domains are gone.
+        // net.in.agora is RETIRED as an identity (it is no longer the
+        // applicationId) but it is still an accepted INBOUND deep-link scheme,
+        // so it legitimately appears in the manifest and the router tests.
+        // Only the template package and the old auth domains are fully gone.
         val retired = listOf("com.example.agora", "auth-agora.info", "auth-agora.online")
         val hits = mutableListOf<String>()
         for (file in kotlinSources()) {
@@ -214,23 +228,32 @@ class PackageDeclarationContractTest {
             }
         }
         assertEquals(
-            "A retired identity is still referenced. Only agora.in.net (web), " +
-                "net.in.agora (applicationId) and net.agora.app (namespace) are live.",
+            "A retired identity is still referenced. Only agora.in.net (web) and " +
+                "net.agora.app (namespace + applicationId) are live identities.",
             emptyList<String>(),
             hits
         )
     }
 
     /**
-     * All three custom schemes must be declared. `net.in.agora` is the
-     * applicationId (intent:// URIs and package-derived links use it),
-     * `net.agora.app` is the namespace (links minted while the two identities
-     * were unified), and `agora` is what the app itself emits.
+     * All three custom schemes must be declared.
+     *
+     *  - `agora`        — the stable public contract, emitted since day one.
+     *  - `net.agora.app`— the unified identity; `intent://` URIs and anything
+     *                     derived from the package name use it. This is the one
+     *                     that MUST be present for the new identity to work.
+     *  - `net.in.agora` — legacy inbound only. Builds before the unification
+     *                     shipped under that applicationId, so notifications
+     *                     they delivered carry it. Accepting it keeps those
+     *                     taps working; nothing emits it any more.
+     *
+     * If the legacy scheme is ever dropped, delete it here AND the matching
+     * assertion in DeepLinkRouterTest at the same time.
      */
     @Test
     fun everyLiveSchemeIsDeclared() {
         val manifest = File(repoRoot(), "app/src/main/AndroidManifest.xml").readText()
-        listOf("agora", "net.in.agora", "net.agora.app").forEach { scheme ->
+        listOf("agora", "net.agora.app", "net.in.agora").forEach { scheme ->
             assertTrue(
                 "The manifest must declare android:scheme=\"$scheme\"",
                 manifest.contains("android:scheme=\"$scheme\"")

@@ -118,18 +118,22 @@ SELECT vault.create_secret('$escapedWebhookSecret', 'webhook_secret', 'Agora dat
     $authConfig = @{
         site_url                    = $ProductionSiteUrl
         # agora://                    -> what the app itself emits (post links and
-        #                                 auth callbacks).
-        # net.in.agora://             -> the shipped applicationId; intent:// URIs
-        #                                 and package-derived links use this form.
-        # net.agora.app://            -> the Kotlin namespace; only links minted
-        #                                 while the two identities were unified.
+        #                                 auth callbacks). Stable since day one.
+        # net.agora.app://            -> the applicationId AND namespace (one
+        #                                 identity, docs §17); intent:// URIs and
+        #                                 package-derived links use this form.
+        # net.in.agora://             -> LEGACY INBOUND ONLY. Builds before the
+        #                                 unification shipped under this
+        #                                 applicationId. Kept in the allow-list so
+        #                                 a redirect already in an email still
+        #                                 lands; nothing emits it any more.
         # https://agora.in.net        -> App Links + browser redirects. The host
         #                                 must match AndroidManifest.xml's
         #                                 <data android:host> and
         #                                 DeepLinkRouter.WEB_HOST.
         # All four are declared in AndroidManifest.xml and accepted by
         # DeepLinkRouter.CUSTOM_SCHEMES / WEB_HOSTS.
-        uri_allow_list              = @('agora://**', 'net.in.agora://**', 'net.agora.app://**', 'https://agora.in.net/**')
+        uri_allow_list              = @('agora://**', 'net.agora.app://**', 'net.in.agora://**', 'https://agora.in.net/**')
         external_google_enabled     = $true
         external_google_client_id   = $GoogleClientId
         external_google_secret      = $GoogleClientSecret

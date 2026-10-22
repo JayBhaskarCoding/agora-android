@@ -15,9 +15,14 @@
         - Public web origin is agora.in.net (App Links + Supabase redirects).
           It is intentionally independent of the applicationId.
         - auth-agora.info / .online, com.example.agora and net.in.agora are all
-          RETIRED: only agora.in.net is a public origin and only net.agora.app
-          is an app identity. Old links are redirected (301) at the domain
-          level, not routed by the app.
+          RETIRED as APP IDENTITIES: only agora.in.net is a public origin and
+          only net.agora.app is the app identity (namespace AND applicationId,
+          docs §17). Old web links are redirected (301) at the domain level,
+          not routed by the app.
+        - `net.in.agora://` survives ONLY as an accepted INBOUND custom scheme
+          (see the custom-scheme filter below) so links and notifications
+          minted by builds that shipped under the old applicationId still
+          open the app instead of dead-ending. The app never emits it.
         - exported: MainActivity is the only launcher/deep-link entry point and is
           exported on purpose; the FCM service is exported="false" because only
           Google Play Services may bind to it.
@@ -67,31 +72,42 @@
                  CUSTOM-SCHEME FILTER — Supabase Auth callbacks (email OTP,
                  magic link, password recovery) and in-app notifications.
 
-                 THREE schemes are accepted, one per origin: `agora://` is what
-                 the app itself emits everywhere (FCM payloads, notification
-                 intents, NavHost deep links, every link ever sent to a user);
-                 `net.in.agora://` is derived from the shipped applicationId and
-                 is what `intent://` URIs and Supabase templates built from the
-                 package name use; `net.agora.app://` is the Kotlin namespace,
-                 kept because links minted while the two identities were unified
-                 are still in the wild. Declaring all three means neither an old
-                 notification nor a new browser redirect dead-ends.
+                 THREE schemes are accepted:
+
+                   `agora`         — what the app emits for its own links
+                                     (FCM payloads, notification intents,
+                                     NavHost deep links, every share link).
+                                     Stable since the first release.
+                   `net.agora.app` — the applicationId. `intent://` URIs and
+                                     anything derived from the package name
+                                     (Supabase templates, ad SDKs, QR codes
+                                     generated from the package) use this form.
+                   `net.in.agora`  — LEGACY INBOUND ONLY. Builds up to and
+                                     including the identity unification shipped
+                                     under this applicationId, so links and
+                                     notifications they minted use it. The app
+                                     must keep accepting those or millions of
+                                     already-delivered notifications would
+                                     dead-end. Nothing emits it any more.
 
                  Whatever scheme is used MUST appear in the Supabase dashboard →
                  Authentication → URL Configuration → Redirect URLs;
-                 backend/setup_agora_config.ps1 writes both.
+                 backend/setup_agora_config.ps1 writes all of them.
                  ═══════════════════════════════════════════════════════════ -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="agora" />
-                <!-- The shipped applicationId (net.in.agora). intent:// URIs and
-                     anything built from the package name use this form. -->
-                <data android:scheme="net.in.agora" />
-                <!-- The Kotlin namespace. Kept because links minted while the
-                     two identities were unified are still in circulation. -->
+                <!-- The applicationId and namespace (one identity, docs §17).
+                     intent:// URIs and anything built from the package name
+                     use this form. -->
                 <data android:scheme="net.agora.app" />
+                <!-- LEGACY INBOUND ONLY: the applicationId of every build up to
+                     the unification. Never emitted, only accepted, so
+                     previously delivered links keep working. Safe to delete
+                     once no such link can reach a user. -->
+                <data android:scheme="net.in.agora" />
             </intent-filter>
 
             <!-- ═══════════════════════════════════════════════════════════
@@ -109,11 +125,12 @@
 
                  ⚠️ autoVerify requires
                    https://agora.in.net/.well-known/assetlinks.json
-                 to list `net.in.agora` (the applicationId — NOT the Kotlin
-                 namespace, which is net.agora.app) with the
+                 to list `net.agora.app` — the applicationId — with the
                  SHA-256 of the certificate that signed the INSTALLED apk (Play
-                 App Signing key for store builds). Without it Android opens
-                 the browser instead of the app.
+                 App Signing key for store builds). The file MUST be republished
+                 when the applicationId changes: while it still names the old
+                 package, Android silently opens the browser instead of the app.
+                 Without it Android opens the browser instead of the app.
 
                  ⚠️ Exactly ONE host here. Domain verification is per-filter,
                  and on Android 8–11 a single unverifiable host in an

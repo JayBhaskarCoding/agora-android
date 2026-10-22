@@ -1635,3 +1635,98 @@ too: `when (handle)` in `AgoraImageCropper` (subject is `Int`) and
 Kotlin only demands exhaustiveness for enum, sealed, `Boolean` and nullable
 subjects — **not** for `Int` — so name-based matching alone would have produced
 noise forever.
+
+---
+
+## 17. Identity unification: `net.agora.app` for namespace **and** applicationId
+
+### What changed and why
+
+`applicationId` is `net.agora.app` again. `namespace` was already
+`net.agora.app`. One identity, everywhere.
+
+This **restores the decision recorded in §9**, which had been documented as
+"one identity, and it has to be a legal Kotlin package". During the §16
+reconciliation the two were split — `namespace = net.agora.app`,
+`applicationId = net.in.agora` — to match the older registration that
+`google-services.json` and the OAuth client already carried. That split was
+internally consistent but expensive: every identity was a second value to keep
+in sync across Gradle, Firebase, Google Cloud OAuth, Digital Asset Links, the
+Supabase redirect allow-list, ad/QR links minted from the package name, and the
+contract tests. It bought compatibility with one external registration and
+charged for it in drift surface.
+
+The constraint that decides the spelling has not changed and cannot be changed:
+
+> `net.in.agora` can **never** be the namespace. `in` is a hard keyword in
+> Kotlin, so `package net.in.agora` is a syntax error, as is every
+> `import net.in.agora.…`. Java accepts it; Kotlin does not.
+
+Since the namespace is immovable at `net.agora.app`, unifying the applicationId
+onto the same string is the only self-consistent option.
+
+### What was verified rather than changed
+
+The source tree was **already** 100 % `net/agora/app`
+
+| Path | Files |
+|---|---|
+| `app/src/main/java/net/agora/app/` | present, all sources |
+| `app/src/test/java/net/agora/app/` | present, all tests |
+| `app/src/androidTest/java/net/agora/app/` | present |
+| any `net/in/agora/` directory | **0** |
+
+So step 2 of the migration was an audit, not a move: there were no package
+headers, imports, or paths to relocate. Likewise every `Context`/authority
+reference already derives from `BuildConfig`/`applicationId` or the namespace;
+no hardcoded package string needed rewriting outside the files listed below.
+
+### The one deviation, stated explicitly
+
+`net.in.agora` survives as an **accepted inbound deep-link scheme**, and only
+that.
+
+Every build up to this unification shipped with `applicationId = net.in.agora`,
+so notifications and share links those builds already delivered carry
+`net.in.agora://…`. Dropping the scheme would turn every one of those taps into
+a dead end on the feed with no error. The app therefore:
+
+* **accepts** `net.in.agora://` (manifest `<data>` + `DeepLinkRouter.CUSTOM_SCHEMES`),
+* **never emits** it — every generated link uses `agora://` or
+  `https://agora.in.net/…`,
+* declares it in the Supabase redirect allow-list so already-sent emails still
+  resolve.
+
+It is not an identity, it does not appear in Gradle, Firebase, OAuth or
+`assetlinks.json`, and removing it is a two-line change (the manifest `<data>`
+and the `CUSTOM_SCHEMES` entry) once no such link can reach a user. Tests pin
+both directions: `applicationIdSchemeResolvesThePostId` for the canonical form
+and `legacyApplicationIdSchemeStillResolvesThePostId` for compatibility.
+
+### Three external preconditions this repository cannot satisfy
+
+The code is consistent; the **outside world** has to follow. Until it does, the
+build and two runtime features fail — loudly, which is the point:
+
+| # | Precondition | Symptom if unmet |
+|---|---|---|
+| 1 | `app/google-services.json` needs a client for `net.agora.app` | `processDebugGoogleServices` aborts: *"No matching client found for package name 'net.agora.app'"*. The file currently declares only `com.example.agora` and `net.in.agora`. |
+| 2 | Google Cloud OAuth **Android** client for `net.agora.app` + signing SHA-1 | Credential Manager returns `[28444]` / status `16` / `DEVELOPER_ERROR` after the account picker. |
+| 3 | `https://agora.in.net/.well-known/assetlinks.json` republished with `package_name: net.agora.app` | Every `https://agora.in.net/post/…` App Link silently opens the browser instead of the app. |
+
+`google-services.json` must be **downloaded from the Firebase console**, never
+hand-edited: the plugin verifies the file and the console is the source of truth
+for the API keys. `PackageDeclarationContractTest.googleServicesJsonDeclaresTheApplicationId`
+therefore **fails until step 1 is done**. That failure is deliberate — it is the
+accurate state of the repository, and it names the exact fix. Deleting or
+skipping that test would hide a precondition that otherwise only surfaces as a
+cryptic Gradle error.
+
+### Consequence that is not a bug
+
+Changing `applicationId` makes this a **different app** to Play and to Android.
+A build already installed as `net.in.agora` cannot be upgraded in place: it
+installs side by side, keeps its own data, and a store listing under the old id
+does not transfer. If the intent is to migrate an existing install base rather
+than publish a new listing, the applicationId must keep matching the store
+record — which is exactly what the previous split was buying.

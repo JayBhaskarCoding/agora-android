@@ -165,33 +165,40 @@ class DeepLinkRouterTest {
     }
 
     @Test
-    fun shippedApplicationIdSchemeResolvesThePostId() {
-        // `net.in.agora` is the applicationId, so an intent:// URI built from
-        // the package name (or a notification minted by an older build) uses
-        // this scheme. Declared in the manifest, allow-listed in Supabase.
-        val link = DeepLinkRouter.parseUri("net.in.agora://post/$postId")
+    fun applicationIdSchemeResolvesThePostId() {
+        // `net.agora.app` is BOTH the applicationId and the Kotlin namespace
+        // (one identity, docs §17), so an intent:// URI built from the package
+        // name uses this scheme. Declared in the manifest, allow-listed in
+        // Supabase.
+        val link = DeepLinkRouter.parseUri("net.agora.app://post/$postId")
         assertEquals(postId, link!!.postId)
 
         // Browsers drop the authority when normalising an unknown scheme.
-        val emptyAuthority = DeepLinkRouter.parseUri("net.in.agora:///post/$postId")
+        val emptyAuthority = DeepLinkRouter.parseUri("net.agora.app:///post/$postId")
         assertEquals(postId, emptyAuthority!!.postId)
-    }
-
-    @Test
-    fun namespaceSchemeStillResolvesThePostId() {
-        // `net.agora.app` is the Kotlin namespace; links minted while the two
-        // identities were unified are still in the wild and must keep working.
-        val link = DeepLinkRouter.parseUri("net.agora.app://post/$postId")
-        assertEquals(postId, link!!.postId)
     }
 
     @Test
     fun applicationIdSchemeFromNotificationIsAccepted() {
         val link = DeepLinkRouter.parseUri(
-            "net.in.agora://post/$postId?commentId=0b3f0f8e-1e0c-4a4e-9a1e-0b2c3d4e5f60"
+            "net.agora.app://post/$postId?commentId=0b3f0f8e-1e0c-4a4e-9a1e-0b2c3d4e5f60"
         )
         assertEquals(postId, link!!.postId)
         assertEquals("0b3f0f8e-1e0c-4a4e-9a1e-0b2c3d4e5f60", link.commentId)
+    }
+
+    @Test
+    fun legacyApplicationIdSchemeStillResolvesThePostId() {
+        // Builds up to the identity unification shipped as `net.in.agora`, so
+        // notifications they already delivered carry that scheme. It is
+        // accepted (never emitted) so those taps do not dead-end on the feed.
+        // Safe to delete this test together with the manifest entry once no
+        // such link can reach a user.
+        val link = DeepLinkRouter.parseUri("net.in.agora://post/$postId")
+        assertEquals(postId, link!!.postId)
+
+        val emptyAuthority = DeepLinkRouter.parseUri("net.in.agora:///post/$postId")
+        assertEquals(postId, emptyAuthority!!.postId)
     }
 
     // ── Legacy query fallback ───────────────────────────────────────────────

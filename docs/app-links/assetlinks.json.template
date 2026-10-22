@@ -3,7 +3,7 @@
     "relation": ["delegate_permission/common.handle_all_urls"],
     "target": {
       "namespace": "android_app",
-      "package_name": "net.in.agora",
+      "package_name": "net.agora.app",
       "sha256_cert_fingerprints": [
         "REPLACE_WITH_PLAY_APP_SIGNING_SHA256",
         "REPLACE_WITH_UPLOAD_KEY_SHA256",

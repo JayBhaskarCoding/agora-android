@@ -32,8 +32,8 @@ import java.util.UUID
  * http://agora.in.net/post/{postId}                    defensive (see below)
  * agora://post/{postId}[?commentId=…]                  notifications, in-app
  * agora:///post/{postId}                               empty-authority variant
- * net.in.agora://post/{postId}                         applicationId-derived
- * net.agora.app://post/{postId}                        namespace-derived
+ * net.agora.app://post/{postId}[?commentId=…]          applicationId + namespace
+ * net.in.agora://post/{postId}                         legacy inbound only
  * <any of the above>?post_id={postId}                  legacy query fallback
  * Intent extras post_id / comment_id                   FCM data payload
  * ```
@@ -84,13 +84,18 @@ object DeepLinkRouter {
      *
      * Three, for one reason each:
      *  - `agora`        — what the app itself emits (FCM payloads, notification
-     *                     intents, NavHost deep links, every link ever sent);
-     *  - `net.in.agora` — the shipped applicationId. Hand-built `intent://` URIs
-     *                     and anything generated from the package name use it;
-     *  - `net.agora.app`— the Kotlin namespace, kept because links minted while
-     *                     the two identities were unified are still in the wild.
+     *                     intents, NavHost deep links, every link ever sent).
+     *                     The stable public contract; never removed.
+     *  - `net.agora.app`— the applicationId, which is also the Kotlin namespace
+     *                     (docs §17). Hand-built `intent://` URIs, QR codes and
+     *                     anything generated from the package name use it.
+     *  - `net.in.agora` — LEGACY INBOUND ONLY. Every build up to the identity
+     *                     unification shipped under this applicationId, so links
+     *                     and notifications they already delivered carry it.
+     *                     The app accepts but never emits it; removing it would
+     *                     turn already-sent notifications into dead ends.
      */
-    private val CUSTOM_SCHEMES = setOf("agora", "net.in.agora", "net.agora.app")
+    private val CUSTOM_SCHEMES = setOf("agora", "net.agora.app", "net.in.agora")
 
     /** `https://agora.in.net/post/{id}` — canonical. */
     private const val POST_SEGMENT = "post"

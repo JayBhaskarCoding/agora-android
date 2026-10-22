@@ -110,9 +110,9 @@ class DeepLinkIntentTest {
             "https://auth-agora.info/post/$postId",   // retired -> both null, must agree
             "agora://post/$postId",
             "agora:///post/$postId",
-            "net.in.agora://post/$postId",
-            "net.in.agora://post/$postId?comment_id=$commentId",
+            "net.agora.app://post/$postId",
             "net.agora.app://post/$postId?comment_id=$commentId",
+            "net.in.agora://post/$postId?comment_id=$commentId",   // legacy inbound
             "https://agora.in.net/auth-callback?code=abc",
             "https://agora.in.net/post/not-a-uuid",
             "https://evil.example/post/$postId"

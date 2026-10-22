@@ -8,7 +8,7 @@ app never sees the intent — no crash, no logcat entry, nothing to debug.
 |---|---|---|
 | 1 | An exported activity declares `https` + `host="agora.in.net"` + `pathPrefix="/post/"` with `autoVerify="true"` | `app/src/main/AndroidManifest.xml` ✅ |
 | 2 | `https://agora.in.net/.well-known/assetlinks.json` is served over HTTPS, `200`, `Content-Type: application/json`, **no redirects** | this folder — ⬜ not deployed yet |
-| 3 | That file lists `net.in.agora` — the **applicationId**, not the Kotlin namespace — with the SHA-256 of the certificate that signed the **installed** APK | ⬜ |
+| 3 | That file lists `net.agora.app` — the **applicationId**, which is also the Kotlin namespace — with the SHA-256 of the certificate that signed the **installed** APK | ⬜ |
 | 4 | The user (or Play) has not disabled link handling for the app | Play Console / device settings |
 
 ## Deploy the file
@@ -41,20 +41,25 @@ cause of "it works in debug but not from Play".
 ```bash
 # What Android thinks (also logged by the app in debug builds: adb logcat -s DeepLink)
 curl -sI https://agora.in.net/.well-known/assetlinks.json
-adb shell pm get-app-links net.in.agora      # expect "agora.in.net: verified"
-adb shell pm set-app-links --package net.in.agora 2 agora.in.net   # force re-check
+adb shell pm get-app-links net.agora.app      # expect "agora.in.net: verified"
+adb shell pm set-app-links --package net.agora.app 2 agora.in.net   # force re-check
 adb shell am start -a android.intent.action.VIEW -d "https://agora.in.net/post/0c298d8b-c2f0-4f38-8585-7199f41c7769"
 ```
 
 ## Which package name to use in every command
 
 `package_name` in `assetlinks.json` and every `adb` command above must be the
-**applicationId** — `net.in.agora` — because that is what the APK manifest and
-Play report. The Kotlin `namespace` (`net.agora.app`) never appears on the
-device; it only names the source tree, `R` and `BuildConfig`. Mixing the two up
-produces a file that verifies nothing: Android compares `package_name` against
-the installed package id, sees a mismatch, and silently leaves the links
-unverified.
+**applicationId** — `net.agora.app` — because that is what the APK manifest and
+Play report. Since docs §17 the namespace and the applicationId are the same
+string, so there is no longer a second value to confuse it with; before that
+unification the file had to name `net.in.agora` and getting it wrong produced a
+statement that verified nothing (Android compares `package_name` against the
+installed package id, sees a mismatch, and silently leaves the links
+unverified).
+
+⚠️ The deployed file must be **republished** whenever the applicationId changes.
+A stale `assetlinks.json` naming the previous package does not error — App Links
+just stop verifying and every `https://agora.in.net/post/…` opens the browser.
 
 ## Do not add a second host casually
 
