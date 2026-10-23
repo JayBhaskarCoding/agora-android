@@ -9,6 +9,7 @@ import net.agora.app.utils.SessionContinuity
 import net.agora.app.utils.PasswordPolicy
 import net.agora.app.utils.PasswordResetRouting
 import net.agora.app.utils.OtpCooldown
+import net.agora.app.utils.OnboardingRouting
 import android.util.Log
 import android.util.Patterns
 import androidx.credentials.CredentialManager
@@ -27,6 +28,7 @@ import net.agora.app.BuildConfig
 import net.agora.app.data.EmailOtpGateway
 import net.agora.app.data.EmailVerificationFlow
 import net.agora.app.data.DeviceIdProvider
+import net.agora.app.data.OnboardingStateStore
 import net.agora.app.data.RecentVerificationStore
 import net.agora.app.data.supabaseClient
 import net.agora.app.model.Profile
@@ -238,6 +240,15 @@ class AuthViewModel : ViewModel() {
 
     private var recoveryEmail: String = ""
 
+    /* Two attempts with a short gap: a Postgrest read issued while the restored
+     * JWT is still being attached returns EMPTY (RLS filters on auth.uid()) rather
+     * than failing, and believing the first empty answer is what put completed
+     * accounts back on Create Your Profile. Runs behind the splash. */
+    private companion object {
+        const val PROFILE_READ_ATTEMPTS = 2
+        const val PROFILE_RETRY_DELAY_MS = 300L
+    }
+
     private val _isOnboarding = MutableStateFlow(false)
     val isOnboarding: StateFlow<Boolean> = _isOnboarding.asStateFlow()
 
@@ -372,61 +383,103 @@ class AuthViewModel : ViewModel() {
     }
 
     /**
-     * Single source of truth for "is this account still in an onboarding
-     * state?". Reads the row persisted by [saveOnboardingDetails] from the
-     * `profiles` table — auth user_metadata is NOT authoritative (database
-     * updates never touch it, and Google sign-ups create a trigger-made row
-     * with NULLs). Logs the full verdict so re-login loops can be diagnosed
-     * from Logcat alone (tag: AuthDiagnostics).
+     * Asks `public.profiles` what state this account is in, and classifies it.
+     *
+     * ## Why this is a suspend function returning a verdict, not a boolean
+     *
+     * It replaced `isProfileIncomplete(userId, profile, source): Boolean`, whose
+     * very shape forced the bug: a `Boolean` has no way to say **"I could not
+     * ask"**, so "no row", "the read failed" and "the row is a placeholder" all
+     * collapsed into `true`, and `true` meant both "send to onboarding" **and**
+     * "this account is abandoned, delete it".
+     *
+     * ## The retry
+     *
+     * A Postgrest read issued while the restored JWT is still being attached
+     * returns **zero rows with no error** — RLS filters on `auth.uid()`, which is
+     * momentarily null. Believing that first empty answer is how a completed
+     * account was re-derived as "new" on a cold start. One silent retry after a
+     * short gap covers the attach window; it runs behind the splash spinner, so the
+     * user never sees it.
+     *
+     * A genuinely thrown read (timeout, 401 mid-refresh) is likewise retried once;
+     * if it still fails the verdict is [OnboardingRouting.Verdict.UNKNOWN], which
+     * can neither onboard nor delete.
+     *
+     * @return never throws — a failed read is a verdict, not an exception, so no
+     *   caller can turn a network blip into a sign-out.
      */
-    private fun isProfileIncomplete(userId: String, profile: Profile?, source: String): Boolean {
-        // 🌟 gender and dob are OPTIONAL: users routinely skip them in onboarding and
-        //    saveOnboardingDetails persists NULL. They must NOT mark an otherwise
-        //    finished profile as incomplete — that trapped returning users in a
-        //    re-login onboarding loop (cold start even wiped their account).
-        //
-        //    The remaining checks only ever match placeholder rows:
-        //     - email signup: first_name="Pending", last_name="User", handle="user_xxxx"
-        //     - Google signup (trigger-made row before onboarding): first_name/last_name
-        //       NULL and handle NULL -> decoded as null / "user" via the Profile defaults
-        //    Step 1 of the onboarding UI gates on firstName+handle being non-blank, so a
-        //    legitimately completed profile can never fail these checks.
-        val incomplete = profile == null ||
-                profile.firstName.isNullOrBlank() ||
-                profile.firstName == "Pending" ||
-                profile.lastName == "User" ||
-                profile.handle.isBlank() ||
-                profile.handle == "user" ||
-                profile.handle.startsWith("user_")
+    private suspend fun readProfileVerdict(
+        userId: String,
+        source: String
+    ): OnboardingRouting.Verdict = withContext(Dispatchers.IO) {
+        var row: Profile? = null
+        var readFailed = false
 
+        for (attempt in 1..PROFILE_READ_ATTEMPTS) {
+            try {
+                row = supabaseClient.from("profiles")
+                    .select { filter { eq("id", userId) } }
+                    .decodeSingleOrNull<Profile>()
+                readFailed = false
+                if (row != null) break
+                Log.d(
+                    "AuthDiagnostics",
+                    "[$source] profiles read attempt $attempt/$PROFILE_READ_ATTEMPTS returned no row " +
+                        "for user=$userId (session may still be attaching)"
+                )
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                readFailed = true
+                Log.w(
+                    "AuthDiagnostics",
+                    "[$source] profiles read attempt $attempt/$PROFILE_READ_ATTEMPTS FAILED " +
+                        "for user=$userId: ${e.localizedMessage}"
+                )
+            }
+            if (attempt < PROFILE_READ_ATTEMPTS) delay(PROFILE_RETRY_DELAY_MS)
+        }
+
+        /* Evidence from outside the row — the per-user local record and/or the
+         * handle onboarding wrote into user_metadata — is read AFTER the query so
+         * it reflects the same instant the row was judged at. It can only raise
+         * the verdict to COMPLETE (see OnboardingRouting). */
+        val completionEvidence = hasCompletionEvidence(userId)
+        val verdict = OnboardingRouting.verdict(
+            rowPresent = row != null,
+            readFailed = readFailed && row == null,
+            handle = row?.handle,
+            firstName = row?.firstName,
+            completionEvidence = completionEvidence
+        )
         Log.d(
             "AuthDiagnostics",
-            "[$source] currentUser.id=$userId | profiles row=" +
-                (if (profile == null) {
-                    "NULL (no row returned!)"
-                } else {
-                    "firstName=${profile.firstName} lastName=${profile.lastName} " +
-                        "handle=${profile.handle} gender=${profile.gender} dob=${profile.dob} " +
-                        "email=${if (profile.email.isNullOrBlank()) "NULL" else "present"}"
-                }) +
-                " | verdict=${if (incomplete) "INCOMPLETE -> onboarding" else "COMPLETE -> feed"}"
+            "[$source] user=$userId | row=${row != null} | readFailed=${readFailed && row == null} | " +
+                "handle=${row?.handle} | firstName=${row?.firstName} | " +
+                "completionEvidence=$completionEvidence | verdict=$verdict"
         )
-        return incomplete
+        verdict
     }
 
+    /**
+     * Cold-start gate: exactly one run per authenticated session.
+     *
+     * Order of belief, strongest first:
+     *
+     *  1. **This device already recorded a finished onboarding** — go Home, do no
+     *     network work, and above all do not delete anything. This is the path that
+     *     makes a restart deterministic instead of a coin flip on a query.
+     *  2. **The session was created in this run, or verified here recently** — a
+     *     placeholder profile means "onboarding has not run yet", never "abandoned".
+     *  3. **Otherwise read the row** and classify it. Only a verdict of
+     *     [OnboardingRouting.Verdict.NEEDS_ONBOARDING] can reach the cleanup, and
+     *     the cleanup is additionally gated by [OnboardingRouting.mayDeleteAccount].
+     *
+     * Nothing here signs the user out on a failed check. The previous version did,
+     * which made a moment of bad connectivity indistinguishable from a stolen
+     * session.
+     */
     private fun verifyProfileCompleteness(userId: String) {
-        /* ★ ONE-SHOT CLAIM — taken synchronously, before any suspension point.
-         *
-         *   `sessionStatus` replays into a single collector, but a token refresh can
-         *   land while the previous check is still awaiting the network. Setting the
-         *   flag here (rather than inside the launched coroutine) means the second
-         *   emit returns at the guard below instead of starting a duplicate check —
-         *   a duplicate that would wipe an account whose profile is a legitimate
-         *   in-progress placeholder, and would bounce the user out of whatever screen
-         *   they were on.
-         *
-         *   Reset only by [signOut], i.e. exactly on a signed-in -> signed-out
-         *   transition, so a fresh sign-in gets its own single check. */
         if (!SessionContinuity.shouldRunStartupVerification(hasCompletedColdStartCheck)) {
             return
         }
@@ -438,20 +491,30 @@ class AuthViewModel : ViewModel() {
             return
         }
 
-        /* ★ POST-VERIFICATION GUARD — the "verified, then dumped back on Login" bug.
+        /* ★ LOCAL FAST PATH — the fix for "restart sends me back to Create Profile".
          *
-         *   Two situations reach this point with a placeholder profile row and are
-         *   NOT abandoned accounts:
-         *     1. the session was created in this run — in-app OTP, magic link,
-         *        sign-up or login ([sessionCreatedInThisRun]);
-         *     2. the email was verified on this device within
-         *        RecentVerificationStore.GRACE_PERIOD_MS, e.g. the user verified,
-         *        the process was killed and the session is now being restored.
-         *
-         *   Both must RESUME ONBOARDING. Falling through to the abandonment wipe
-         *   below deletes the auth user (delete_abandoned_user() cascades to
-         *   profiles and posts) and signs the user out — which is precisely the
-         *   reported behaviour: verify → back to Login, account gone. */
+         *   A completed onboarding is recorded on this device the moment the
+         *   profile row is confirmed persisted. When that record matches this user
+         *   id, the destination is Home and no query may overrule it: an empty or
+         *   failed read on a cold start is an artefact of the session still being
+         *   attached, not evidence that the account is new. */
+        if (hasCompletionEvidence(userId)) {
+            Log.d(
+                "AuthDiagnostics",
+                "[coldStart] user=$userId has completion evidence " +
+                    "(local=${OnboardingStateStore.isComplete(userId)}, " +
+                    "metadata=${metadataProvesOnboarding()}) -> Home (no wipe, no query)"
+            )
+            // Upgrade evidence into the durable record: a legacy account whose
+            // proof came only from metadata gets pinned to this device now, so the
+            // next start needs neither a query nor a JWT decode.
+            OnboardingStateStore.markComplete(userId)
+            _isOnboarding.value = false
+            _isCheckingProfileCompleteness.value = false
+            sendNav(AuthNavTarget.Home)
+            return
+        }
+
         if (sessionCreatedInThisRun || RecentVerificationStore.isRecent(userId)) {
             Log.d(
                 "AuthDiagnostics",
@@ -466,32 +529,62 @@ class AuthViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 _isCheckingProfileCompleteness.value = true
-                Log.d("AuthDiagnostics", "[coldStart] querying profiles by id for currentUser.id=$userId")
+                val verdict = readProfileVerdict(userId, "coldStart")
+                val completionEvidence = hasCompletionEvidence(userId)
 
-                val profile = withContext(Dispatchers.IO) {
-                    supabaseClient.from("profiles")
-                        .select { filter { eq("id", userId) } }
-                        .decodeSingleOrNull<Profile>()
-                }
-
-                if (isProfileIncomplete(userId, profile, "coldStart")) {
-                    // ABANDONMENT WIPE: Cold start detected an abandoned session from a previous run
-                    Log.w("AuthDiagnostics", "[coldStart] incomplete profile — wiping abandoned user=$userId")
+                if (OnboardingRouting.mayDeleteAccount(
+                        verdict = verdict,
+                        completionEvidence = completionEvidence,
+                        recentlyVerified = RecentVerificationStore.isRecent(userId),
+                        sessionCreatedInThisRun = sessionCreatedInThisRun
+                    )
+                ) {
+                    Log.w(
+                        "AuthDiagnostics",
+                        "[coldStart] confirmed abandoned placeholder profile — wiping user=$userId"
+                    )
                     try {
                         supabaseClient.postgrest.rpc("delete_abandoned_user")
                     } catch (_: Exception) {}
                     signOut()
-                } else {
-                    _isOnboarding.value = false
+                    return@launch
                 }
+
+                if (verdict == OnboardingRouting.Verdict.COMPLETE) {
+                    // Confirmed by the database: remember it so the next start does
+                    // not have to ask at all.
+                    OnboardingStateStore.markComplete(userId)
+                }
+
+                val destination = OnboardingRouting.destination(completionEvidence, verdict)
+                _isOnboarding.value = destination == OnboardingRouting.Destination.ONBOARDING
+                if (_isOnboarding.value) {
+                    // Shield the account across process death: a cold start before
+                    // onboarding finishes must resume, never wipe.
+                    RecentVerificationStore.mark(userId)
+                }
+                sendNav(
+                    if (_isOnboarding.value) AuthNavTarget.Onboarding else AuthNavTarget.Home
+                )
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
+                /* ★ NEVER SIGN OUT HERE.
+                 *   This catch used to call signOut() "to be safe", which turned a
+                 *   timeout — or one 401 while the token refreshed — into a logout.
+                 *   Fall back to what this device knows: Home if onboarding is
+                 *   recorded complete, otherwise resume onboarding. Both preserve
+                 *   the account. */
+                val completionEvidence = hasCompletionEvidence(userId)
                 Log.e(
                     "AuthDiagnostics",
-                    "[coldStart] profile check FAILED for user=$userId (network/RLS?) — signing out to be safe: ${e.localizedMessage}",
+                    "[coldStart] profile check FAILED for user=$userId — " +
+                        "keeping the session, completionEvidence=$completionEvidence: ${e.localizedMessage}",
                     e
                 )
-                signOut()
+                _isOnboarding.value = !completionEvidence
+                sendNav(
+                    if (completionEvidence) AuthNavTarget.Home else AuthNavTarget.Onboarding
+                )
             } finally {
                 _isCheckingProfileCompleteness.value = false
             }
@@ -504,49 +597,105 @@ class AuthViewModel : ViewModel() {
      * [AuthNavTarget] so the shell navigates **explicitly** after a successful
      * verification instead of waiting for reactive state to settle.
      *
-     * Unlike [verifyProfileCompleteness] this NEVER wipes the account: the session
-     * was just established (or the email was verified on this device moments ago),
-     * so an incomplete profile means "onboarding has not run yet" — not
-     * "abandoned". A transient read failure also defaults to onboarding rather
-     * than destroying a live session.
+     * This NEVER wipes the account: the session was just established (or the email
+     * was verified on this device moments ago), so an incomplete profile means
+     * "onboarding has not run yet" — not "abandoned". A read that fails, or a
+     * profile this device already recorded as complete, resolves to Home.
      */
     private fun resolveAfterAuthentication(userId: String, source: String) {
         viewModelScope.launch {
             try {
                 _isCheckingProfileCompleteness.value = true
                 hasCompletedColdStartCheck = true
-                Log.d("AuthDiagnostics", "[$source] querying profiles by id for currentUser.id=$userId")
 
-                val profile = withContext(Dispatchers.IO) {
-                    supabaseClient.from("profiles")
-                        .select { filter { eq("id", userId) } }
-                        .decodeSingleOrNull<Profile>()
+                /* The local record outranks the query here for the same reason it
+                 * does at cold start: `sessionStatus` re-emits `Authenticated` on
+                 * token refresh and after `updateUser`, and re-deriving "is this a
+                 * new user?" from the network on every one of those is how a
+                 * finished account ends up back on Create Your Profile. */
+                if (hasCompletionEvidence(userId)) {
+                    Log.d(
+                        "AuthDiagnostics",
+                        "[$source] user=$userId has completion evidence " +
+                            "(local=${OnboardingStateStore.isComplete(userId)}, " +
+                            "metadata=${metadataProvesOnboarding()}) -> Home"
+                    )
+                    OnboardingStateStore.markComplete(userId)
+                    _isOnboarding.value = false
+                    _isCheckingProfileCompleteness.value = false
+                    sendNav(AuthNavTarget.Home)
+                    return@launch
                 }
 
-                val incomplete = isProfileIncomplete(userId, profile, source)
-                _isOnboarding.value = incomplete
+                val verdict = readProfileVerdict(userId, source)
+                val completionEvidence = hasCompletionEvidence(userId)
+
+                if (verdict == OnboardingRouting.Verdict.COMPLETE) {
+                    OnboardingStateStore.markComplete(userId)
+                }
+
+                val destination = OnboardingRouting.destination(completionEvidence, verdict)
+                _isOnboarding.value = destination == OnboardingRouting.Destination.ONBOARDING
                 _isCheckingProfileCompleteness.value = false
 
-                if (incomplete) {
-                    // Shield the account across process death: a cold start before
-                    // onboarding finishes must resume, never wipe.
+                if (_isOnboarding.value) {
+                    // Shield the account across process death.
                     RecentVerificationStore.mark(userId)
                 }
-                sendNav(if (incomplete) AuthNavTarget.Onboarding else AuthNavTarget.Home)
+                sendNav(
+                    if (_isOnboarding.value) AuthNavTarget.Onboarding else AuthNavTarget.Home
+                )
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
+                val completionEvidence = hasCompletionEvidence(userId)
                 Log.e(
                     "AuthDiagnostics",
-                    "[$source] profile check FAILED for user=$userId — defaulting to onboarding " +
-                        "(a live session is never wiped on a transient error): ${e.localizedMessage}",
+                    "[$source] profile resolution FAILED for user=$userId — " +
+                        "completionEvidence=$completionEvidence, keeping the session: ${e.localizedMessage}",
                     e
                 )
-                _isOnboarding.value = true
+                _isOnboarding.value = !completionEvidence
                 _isCheckingProfileCompleteness.value = false
-                RecentVerificationStore.mark(userId)
-                sendNav(AuthNavTarget.Onboarding)
+                if (_isOnboarding.value) RecentVerificationStore.mark(userId)
+                sendNav(
+                    if (completionEvidence) AuthNavTarget.Home else AuthNavTarget.Onboarding
+                )
             }
         }
+    }
+
+    /**
+     * Everything the device already knows about whether onboarding finished for
+     * [userId] — without asking the database.
+     *
+     * Two independent sources, both of which outrank a failed read:
+     *
+     *  1. [OnboardingStateStore] — written the moment a profile write is *verified*
+     *     (and on every confirmed-complete verdict), cleared on sign-out.
+     *  2. `user_metadata.handle` / `username` — written by onboarding itself, so it
+     *     also covers accounts that onboarded on a build that predates the store.
+     *
+     * Kept as one predicate so no call site can accidentally honour only one of
+     * them: the deletion gate, the cold-start fast path and the post-auth resolver
+     * must all see the same evidence.
+     */
+    private fun hasCompletionEvidence(userId: String): Boolean =
+        OnboardingStateStore.isComplete(userId) || metadataProvesOnboarding()
+
+    /**
+     * Reads the "onboarding already ran" flag out of the live session's metadata.
+     *
+     * `currentUserOrNull()` is populated by definition here — every caller is
+     * inside an `Authenticated` branch or a post-sign-in continuation, which is
+     * also why the Google path may reuse it instead of threading its own copy
+     * through.
+     */
+    private fun metadataProvesOnboarding(): Boolean {
+        val metadata = supabaseClient.auth.currentUserOrNull()?.userMetadata ?: return false
+        return OnboardingRouting.metadataProvesOnboarding(
+            handle = metadata.stringOrNull("handle"),
+            username = metadata.stringOrNull("username")
+        )
     }
 
     /** All user-facing failure copy comes from the centralized mapper in
@@ -757,6 +906,15 @@ class AuthViewModel : ViewModel() {
     }
 
     fun finishOnboarding() {
+        /* ★ PERSIST THE COMPLETION, don't just flip a boolean.
+         *
+         *   This is the flag the audit asked about, and until now it did not exist:
+         *   "onboarded" lived only in this ViewModel, so every restart re-derived
+         *   it from the network. It is written here as well as in
+         *   [saveOnboardingDetails] because either path may be the last one the user
+         *   takes before backgrounding the app. */
+        supabaseClient.auth.currentUserOrNull()?.id?.let { OnboardingStateStore.markComplete(it) }
+
         hasCompletedColdStartCheck = true
         _isCheckingProfileCompleteness.value = false
         _isOnboarding.value = false
@@ -1229,7 +1387,20 @@ class AuthViewModel : ViewModel() {
                             }
                         }
 
-                        if (profileQueryFailed) {
+                        /* Same three-way policy as every other entry point. A
+                         * Google sign-in on a device that already recorded a
+                         * completed onboarding cannot be sent back through the
+                         * wizard, and a failed read stays UNKNOWN (Home), never
+                         * "new user". */
+                        val googleVerdict = OnboardingRouting.verdict(
+                            rowPresent = profile != null,
+                            readFailed = profileQueryFailed,
+                            handle = profile?.handle,
+                            firstName = profile?.firstName,
+                            completionEvidence = hasCompletionEvidence(userId)
+                        )
+
+                        if (profileQueryFailed || googleVerdict == OnboardingRouting.Verdict.UNKNOWN) {
                             // Transient failure (network/RLS): do NOT force the user back
                             // through onboarding — treat as an existing account. The cold-start
                             // verifier and the next login will re-check completeness.
@@ -1238,7 +1409,7 @@ class AuthViewModel : ViewModel() {
                             claimDeviceOnNextSession = true
                             startDeviceSession(userId)
                             sendNav(AuthNavTarget.Home)
-                        } else if (isProfileIncomplete(userId, profile, "googleSignIn")) {
+                        } else if (googleVerdict == OnboardingRouting.Verdict.NEEDS_ONBOARDING) {
                             Log.d("GoogleAuth", "New Google user or incomplete profile. Directing to Onboarding...")
                             val metadata = currentUser.userMetadata
                             val fullName = metadata?.get("full_name")?.jsonPrimitive?.content
@@ -1273,6 +1444,7 @@ class AuthViewModel : ViewModel() {
                             sendNav(AuthNavTarget.Onboarding)
                         } else {
                             Log.d("GoogleAuth", "Existing Google user with complete profile. Proceeding to Feed...")
+                            OnboardingStateStore.markComplete(userId)
                             _isOnboarding.value = false
                             // Claim this device (latest login wins) and start conflict listeners.
                             claimDeviceOnNextSession = true
@@ -1736,6 +1908,9 @@ class AuthViewModel : ViewModel() {
         hasCompletedColdStartCheck = false
         sessionCreatedInThisRun = false
         RecentVerificationStore.clear()
+        // The completion record is per-identity: a different account signing in on
+        // this device must not inherit it.
+        OnboardingStateStore.clear()
         _userState.value = null
         _isOnboarding.value = false
         _awaitingOtp.value = false
@@ -1927,36 +2102,30 @@ class AuthViewModel : ViewModel() {
                     }
 
                     // ── STEP 1 (must succeed): persist the profiles row ──────────
-                    // This row — NOT user_metadata — is what verifyProfileCompleteness
+                    // This row — NOT user_metadata — is what readProfileVerdict
                     // and signInWithGoogle read back on the next login to decide
                     // onboarding vs feed. It used to run AFTER updateUser{password},
                     // so any password failure silently skipped it and the account
                     // looped back to onboarding forever.
-                    supabaseClient.from("profiles").update(
-                        {
-                            set("first_name", firstName)
-                            set("last_name", lastName.ifBlank { null })
-                            set("handle", cleanHandle)
-                            set("gender", gender.ifBlank { null })
-                            set("dob", dob.ifBlank { null })
-                            set("email", userEmail)
-                            // 🌟 A brand-new account has NEVER had an explicit
-                            //    password change/reset. Onboarding sets the initial
-                            //    credential, so clear any column default/trigger
-                            //    stamp here; only Change Password / Reset Password
-                            //    are allowed to write this timestamp.
-                            // The explicit type is required: postgrest-kt exposes
-                            // set(String, String?/Int?/Long?/…/T?) overloads, so a
-                            // bare `null` literal is ambiguous.
-                            set("password_changed_at", null as String?)
-                            if (!finalAvatarUrl.isNullOrBlank()) {
-                                set("avatar_url", finalAvatarUrl)
-                            }
-                        }
-                    ) {
-                        filter { eq("id", userId) }
-                    }
-                    Log.d("AuthDiagnostics", "[onboardingSave] profiles row persisted for user=$userId")
+                    //
+                    // ★ AND IT IS VERIFIED, not just issued.
+                    //   `update` is a no-op that reports SUCCESS when its filter
+                    //   matches nothing, so a missing profiles row used to look
+                    //   exactly like a successful save: the wizard advanced, the
+                    //   in-memory flag said "onboarded", Home opened — and the next
+                    //   start re-read the untouched placeholder row and sent the
+                    //   user back to Create Your Profile. See persistProfileRow.
+                    persistProfileRow(
+                        userId = userId,
+                        firstName = firstName,
+                        lastName = lastName.ifBlank { null },
+                        handle = cleanHandle,
+                        gender = gender.ifBlank { null },
+                        dob = dob.ifBlank { null },
+                        email = userEmail,
+                        avatarUrl = finalAvatarUrl
+                    )
+                    Log.d("AuthDiagnostics", "[onboardingSave] profiles row persisted and verified for user=$userId")
 
                     // ── STEP 2: set the real password while authenticated ───────
                     // Enables email/username + password sign-in (Issue 2), especially
@@ -1967,12 +2136,36 @@ class AuthViewModel : ViewModel() {
                     // already met, so log the skip and continue instead of failing
                     // onboarding and forcing them to invent a new password.
                     try {
+                        /* ★ METADATA MUST END UP SHAPED LIKE A GOOGLE USER'S.
+                         *
+                         *   Google identities carry `full_name`/`name` (plus
+                         *   `picture`, `iss`, `sub`, …) in `user_metadata`; email
+                         *   OTP identities carried only `first_name`/`last_name`/
+                         *   `handle`. Anything that reads `session.user.userMetadata`
+                         *   therefore saw two different shapes depending on how the
+                         *   account was created. Both are written here, and the keys
+                         *   already present are copied through first so this can
+                         *   never drop `picture` or anything else the provider set. */
+                        val existingMetadata = supabaseClient.auth.currentUserOrNull()?.userMetadata
+                        val fullName = listOf(firstName, lastName)
+                            .map { it.trim() }
+                            .filter { it.isNotEmpty() }
+                            .joinToString(" ")
+
                         supabaseClient.auth.updateUser {
                             password = realPassword
                             data = buildJsonObject {
+                                // Preserve whatever is already there (Google's
+                                // picture/iss/sub, an older first_name, …).
+                                existingMetadata?.forEach { (key, value) ->
+                                    put(key, value)
+                                }
                                 put("first_name", firstName)
                                 put("last_name", lastName)
                                 put("handle", cleanHandle)
+                                put("username", cleanHandle)
+                                put("full_name", fullName)
+                                put("name", fullName)
                                 put("gender", gender)
                                 put("dob", dob)
                             }
@@ -2002,6 +2195,15 @@ class AuthViewModel : ViewModel() {
                     // Change Password or Reset Password flow.
                 }
 
+                /* ★ RECORD IT LOCALLY THE MOMENT THE ROW IS CONFIRMED.
+                 *
+                 *   Not in [finishOnboarding] only: the user can kill the app on
+                 *   the theme step, and the profile is already complete at this
+                 *   point. Recording here is what makes the *next* start
+                 *   deterministic — it never has to re-derive "did onboarding
+                 *   finish?" from a network read. Cleared on sign-out. */
+                OnboardingStateStore.markComplete(userId)
+
                 // Registration finished on this device: claim the single-device session.
                 claimDeviceOnNextSession = true
                 startDeviceSession(userId)
@@ -2009,7 +2211,7 @@ class AuthViewModel : ViewModel() {
                 onSuccess()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                val message = handleAuthError(e)
+                val message = if (e is ProfileWriteFailed) e.userMessage else handleAuthError(e)
                 Log.e("AuthDiagnostics", "[onboardingSave] FAILED: ${e.localizedMessage}", e)
                 // 🌟 NOT mirrored into _errorMessage: OnboardingFlowScreen presents
                 //    this failure inline via the onResult callback and does not
@@ -2019,4 +2221,159 @@ class AuthViewModel : ViewModel() {
             }
         }
     }
+
+    // =====================================================================================
+    // ONBOARDING PERSISTENCE
+    // =====================================================================================
+
+    /** Thrown when the profiles row could not be confirmed after writing it. */
+    private class ProfileWriteFailed(val userMessage: String) : Exception(userMessage)
+
+    /**
+     * Writes the onboarding profile row and **proves it landed**.
+     *
+     * ## The bug this replaces
+     *
+     * The old code was a single `.update()` with no confirmation. Postgrest treats
+     * an `UPDATE` whose filter matches no rows as a *successful* request, so when
+     * the row was missing — a trigger that did not run, an account created before
+     * the trigger existed, a row removed by the abandonment cleanup — the write
+     * did nothing and onboarding still reported success. The user reached Home
+     * (because the shell trusts the in-memory flag), stayed there for the session,
+     * and was sent back to "Create Your Profile" on the next start, when the
+     * decision was re-derived from that same untouched row.
+     *
+     * ## The sequence
+     *
+     * 1. `UPDATE` — the path every existing account takes; needs only the UPDATE
+     *    policy that already exists.
+     * 2. Read the row back and compare the handle. A verification read that itself
+     *    fails is treated as "probably fine" rather than blocking the user: the
+     *    local completion record now protects them either way.
+     * 3. If the row is genuinely missing, `INSERT` it (allowed by
+     *    `20990101000011_profiles_self_insert.sql`).
+     * 4. Verify again; a silent no-op must never be reported as success.
+     *
+     * @throws ProfileWriteFailed when the write could not be confirmed.
+     */
+    private suspend fun persistProfileRow(
+        userId: String,
+        firstName: String,
+        lastName: String?,
+        handle: String,
+        gender: String?,
+        dob: String?,
+        email: String?,
+        avatarUrl: String?
+    ) {
+        val avatar = avatarUrl?.takeIf { it.isNotBlank() }
+
+        withContext(Dispatchers.IO) {
+            // ── 1. UPDATE ───────────────────────────────────────────────────────
+            supabaseClient.from("profiles").update(
+                {
+                    set("first_name", firstName)
+                    set("last_name", lastName)
+                    set("handle", handle)
+                    set("gender", gender)
+                    set("dob", dob)
+                    set("email", email)
+                    // 🌟 A brand-new account has NEVER had an explicit password
+                    //    change/reset. Onboarding sets the initial credential, so
+                    //    clear any column default/trigger stamp here; only Change
+                    //    Password / Reset Password may write this timestamp.
+                    //    The explicit type is required: postgrest-kt exposes
+                    //    set(String, String?/Int?/Long?/…/T?) overloads, so a bare
+                    //    `null` literal is ambiguous.
+                    set("password_changed_at", null as String?)
+                    if (avatar != null) {
+                        set("avatar_url", avatar)
+                    }
+                }
+            ) {
+                filter { eq("id", userId) }
+            }
+
+            // ── 2. VERIFY ───────────────────────────────────────────────────────
+            when (rowHasHandle(userId, handle)) {
+                true -> {
+                    Log.d("AuthDiagnostics", "[onboardingSave] UPDATE verified for user=$userId")
+                    return@withContext
+                }
+                // Could not check. Do not fail the user over a verification read —
+                // the local completion record covers the next start.
+                null -> {
+                    Log.w(
+                        "AuthDiagnostics",
+                        "[onboardingSave] UPDATE issued but could not be verified for user=$userId — continuing"
+                    )
+                    return@withContext
+                }
+                false -> Unit // fall through: the row is missing, create it
+            }
+
+            // ── 3. INSERT (row was missing; the UPDATE matched nothing) ─────────
+            Log.w(
+                "AuthDiagnostics",
+                "[onboardingSave] no profiles row for user=$userId after UPDATE — inserting"
+            )
+            val values = buildMap<String, String> {
+                put("id", userId)
+                put("first_name", firstName)
+                put("handle", handle)
+                lastName?.let { put("last_name", it) }
+                gender?.let { put("gender", it) }
+                dob?.let { put("dob", it) }
+                email?.let { put("email", it) }
+                avatar?.let { put("avatar_url", it) }
+            }
+            try {
+                supabaseClient.from("profiles").insert(values)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.e(
+                    "AuthDiagnostics",
+                    "[onboardingSave] INSERT failed for user=$userId: ${e.localizedMessage}",
+                    e
+                )
+                throw ProfileWriteFailed(
+                    "We couldn't save your profile. Please check your connection and try again."
+                )
+            }
+
+            // ── 4. VERIFY AGAIN ─────────────────────────────────────────────────
+            when (rowHasHandle(userId, handle)) {
+                false -> throw ProfileWriteFailed(
+                    "We couldn't save your profile. Please check your connection and try again."
+                )
+                else -> Log.d("AuthDiagnostics", "[onboardingSave] INSERT verified for user=$userId")
+            }
+        }
+    }
+
+    /**
+     * True when the stored handle matches [expected]; null when the check itself
+     * could not run.
+     *
+     * The tri-state matters: `false` means "the row is missing or still a
+     * placeholder" and must trigger the insert path, while null means "I don't
+     * know" and must not fail a user whose write probably succeeded.
+     */
+    private suspend fun rowHasHandle(userId: String, expected: String): Boolean? =
+        withContext(Dispatchers.IO) {
+            try {
+                val row = supabaseClient.from("profiles")
+                    .select { filter { eq("id", userId) } }
+                    .decodeSingleOrNull<Profile>()
+                row != null && row.handle?.trim() == expected
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.w(
+                    "AuthDiagnostics",
+                    "[onboardingSave] verification read failed for user=$userId: ${e.localizedMessage}"
+                )
+                null
+            }
+        }
+
 }

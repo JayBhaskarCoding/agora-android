@@ -8,9 +8,21 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class Profile(
     val id: String = "",
-    @SerialName("first_name") val firstName: String? = "User",
+    /**
+     * 🌟 NULL, not `"User"`, when the column is NULL.
+     *
+     *   The old defaults were sentinels: a NULL `handle` decoded to the literal
+     *   `"user"` and a missing `first_name` to `"User"`. Because the onboarding
+     *   check compared against those exact strings, a *serialization default* was
+     *   doing double duty as a real database value — which made "the row is empty"
+     *   and "the user is called User" the same state.
+     *
+     *   Every optional column now decodes to null (`coerceInputValues = true`
+     *   handles explicit JSON nulls for non-nullable types), so null means null.
+     */
+    @SerialName("first_name") val firstName: String? = null,
     @SerialName("last_name") val lastName: String? = null,
-    val handle: String = "user",
+    val handle: String? = null,
     @SerialName("avatar_url") val avatarUrl: String? = null,
     val gender: String? = null,
     val dob: String? = null,

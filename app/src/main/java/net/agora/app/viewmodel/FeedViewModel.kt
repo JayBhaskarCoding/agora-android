@@ -308,7 +308,7 @@ class FeedViewModel : ViewModel() {
 
                 val sortedResults = results.sortedByDescending { profile ->
                     val q = query.lowercase()
-                    val handle = profile.handle.lowercase()
+                    val handle = profile.handle?.lowercase().orEmpty()
                     val firstName = (profile.firstName ?: "").lowercase()
                     val lastName = (profile.lastName ?: "").lowercase()
 

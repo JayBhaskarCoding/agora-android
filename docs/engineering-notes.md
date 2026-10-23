@@ -2615,3 +2615,252 @@ Still unproven here: that this **compiles** (there is no JDK or SDK in this
 environment), and how the fixed-height field feels in the hand — 132 dp is sized to
 show roughly four lines at 15 sp, which is a considered starting point, not a
 measurement.
+
+---
+
+## 23. "I finished onboarding, and the next launch asks me to do it again"
+
+The report was specific and reproducible, and it only happened to manual
+email + OTP accounts:
+
+> Verify the code → Create Your Profile → Create Password → Select Theme → Home,
+> with correct Account Details. Minimise and reopen, or force-close and cold
+> start → **Create Your Profile**. Google sign-in never does this.
+
+The last clause is the important one. Two sign-in paths, one destination, and only
+the one that goes through the wizard breaks. That rules out anything global
+(theme, splash, FCM) and points at the one thing Google has that a fresh OTP
+account does not: a row in `public.profiles` written by the auth trigger rather
+than by the app.
+
+### 23.1 Root cause: three different facts collapsed into one boolean
+
+The decision lived in one function, and its *signature* was the bug:
+
+```kotlin
+private fun isProfileIncomplete(userId: String, profile: Profile?, source: String): Boolean
+```
+
+A `Boolean` has no way to say "I could not ask". So all three of these returned
+`true`:
+
+| what actually happened | what the app concluded |
+|---|---|
+| the row has no usable username | not onboarded — correct |
+| the query matched **no row** | not onboarded |
+| the query **threw** (timeout, 401 mid-refresh) | not onboarded |
+
+and `true` had two consequences, not one:
+
+```kotlin
+if (isProfileIncomplete(...)) {           // cold start
+    supabaseClient.postgrest.rpc("delete_abandoned_user")
+    signOut()
+}
+```
+
+The same boolean that decided "show the wizard" also decided "**delete the
+account**". A moment of bad connectivity at cold start could therefore wipe a
+real account and sign the user out. That is the most destructive possible reading
+of "I don't know", and it was one `catch` block away from happening.
+
+The second half of the trap was that "onboarded" existed in **two places that
+could disagree**: an in-memory flag (`_isOnboarding`) that `finishOnboarding()`
+cleared, and the database row that the cold start re-read. In-session the flag
+won, so Home looked right; after a restart the row won, and the row had not been
+written. Two sources of truth, one of which was never persisted.
+
+### 23.2 The write path was reporting success without writing
+
+`profiles` was written with a bare `.update()` after onboarding. Postgrest treats
+an `UPDATE` whose filter matches **zero rows** as a *successful* request — there is
+no row-count check in the client. So when the row was missing (trigger not fired,
+account predating the trigger, row removed by the cleanup above), the write did
+nothing, returned normally, and the wizard advanced:
+
+- the shell trusts `_isOnboarding` → Home, Account Details correct **for that
+  session** (it reads the same in-memory state);
+- the next start re-derives from the untouched row → "no usable username" →
+  Create Your Profile.
+
+That is the exact reported lifecycle, including why Account Details looked fine.
+
+Worse, the fallback could not even have worked: `public.profiles` had SELECT and
+UPDATE policies and **no INSERT policy at all**. The only writer was the
+`SECURITY DEFINER` trigger.
+
+`persistProfileRow()` replaces the bare update and refuses to report success
+without proof:
+
+1. `UPDATE` (the path every existing account takes; needs only the policy that
+   already existed);
+2. read the row back and compare the handle — `true` return, `null` (the
+   verification read itself failed) log and continue rather than fail the user,
+   `false` continue;
+3. `INSERT` the row if it was genuinely missing — permitted by
+   `20990101000011_profiles_self_insert_policy.sql`
+   (`for insert to authenticated with check (auth.uid() = id)`);
+4. verify again; a silent no-op throws `ProfileWriteFailed`, whose message is
+   shown inline in the wizard.
+
+### 23.3 The policy, extracted so it can be tested
+
+The decision is now `OnboardingRouting` — pure Kotlin, no Compose, no Supabase, no
+Android — returning a verdict instead of a boolean:
+
+```
+verdict(rowPresent, readFailed, handle, firstName, completionEvidence):
+    readFailed                  -> evidence ? COMPLETE : UNKNOWN
+    !rowPresent                 -> evidence ? COMPLETE : NEEDS_ONBOARDING
+    usable handle && usable name-> COMPLETE
+    else                        -> evidence ? COMPLETE : NEEDS_ONBOARDING
+
+destination(evidence, verdict)  = HOME if evidence || verdict == COMPLETE
+
+mayDeleteAccount(verdict, evidence, recentlyVerified, sessionCreatedInThisRun)
+    = verdict == NEEDS_ONBOARDING && !evidence && !recentlyVerified && !sessionCreatedInThisRun
+```
+
+with
+
+```
+evidence = OnboardingStateStore.isComplete(userId)      // this device's record
+        || metadataProvesOnboarding(handle, username)   // proof inside the JWT
+```
+
+The invariant that makes the whole thing safe:
+
+> Outside evidence can only ever **raise** the verdict to `COMPLETE`. It can never
+> produce `NEEDS_ONBOARDING`, and it can never authorise a delete.
+
+So a caller that asks "is this COMPLETE?" gets a conservative `false` when
+nothing is known, and a caller that asks "may I onboard?" must name
+`NEEDS_ONBOARDING` explicitly. `UNKNOWN` — the answer to a failed read with no
+evidence — can neither onboard nor delete; the user stays signed in.
+
+### 23.4 Two sources of evidence, and why both are needed
+
+**`OnboardingStateStore`** (per user id, `agora_onboarding` SharedPreferences) is
+written the moment a profile write is *verified*, and on every confirmed-complete
+verdict; it is cleared on sign-out because it is per-identity. This makes a
+restart deterministic: no network work at all, and — crucially — no delete.
+
+**A handle in `user_metadata`** covers the population this fix cannot otherwise
+reach: accounts that onboarded on a build that predates the store. Their JWT
+carries the `handle`/`username` that onboarding itself wrote via `auth.updateUser`,
+and email sign-up (`signInWith(OTP) { email; createUser }`) writes **no metadata at
+all** — verified, not assumed — so a non-placeholder handle there can only have
+been chosen in the wizard. Google identities carry `full_name`/`name`/`picture`
+and never a handle before onboarding, which is why Google is unaffected in both
+directions.
+
+Whichever evidence fires is upgraded into the durable store, so the next start
+needs neither a query nor a JWT decode.
+
+### 23.5 Metadata parity with Google
+
+Onboarding wrote `first_name`, `last_name`, `handle`, `gender`, `dob` and *replaced*
+`user_metadata`. Google identities carry `full_name`, `name`, `picture`, `iss`,
+`sub`. Anything reading `session.user.userMetadata` therefore saw two shapes
+depending on how the account was created.
+
+`updateUser { data = … }` now copies the existing metadata in first (so `picture`
+and friends can never be dropped by a password update), then writes
+`first_name`, `last_name`, `handle`, `username`, `full_name`, `name` (joined,
+trimmed), `gender`, `dob`. `updateUser { password }` is unchanged in behaviour —
+including the benign `same_password` skip — and it does not reset the session
+listener to onboarding: `hasCompletedColdStartCheck` is claimed at the top of
+`verifyProfileCompleteness`, before any bypass, so the `Authenticated` re-emission
+caused by `updateUser` cannot start a second check.
+
+### 23.6 Serialization no longer invents data
+
+`Profile` decoded a NULL `handle` into the literal string `"user"` and a NULL
+`first_name` into `"User"` (`coerceInputValues = true` turns a null into the
+declared default). Those sentinels were then doing double duty as *data*, which is
+part of why an empty row and a row belonging to a user actually called "User"
+looked the same. Both fields are now `String? = null` and every read site is
+null-safe (`orEmpty()`, `?: ""`, or a deliberate display fallback).
+
+The placeholder rules that remain are for legacy rows only: blank, `"user"`, the
+`user_` prefix, and the first name `"Pending"`. The old code also treated
+`lastName == "User"` as a placeholder; that test was dropped deliberately — it is
+not a value any writer produces, and keeping it would classify a real surname as
+missing.
+
+### 23.7 "Clear the back stack": the branch, not the stack
+
+The requirement was `popUpTo(0) { inclusive = true }` on entering Home. This shell
+has no auth `NavHost`: Login, Register and Create Your Profile are **branches of
+`when (sessionStatus)`**, and the only `NavHost` lives inside `MainScreen`. There
+is no auth stack to pop, and adding one to then pop it would be cargo cult.
+
+The intent — Back or resume must never land on Create Your Profile — holds
+structurally, and is now asserted:
+
+- entering Home removes the onboarding branch from composition entirely, so there
+  is nothing to return to;
+- `authDestination` is set to `null` whenever the session is not `Authenticated`,
+  so a stale Home/Onboarding event cannot leak across identities;
+- `finishOnboarding()` clears `_isOnboarding`, claims the cold-start check, and
+  emits `Home` explicitly.
+
+On process death the `remember`ed destination is gone, and the cold start resolves
+from evidence — which is the path §23.3 exists to make deterministic.
+
+### 23.8 What was deliberately not done
+
+- **No loosening of the completeness predicate.** A blank handle is a real
+  persistence defect; treating it as complete would only move the trap.
+- **No sign-out on a failed check.** The old `catch` called `signOut()`, making a
+  timeout indistinguishable from a revoked session.
+- **No removal of `profiles.handle`** or of the trigger's metadata read —
+  username/email sign-in depends on them.
+- **No change to the Google flow's behaviour**, only to its evidence input.
+
+### 23.9 Tests
+
+| file | guards |
+|---|---|
+| `OnboardingRoutingTest` | 19 cases over the verdict/destination/delete matrix, including failed-read-with-evidence, missing-row-with-evidence, legacy sentinels, and the deletion whitelist |
+| `OnboardingWiringContractTest` | 15 structural guards: no call site re-implements completeness, cold start consults evidence before the query, the failure path never signs out, exactly one `signOut()` (the confirmed-abandonment wipe), the write is verified and can insert, completion is recorded and cleared with sign-out, metadata shape matches Google's, the model invents no values, the self-insert policy exists, auth is a branch not a stack |
+
+Two guards were rewritten during this work because they described the *old*
+implementation and would have passed against code that no longer exists — the
+fast-path assertion now looks for `hasCompletionEvidence`, and the failure-path
+assertion no longer looks for a bare `OnboardingStateStore.isComplete`.
+
+### 23.10 Verification
+
+| Gate | Result |
+|---|---|
+| tree-sitter Kotlin parse, `app/src/{main,test,androidTest}/**/*.kt` | 120 files, 0 `ERROR`/missing |
+| import resolution | 2197 imports, 0 unresolved |
+| duplicate top-level declarations per package | 0 |
+| `when` exhaustiveness | 5 enums, 53 whens, 0 violations |
+| **new** unresolved calls (vs. the committed tree) | 0 |
+| policy matrix simulated against the implementation | 55/55 |
+| structural assertions simulated against source | 36/36 |
+
+The "new unresolved calls" gate was added because of a defect found *during* this
+work: `isProfileIncomplete` was deleted and its two call sites were rewritten to
+`readProfileVerdict(...)`, but the replacement function was never written. Every
+existing gate passed — tree-sitter parses a call to a function that does not exist
+without complaint, imports resolve, and no duplicate appeared. The gate compares
+each changed file against the committed tree (which builds) and reports call names
+that are new, undeclared, and unimported. It was then verified against a
+deliberately broken copy of the file, where it does report `readProfileVerdict(`.
+
+### 23.11 What is still unproven
+
+- That this **compiles** — there is no JDK, SDK or Gradle in this environment —
+  and that the JUnit classes pass, which is why the policy was additionally
+  executed here as a direct transcription (55/55).
+- Whether supabase-kt's `updateUser { data = … }` *merges* or *replaces* at
+  runtime. It is written to be correct either way (existing keys are copied in
+  first), but only a device can confirm.
+- Whether `handle_new_user()` actually creates a row for an OTP-created user in
+  production. The client no longer depends on the answer: it verifies, and
+  inserts if the row is absent.
+- On-device feel of the two-attempt, 300 ms read retry. It runs behind the splash
+  spinner, so it should be invisible; that is a design intent, not a measurement.

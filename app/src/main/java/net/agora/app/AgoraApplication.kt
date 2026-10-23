@@ -6,6 +6,7 @@ import coil.ImageLoaderFactory
 import coil.decode.VideoFrameDecoder
 import coil.disk.DiskCache
 import net.agora.app.data.DeviceIdProvider
+import net.agora.app.data.OnboardingStateStore
 import net.agora.app.data.RecentVerificationStore
 import net.agora.app.data.ThemePreferenceStore
 import net.agora.app.data.initializeSupabase
@@ -29,6 +30,12 @@ class AgoraApplication : Application(), ImageLoaderFactory {
         // Remembers which account was verified on this device, so a cold start
         // before onboarding finishes resumes it instead of wiping it.
         RecentVerificationStore.init(this)
+
+        // Remembers which account FINISHED onboarding on this device. This is the
+        // tie-breaker when the profiles read is inconclusive on a cold start —
+        // without it, a completed account could be re-derived as "new" from a
+        // single empty query and sent back to Create Your Profile.
+        OnboardingStateStore.init(this)
 
         // 🌟 Load the theme choice before the first Activity is created so the
         //    splash/window background and the first Compose frame agree.

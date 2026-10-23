@@ -99,8 +99,8 @@ fun UserSearchScreen(
                 }
             } else {
                 items(searchResults, key = { it.id }) { profile ->
-                    val fullName = "${profile.firstName} ${profile.lastName ?: ""}".trim()
-                    val handleText = "@${profile.handle}"
+                    val fullName = "${profile.firstName.orEmpty()} ${profile.lastName.orEmpty()}".trim()
+                    val handleText = "@${profile.handle.orEmpty()}"
 
                     Surface(
                         shape = RoundedCornerShape(18.dp),

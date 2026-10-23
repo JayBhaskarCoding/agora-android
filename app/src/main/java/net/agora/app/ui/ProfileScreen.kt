@@ -132,7 +132,7 @@ fun ProfileScreen(
                     formattedName.isNotBlank() -> formattedName
                     else -> "User"
                 }
-                handle = "@${profile.handle}"
+                handle = "@${profile.handle.orEmpty()}"
                 avatarUrl = if (isClosed) null else profile.avatarUrl
             } catch (e: Exception) {
                 profileFullName = "User"
